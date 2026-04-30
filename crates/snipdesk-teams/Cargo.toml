@@ -1,0 +1,20 @@
+[package]
+name = "snipdesk-teams"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Network-bound paid-tier features for SnipDesk"
+publish = false
+
+[dependencies]
+# Shared types (TeamSnippet, SyncStatus, ...) are owned by core so the
+# free build's DB code can reference them without dragging this crate in.
+snipdesk-core = { path = "../snipdesk-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Blocking client is fine — sync runs on a dedicated background thread at
+# a configurable interval, not in a hot loop. ureq+rustls is a fraction of
+# reqwest+tokio's binary footprint.
+ureq = { workspace = true }

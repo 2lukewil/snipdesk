@@ -1,0 +1,14 @@
+# Pin the toolchain so local dev and CI agree on the Rust version. Update
+# this when bumping; rustup auto-installs the channel on first cargo invoke
+# in this directory. clippy + rustfmt are required by CI's lint job.
+#
+# Floor is 1.88.0: driven by transitive deps `darling`, `image`,
+# `serde_with`, and `time` (the latter two pulled in by the updater plugin's
+# transitive graph). Earlier 1.85+ pins fail with "rustc X.Y is not supported
+# by the following packages" when Cargo resolves to a newer dep that bumped
+# its MSRV. Bump higher freely; just keep `rust-version` fields in Cargo.tomls
+# in lockstep so MSRV checks stay accurate.
+[toolchain]
+channel = "1.88.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

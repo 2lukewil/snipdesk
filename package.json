@@ -1,0 +1,25 @@
+{
+  "name": "snipdesk",
+  "version": "1.0.0",
+  "description": "Fast snippet launcher for support agents. Global-hotkey search + paste for canned replies.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:teams": "vite build --mode teams",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:teams": "node scripts/build-teams.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "vite": "^5.4.10"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.2.0"
+  }
+}

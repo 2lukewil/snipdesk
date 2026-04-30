@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SnipDesk</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Launcher view -->
+      <section id="launcher" class="view active">
+        <header class="search-bar">
+          <input
+            id="search"
+            type="text"
+            placeholder="Search snippets…   (↑↓ navigate · Enter paste · Ctrl+N new · Ctrl+, settings · Esc hide)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="btn-new" class="icon-btn" title="New snippet (Ctrl+N)">+</button>
+          <button id="btn-settings" class="icon-btn" title="Settings (Ctrl+,)">⚙</button>
+        </header>
+
+        <div id="tag-strip" class="tag-strip"></div>
+
+        <div id="pane" class="pane no-sidebar">
+          <aside id="folder-sidebar" class="folder-sidebar">
+            <div class="folder-header">
+              <span>Folders</span>
+              <button id="btn-new-folder" title="New folder">+</button>
+            </div>
+            <div id="folder-tree"></div>
+          </aside>
+          <ul id="snippet-list" class="snippet-list" role="listbox"></ul>
+          <aside id="preview" class="preview">
+            <div class="preview-empty">Select a snippet to preview.</div>
+          </aside>
+        </div>
+
+        <footer class="footer">
+          <span id="status" class="status"></span>
+          <span id="savings" class="savings hidden" title="Estimated time and money saved from pasted snippets"></span>
+          <span class="hint">Enter: paste · Shift+Enter: copy · Ctrl+E: edit · Del: delete · Right-click: menu</span>
+        </footer>
+      </section>
+
+      <!-- Editor modal -->
+      <section id="editor" class="modal hidden">
+        <div class="modal-card">
+          <h2 id="editor-title">New snippet</h2>
+          <div class="modal-body">
+            <label>
+              <span>Title</span>
+              <input id="editor-title-input" type="text" />
+            </label>
+            <label>
+              <span>Folder <em>— type a path like "Billing/Refunds" or pick from suggestions</em></span>
+              <!-- Wrapped by attachCombobox() — replaces the native <datalist> dropdown (renders in OS chrome, unthemed) with a themed one. -->
+              <input
+                id="editor-folder-input"
+                type="text"
+                placeholder="(none)"
+                autocomplete="off"
+              />
+            </label>
+            <label>
+              <span>Tags (comma-separated)</span>
+              <input id="editor-tags-input" type="text" placeholder="billing, cancellation" />
+            </label>
+            <!-- role="group" instead of <label>: inside a <label>, the first labelable descendant (the Bold button) becomes the associated control and stays highlighted whenever the body region has focus. -->
+            <div class="grow field-block" role="group" aria-label="Body">
+              <span>Body <em>— use {variable_name} for placeholders</em></span>
+              <div id="editor-format-toolbar" class="format-toolbar"></div>
+              <textarea
+                id="editor-body-input"
+                aria-label="Snippet body"
+                spellcheck="true"
+              ></textarea>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button id="editor-cancel" class="btn-secondary">Cancel</button>
+            <button id="editor-save" class="btn-primary">Save (Ctrl+S)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Duplicate-title warning modal -->
+      <section id="dup-warn" class="modal hidden">
+        <div class="modal-card small">
+          <h2>Snippet with that title already exists</h2>
+          <div class="modal-body">
+            <p id="dup-warn-msg" class="dup-msg"></p>
+            <p class="hint-inline">
+              Saving two snippets with the same title isn't an error, but it
+              can make the right one hard to find in the launcher.
+            </p>
+          </div>
+          <div class="modal-actions between">
+            <button id="dup-open-existing" class="btn-secondary">Open existing</button>
+            <div>
+              <button id="dup-edit-title" class="btn-secondary">Edit title</button>
+              <button id="dup-save-anyway" class="btn-primary">Save anyway</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Link insert prompt (fired from the Link format-toolbar button) -->
+      <section id="link-prompt" class="modal hidden">
+        <div class="modal-card small">
+          <h2>Insert link</h2>
+          <div class="modal-body">
+            <label>
+              <span>Link text</span>
+              <input id="link-text-input" type="text" autocomplete="off" />
+            </label>
+            <label>
+              <span>URL</span>
+              <input
+                id="link-url-input"
+                type="url"
+                placeholder="https://"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button id="link-cancel" class="btn-secondary">Cancel</button>
+            <button id="link-insert" class="btn-primary">Insert (Enter)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Variable prompt modal -->
+      <section id="var-prompt" class="modal hidden">
+        <div class="modal-card">
+          <h2>Fill in variables</h2>
+          <div id="var-fields" class="modal-body"></div>
+          <div class="modal-actions">
+            <button id="var-cancel" class="btn-secondary">Cancel</button>
+            <button id="var-submit" class="btn-primary">Paste (Enter)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings modal (tabbed) -->
+      <section id="settings" class="modal hidden">
+        <div class="modal-card wide">
+          <h2>Settings</h2>
+          <nav class="tab-strip" role="tablist">
+            <button class="tab active" data-tab="general" role="tab">General</button>
+            <button class="tab" data-tab="appearance" role="tab">Appearance</button>
+            <button class="tab" data-tab="hotkeys" role="tab">Hotkeys</button>
+            <button class="tab" data-tab="team" role="tab">Team Library</button>
+            <button class="tab" data-tab="editor" role="tab">Editor</button>
+            <button class="tab" data-tab="savings" role="tab">Savings</button>
+            <button class="tab" data-tab="about" role="tab">About</button>
+          </nav>
+
+          <div class="modal-body tab-body">
+            <!-- General -->
+            <div class="tab-panel active" data-tab="general">
+              <label>
+                <span>Paste behavior</span>
+                <select id="set-paste-mode">
+                  <option value="auto_paste">Auto-paste into active window</option>
+                  <option value="clipboard">Copy to clipboard only</option>
+                </select>
+              </label>
+              <label>
+                <span>Auto-paste delay (ms)</span>
+                <input id="set-delay" type="number" min="0" max="2000" step="10" />
+              </label>
+              <label>
+                <span>Sort snippets</span>
+                <select id="set-sort-mode">
+                  <option value="usage">Most used first</option>
+                  <option value="alphabetical">Alphabetical</option>
+                </select>
+              </label>
+              <label class="row">
+                <input id="set-close" type="checkbox" />
+                <span>Close window after paste</span>
+              </label>
+              <label class="row">
+                <input id="set-autostart" type="checkbox" />
+                <span>Start SnipDesk when Windows starts</span>
+              </label>
+              <label class="row">
+                <input id="set-close-to-tray" type="checkbox" />
+                <span>Minimize to tray on close (X button)</span>
+              </label>
+              <label class="row">
+                <input id="set-minimize-to-tray" type="checkbox" />
+                <span>Minimize to tray on minimize</span>
+              </label>
+              <label class="row">
+                <input id="set-start-in-tray" type="checkbox" />
+                <span>Start hidden in tray <em>— launches silently instead of opening the window</em></span>
+              </label>
+            </div>
+
+            <!-- Appearance -->
+            <div class="tab-panel" data-tab="appearance">
+              <label>
+                <span>Theme</span>
+                <select id="set-theme">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="system">Match system</option>
+                </select>
+              </label>
+              <label>
+                <span>Accent color <em>— click the swatch to pick, or type a hex (#4c9aff) or rgb(76, 154, 255) value. Leave blank for the theme default.</em></span>
+                <div class="accent-row">
+                  <input id="set-accent-color" type="color" class="accent-swatch" value="#4c9aff" aria-label="Pick accent color" />
+                  <input
+                    id="set-accent-text"
+                    type="text"
+                    class="accent-text"
+                    placeholder="#4c9aff"
+                    spellcheck="false"
+                    autocomplete="off"
+                  />
+                  <button id="btn-accent-reset" type="button" class="btn-secondary">Reset</button>
+                  <span id="accent-preview" class="accent-preview" aria-hidden="true"></span>
+                </div>
+              </label>
+              <label class="row">
+                <input id="set-compact" type="checkbox" />
+                <span>Compact list <em>— tighter rows, more snippets visible</em></span>
+              </label>
+              <label class="row">
+                <input id="set-show-usage" type="checkbox" />
+                <span>Show usage count <em>— "N usages" badge beside each snippet</em></span>
+              </label>
+              <label class="row">
+                <input id="set-hide-on-blur" type="checkbox" />
+                <span>Hide to tray when focus is lost <em>— launcher-style click-away dismissal</em></span>
+              </label>
+              <label class="row">
+                <input id="set-always-on-top" type="checkbox" />
+                <span>Always on top <em>— keep SnipDesk above other windows</em></span>
+              </label>
+            </div>
+
+            <!-- Hotkeys -->
+            <div class="tab-panel" data-tab="hotkeys">
+              <label>
+                <span>Launcher hotkey</span>
+                <input id="set-hotkey" type="text" placeholder="Alt+Space" />
+                <em class="hint-inline">Opens / toggles the search launcher.</em>
+              </label>
+              <label>
+                <span>Quick add from selection</span>
+                <input id="set-quick-add-hotkey" type="text" placeholder="Alt+Shift+Space" />
+                <em class="hint-inline">Copies the current selection into a new snippet draft. Leave blank to disable.</em>
+              </label>
+              <div class="hint-block">
+                Modifier tokens: <code>Ctrl</code>, <code>Shift</code>, <code>Alt</code>, <code>Cmd</code>, <code>CommandOrControl</code>.<br />
+                Key tokens: letter, digit, <code>F1</code>–<code>F12</code>, <code>Space</code>, <code>Enter</code>, <code>Esc</code>, arrow keys.
+              </div>
+            </div>
+
+            <!-- Team Library -->
+            <div class="tab-panel" data-tab="team">
+              <label>
+                <span>Team library URL <em>— any public JSON file (GitHub raw, S3, shared link, …)</em></span>
+                <input
+                  id="set-team-url"
+                  type="text"
+                  placeholder="https://example.com/snippets.json"
+                />
+              </label>
+              <div class="two-col">
+                <label>
+                  <span>Sync interval (minutes)</span>
+                  <input id="set-team-interval" type="number" min="1" max="1440" step="1" />
+                </label>
+                <label>
+                  <span>Folder name in launcher</span>
+                  <input id="set-team-folder-name" type="text" placeholder="Team Library" />
+                </label>
+              </div>
+              <label class="row">
+                <input id="set-team-startup" type="checkbox" />
+                <span>Sync once on app startup <em>— otherwise waits for the first interval tick</em></span>
+              </label>
+              <div class="team-status-block">
+                <div class="team-status-row">
+                  <span class="team-status-label">Last synced:</span>
+                  <span id="team-last-synced">Never</span>
+                </div>
+                <div class="team-status-row">
+                  <span class="team-status-label">Snippets loaded:</span>
+                  <span id="team-snippet-count">0</span>
+                </div>
+                <div class="team-status-row" id="team-error-row" style="display:none">
+                  <span class="team-status-label">Last error:</span>
+                  <span id="team-last-error" class="team-error-text"></span>
+                </div>
+                <button id="btn-team-sync" class="btn-secondary" type="button">Sync now</button>
+              </div>
+              <details class="format-help">
+                <summary>Expected JSON format</summary>
+                <pre><code>{
+  "version": 1,
+  "snippets": [
+    {
+      "id": "refund-policy",
+      "title": "Refund policy",
+      "body": "Our refund policy is …",
+      "tags": ["billing"],
+      "folder": "Billing/Refunds"
+    }
+  ]
+}</code></pre>
+              </details>
+            </div>
+
+            <!-- Editor / Format rules -->
+            <div class="tab-panel" data-tab="editor">
+              <p class="hint-block">
+                Format rules wrap the current selection in the editor when you
+                click a toolbar button. Tune them to your ticket system's
+                markup — WHMCS, Discord, and most Markdown tools use
+                <code>**bold**</code>, but some helpdesks use <code>[b]bold[/b]</code>.
+              </p>
+              <table class="rule-table" id="rule-table">
+                <thead>
+                  <tr>
+                    <th style="width: 30%">Label</th>
+                    <th style="width: 30%">Prefix</th>
+                    <th style="width: 30%">Suffix</th>
+                    <th style="width: 10%"></th>
+                  </tr>
+                </thead>
+                <tbody id="rule-rows"></tbody>
+              </table>
+              <button id="btn-add-rule" class="btn-secondary" type="button">+ Add rule</button>
+              <button id="btn-reset-rules" class="btn-secondary" type="button">Reset to defaults</button>
+            </div>
+
+            <!-- Savings -->
+            <div class="tab-panel" data-tab="savings">
+              <label class="row">
+                <input id="set-show-savings" type="checkbox" />
+                <span>Show time &amp; money saved <em>— footer readout based on your typing speed and wage</em></span>
+              </label>
+              <div class="savings-inputs">
+                <label>
+                  <span>Typing speed (WPM)</span>
+                  <input id="set-wpm" type="number" min="10" max="200" step="1" />
+                </label>
+                <label>
+                  <span>Hourly wage <em>— 0 to hide money</em></span>
+                  <input id="set-wage" type="number" min="0" step="0.01" />
+                </label>
+                <label>
+                  <span>Currency</span>
+                  <input id="set-currency" type="text" maxlength="3" placeholder="$" />
+                </label>
+              </div>
+            </div>
+
+            <!-- About / Maintenance -->
+            <div class="tab-panel" data-tab="about">
+              <div class="about-block">
+                <p>
+                  <strong>SnipDesk v1.0.0</strong> — snippet launcher for
+                  Shockbyte support agents.
+                </p>
+                <p class="hint-block">
+                  SnipDesk keeps a local snapshot of your database each day in
+                  case something goes wrong. You can also check the log if the
+                  app has been misbehaving.
+                </p>
+              </div>
+              <div class="two-col">
+                <label>
+                  <span>Backup retention (days)</span>
+                  <input id="set-backup-days" type="number" min="1" max="365" step="1" />
+                </label>
+                <label>
+                  <span>Log retention (days)</span>
+                  <input id="set-log-days" type="number" min="1" max="365" step="1" />
+                </label>
+              </div>
+              <div class="maint-buttons">
+                <button id="btn-open-backups" class="btn-secondary" type="button">Open backups folder</button>
+                <button id="btn-open-logs" class="btn-secondary" type="button">Open logs folder</button>
+              </div>
+              <div id="log-path-display" class="log-path-display"></div>
+            </div>
+          </div>
+
+          <div class="modal-actions between">
+            <div class="io-buttons">
+              <button id="btn-export" class="btn-secondary">Export…</button>
+              <button id="btn-import" class="btn-secondary">Import…</button>
+            </div>
+            <div>
+              <button id="set-cancel" class="btn-secondary">Cancel</button>
+              <button id="set-save" class="btn-primary">Save</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Context menu (shown on right-click) -->
+      <div id="context-menu" class="context-menu hidden"></div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,34 @@
+node_modules/
+dist/
+
+# Cargo build output. The workspace puts its target/ at the repo root;
+# the legacy src-tauri/target/ entry stays for anyone who built before
+# the workspace conversion (cargo will recreate it as a no-op symlink-
+# alike if invoked from inside src-tauri/, so it's safe to ignore).
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# Stale per-crate Cargo.lock files. Workspace mode resolves a single
+# lock at the workspace root (which IS committed — Tauri/SnipDesk is a
+# binary, not a library). src-tauri/Cargo.lock is leftover from the
+# pre-workspace tree and Cargo no longer reads it.
+src-tauri/Cargo.lock
+crates/*/Cargo.lock
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & debug artifacts
+*.log
+*.pdb
+
+# Editor
+.vscode/
+.idea/
+
+# PhraseExpress export files — contain personal/team snippet data, not code
+*.pexdb
+*.pex

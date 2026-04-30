@@ -1,0 +1,39 @@
+[package]
+name = "snipdesk"
+version = "1.0.0"
+description = "Snippet launcher for support agents"
+authors = ["Shockbyte"]
+edition = "2021"
+rust-version = "1.75"
+
+[lib]
+name = "snipdesk_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+snipdesk-core = { path = "../crates/snipdesk-core" }
+# Optional so the free build's dep graph contains zero networking code.
+# `cargo tree --no-default-features` should not list this crate or ureq.
+snipdesk-teams = { path = "../crates/snipdesk-teams", optional = true }
+
+tauri = { version = "2.1", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2.2"
+tauri-plugin-clipboard-manager = "2.2"
+tauri-plugin-dialog = "2.2"
+tauri-plugin-autostart = "2"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[features]
+# `custom-protocol` is Tauri's release-mode flag; required for the bundled
+# webview to load assets without a dev server.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# `dep:` (Cargo 1.60+) avoids implicitly creating a same-named feature.
+teams = ["dep:snipdesk-teams"]

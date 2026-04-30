@@ -1,0 +1,1039 @@
+/* Palette swaps via data-theme on <html>; "system" resolves to dark/light at startup. */
+:root,
+:root[data-theme="dark"] {
+  --bg: #1a1c20;
+  --bg-2: #222529;
+  --bg-3: #2a2e34;
+  --bg-hover: #2f343b;
+  --border: #3a3f46;
+  --text: #e7e9ec;
+  --text-dim: #9aa1aa;
+  --accent: #4c9aff;
+  /* Derived from --accent so a user-supplied accent override yields a matching pressed shade. */
+  --accent-2: color-mix(in srgb, var(--accent) 72%, #000 28%);
+  --danger: #e06b6b;
+  --success: #6bd08a;
+  --radius: 8px;
+  --menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --scroll-track: transparent;
+  --scroll-thumb: #3a3f46;
+  --scroll-thumb-hover: #4a5058;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --bg-2: #ffffff;
+  --bg-3: #eef0f3;
+  --bg-hover: #e2e6eb;
+  --border: #d1d5db;
+  --text: #1a1c20;
+  --text-dim: #5a6270;
+  --accent: #2c6fd8;
+  --accent-2: color-mix(in srgb, var(--accent) 72%, #000 28%);
+  --danger: #c03535;
+  --success: #2a8f48;
+  --radius: 8px;
+  --menu-shadow: 0 8px 24px rgba(20, 30, 50, 0.15);
+  --scroll-track: transparent;
+  --scroll-thumb: #c8ccd3;
+  --scroll-thumb-hover: #a9aeb7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+/* Themed scrollbars. WebView2 only paints ::-webkit-scrollbar on overflowing
+ * elements, so the universal selector is cheap. Firefox-native properties
+ * included for non-Chromium hosts. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scroll-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Suppress horizontal scroll on vertical-scroll panes; long tokens wrap via overflow-wrap. */
+.snippet-list,
+.folder-sidebar,
+.preview,
+.modal-body,
+.tab-body {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.view {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.view.active {
+  display: flex;
+}
+
+/* --- Search bar --- */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+#search {
+  flex: 1;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 14px;
+  outline: none;
+}
+#search:focus {
+  border-color: var(--accent);
+}
+.icon-btn {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 16px;
+}
+.icon-btn:hover {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: white;
+}
+
+/* --- Tag strip --- */
+.tag-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  min-height: 0;
+}
+.tag-strip:empty {
+  display: none;
+}
+.tag-chip {
+  background: var(--bg-3);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.tag-chip:hover {
+  color: var(--text);
+}
+.tag-chip.active {
+  background: var(--accent-2);
+  color: white;
+  border-color: var(--accent-2);
+}
+
+/* Three columns; collapses to two via .no-sidebar (set by JS when no folders exist). */
+.pane {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 180px minmax(220px, 1fr) minmax(260px, 1.3fr);
+  min-height: 0;
+}
+.pane.no-sidebar {
+  grid-template-columns: minmax(240px, 1fr) minmax(300px, 1.4fr);
+}
+.pane.no-sidebar .folder-sidebar {
+  display: none;
+}
+
+.folder-sidebar {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--bg-2);
+  padding: 4px 0;
+  user-select: none;
+}
+.folder-sidebar .folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 2px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.folder-sidebar .folder-header button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.folder-sidebar .folder-header button:hover {
+  color: var(--text);
+}
+.folder-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-dim);
+  border-left: 3px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-node:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.folder-node.active {
+  background: var(--bg-3);
+  color: var(--text);
+  border-left-color: var(--accent);
+}
+/* Multi-select companions; the primary still wears .active. */
+.folder-node.multi-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--text);
+}
+.folder-node.multi-selected:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.folder-node .folder-caret {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.folder-node .folder-caret.empty {
+  visibility: hidden;
+}
+.folder-node .folder-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Snippet list --- */
+.snippet-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+.snippet-list li {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.snippet-list li:hover {
+  background: var(--bg-2);
+}
+.snippet-list li.selected {
+  background: var(--bg-3);
+  border-left-color: var(--accent);
+}
+/* Multi-select companions; the primary still wears .selected. */
+.snippet-list li.multi-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.snippet-list li.multi-selected:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.snip-title {
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.snip-title > span:first-child {
+  /* Ellipsize the title before the badge wraps or overflows. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snip-count {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 500;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+/* Hide the badge in narrow columns. Container queries: Chromium 105+ (WebView2 OK). */
+.snippet-list {
+  container-type: inline-size;
+  container-name: snippet-list;
+}
+@container snippet-list (max-width: 240px) {
+  .snip-count {
+    display: none;
+  }
+}
+.snip-body {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snip-tags {
+  margin-top: 3px;
+}
+.snip-tag {
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+.snip-folder {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.8;
+  margin-top: 3px;
+}
+
+/* Compact mode — applied via <body class="compact">. */
+body.compact .snippet-list li {
+  padding: 4px 10px;
+}
+body.compact .snip-title {
+  font-weight: 500;
+  font-size: 13px;
+}
+body.compact .snip-body {
+  display: none;
+}
+body.compact .snip-tags,
+body.compact .snip-folder {
+  margin-top: 1px;
+}
+body.compact .folder-node {
+  padding: 2px 10px;
+}
+body.compact .tag-strip {
+  padding: 3px 10px;
+}
+body.compact .search-bar {
+  padding: 6px 10px;
+}
+
+/* --- Preview pane --- */
+.preview {
+  padding: 12px 14px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.preview h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+}
+.preview-var {
+  background: rgba(76, 154, 255, 0.2);
+  border: 1px solid rgba(76, 154, 255, 0.5);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+/* --- Footer --- */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.footer .hint {
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.savings {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.savings.hidden {
+  display: none;
+}
+/* Drop the savings readout on narrow footers rather than wrap. */
+@media (max-width: 520px) {
+  .savings {
+    display: none;
+  }
+  .savings.hidden {
+    display: none;
+  }
+}
+
+/* --- Modal --- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+.modal.hidden {
+  display: none;
+}
+.modal-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(640px, 92vw);
+  max-height: calc(100vh - 24px);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+.modal-card h2 {
+  margin: 0 0 2px 0;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+/* Scrollable middle region; header and action row stay pinned. */
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 2px 8px;
+}
+.modal-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.modal-card label.row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.modal-card label.grow {
+  flex: 1;
+  min-height: 0;
+}
+.modal-card label span {
+  color: var(--text-dim);
+}
+.modal-card label em {
+  font-style: normal;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* Mirrors .modal-card label styling; see HTML comment for the role="group" rationale. */
+.modal-card .field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.modal-card .field-block.grow {
+  flex: 1;
+  min-height: 0;
+}
+.modal-card .field-block > span {
+  color: var(--text-dim);
+}
+.modal-card .field-block em {
+  font-style: normal;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.modal-card input[type="text"],
+.modal-card input[type="number"],
+.modal-card select,
+.modal-card textarea {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.modal-card textarea {
+  flex: 1;
+  min-height: 160px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  /* pre-wrap (not pre) — preserves whitespace but soft-wraps; anywhere catches no-boundary tokens like long URLs. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.modal-card input:focus,
+.modal-card textarea:focus,
+.modal-card select:focus {
+  border-color: var(--accent);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.modal-actions.between {
+  justify-content: space-between;
+}
+.modal-actions > div {
+  display: flex;
+  gap: 8px;
+}
+.io-buttons {
+  display: flex;
+  gap: 8px;
+}
+.btn-primary,
+.btn-secondary {
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-primary {
+  background: var(--accent-2);
+  color: white;
+  border-color: var(--accent-2);
+}
+.btn-primary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.btn-secondary {
+  background: var(--bg-3);
+  color: var(--text);
+}
+.btn-secondary:hover {
+  background: var(--bg-hover);
+}
+.hint-inline {
+  font-style: normal;
+  color: var(--text-dim);
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.savings-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr 100px;
+  gap: 10px;
+}
+.savings-inputs label {
+  gap: 4px;
+}
+@media (max-width: 480px) {
+  .savings-inputs {
+    grid-template-columns: 1fr;
+  }
+}
+.status {
+  min-height: 14px;
+}
+.status.ok { color: var(--success); }
+.status.err { color: var(--danger); }
+
+/* Inline ghost-text autosuggest. attachCombobox() overlays a .ghost-input-shadow
+ * behind the real input; the shadow must match the input's font, padding, and
+ * (transparent) border exactly so glyphs align pixel-for-pixel. .ghost-input-typed
+ * is an invisible spacer that pushes .ghost-input-suffix to the caret offset. */
+.ghost-input {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+.ghost-input > input.ghost-input-real {
+  position: relative;
+  z-index: 2;
+  /* Transparent so the shadow's suffix shows through to the right of the caret. */
+  background: transparent !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ghost-input > .ghost-input-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* Transparent border so we don't double up — the real input draws the frame. */
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: normal;
+  white-space: pre;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+.ghost-input > .ghost-input-shadow .ghost-input-typed {
+  white-space: pre;
+  visibility: hidden;
+}
+.ghost-input > .ghost-input-shadow .ghost-input-suffix {
+  white-space: pre;
+  color: var(--text);
+  opacity: 0.42;
+}
+
+.var-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.var-field label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.var-field input {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.var-field input:focus {
+  border-color: var(--accent);
+}
+
+/* Position set by the event handler; z-index 100 keeps it above modals' z-index 10. */
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 160px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--menu-shadow);
+  padding: 4px 0;
+  font-size: 13px;
+  user-select: none;
+}
+.context-menu.hidden {
+  display: none;
+}
+.context-menu-item {
+  padding: 6px 14px;
+  cursor: pointer;
+  color: var(--text);
+}
+.context-menu-item:hover {
+  background: var(--accent-2);
+  color: white;
+}
+.context-menu-item.danger {
+  color: var(--danger);
+}
+/* Bulk-action header rows ("3 snippets selected"); mouse events suppressed in JS. */
+.context-menu-item.disabled {
+  color: var(--text-dim);
+  cursor: default;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+.context-menu-item.danger:hover {
+  background: var(--danger);
+  color: white;
+}
+.context-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.modal-card.wide {
+  width: min(760px, 94vw);
+}
+.modal-card.small {
+  width: min(460px, 92vw);
+}
+
+/* Inactive panels use display:none so tab order skips their form fields. */
+.tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 -8px;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -1px; /* overlap the strip border when active */
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-panel {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+.tab-panel.active {
+  display: flex;
+}
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 480px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+.hint-block {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.hint-block code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+
+.format-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.format-toolbar:empty {
+  display: none;
+}
+.format-btn {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.format-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* main.js preventDefaults mousedown so the button can't steal focus from the
+ * textarea; this is a backstop. :focus-visible still rings for keyboard tab. */
+.format-btn:focus {
+  outline: none;
+}
+.format-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The ::-webkit-color-swatch overrides below strip Chrome's default border/padding. */
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.accent-swatch {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-3);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.accent-swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.accent-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+.accent-text {
+  flex: 1;
+  min-width: 140px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.accent-text.invalid {
+  border-color: var(--danger);
+}
+.accent-preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* --- Rule editor table (Editor tab in Settings) --- */
+.rule-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.rule-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.rule-table td {
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+.rule-table input[type="text"] {
+  width: 100%;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+.rule-table input[type="text"]:focus {
+  border-color: var(--accent);
+}
+.rule-table .rule-del {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.rule-table .rule-del:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* --- Team library status block (Team Library tab) --- */
+.team-status-block {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.team-status-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.team-status-label {
+  color: var(--text-dim);
+  min-width: 120px;
+}
+.team-error-text {
+  color: var(--danger);
+  word-break: break-word;
+}
+.team-status-block button {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.format-help summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 0;
+}
+.format-help summary:hover {
+  color: var(--text);
+}
+.format-help pre {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin: 6px 0 0 0;
+  font-size: 11px;
+  /* Wrap the JSON example rather than scroll sideways. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* --- Duplicate-title warning modal --- */
+.dup-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* --- About / Maintenance tab --- */
+.about-block p {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.about-block p:last-child {
+  margin-bottom: 0;
+}
+.maint-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.log-path-display {
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 14px;
+}
+.log-path-display:empty {
+  display: none;
+}

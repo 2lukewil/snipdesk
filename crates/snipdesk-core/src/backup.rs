@@ -29,11 +29,7 @@ pub fn init_schedule(data_dir: &Path, db_path: &Path, retention_days: u32) {
 }
 
 /// Snapshot if today's file doesn't exist. Always prunes, regardless.
-fn maybe_snapshot(
-    data_dir: &Path,
-    db_path: &Path,
-    retention_days: u32,
-) -> std::io::Result<()> {
+fn maybe_snapshot(data_dir: &Path, db_path: &Path, retention_days: u32) -> std::io::Result<()> {
     let backups_dir = data_dir.join("backups");
     std::fs::create_dir_all(&backups_dir)?;
 
@@ -64,18 +60,26 @@ fn maybe_snapshot(
 
 /// Drop `snippets-*.db` older than retention_days. Leaves unrelated files alone.
 fn prune_old(backups_dir: &Path, retention_days: u32) {
-    let Ok(entries) = std::fs::read_dir(backups_dir) else { return; };
+    let Ok(entries) = std::fs::read_dir(backups_dir) else {
+        return;
+    };
     let cutoff_secs = retention_days as u64 * 24 * 60 * 60;
     let cutoff = SystemTime::now() - Duration::from_secs(cutoff_secs);
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue; };
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if !name.starts_with("snippets-") || !name.ends_with(".db") {
             continue;
         }
-        let Ok(meta) = entry.metadata() else { continue; };
-        let Ok(modified) = meta.modified() else { continue; };
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if modified < cutoff {
             if let Err(err) = std::fs::remove_file(&path) {
                 logging::log_error(&format!(

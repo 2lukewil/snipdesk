@@ -1,0 +1,102 @@
+name: CI
+
+# PR validation only. Release builds happen on the dev machine per
+# docs/auto-update.md; CI just confirms the source compiles, tests pass,
+# and clippy is clean before a change merges to main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel a previous run if a newer commit lands on the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Match what the dev machine uses. Bump in lockstep with package.json's
+  # engines field and rust-toolchain.toml's channel.
+  NODE_VERSION: '24'
+
+jobs:
+  validate:
+    name: Build + Lint + Test
+    # windows-latest mirrors the local build environment exactly. We're
+    # Windows-only, so Linux/macOS runners would either skip Win32 syscalls
+    # entirely (defeating the point) or fail to link windows-sys.
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Toolchain channel is read from rust-toolchain.toml automatically by
+      # cargo on first invocation. We let dtolnay/rust-toolchain install
+      # `stable` as a fallback in case the toml is ever absent; rustup will
+      # then immediately switch to the pinned version on the first cargo run.
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Cache cargo registry and target/. ~3-5 minutes saved on warm runs.
+      # rust-cache derives keys from Cargo.lock so dep bumps trigger fresh
+      # downloads automatically.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Workspaces is plural because both root and src-tauri have
+          # Cargo.tomls that resolve through the same lockfile.
+          workspaces: |
+            .
+          # Don't cache full target/; it can swell to GBs. Default behavior
+          # of the action keeps just the dependency artifacts.
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Build frontend (offline mode)
+        run: npm run build
+
+      # rustfmt before any build — fastest signal for "you forgot to format."
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo check (offline)
+        # Default features = offline (teams is opt-in via --features teams).
+        run: cargo check --workspace --all-targets
+
+      - name: cargo test (offline)
+        run: cargo test --workspace
+
+      - name: cargo clippy (offline)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Teams build sanity. Compile-only — full bundling takes 5+ minutes
+      # and the offline build above already exercises the bulk of the code.
+      - name: Build frontend (teams mode)
+        run: npm run build:teams
+
+      - name: cargo check (teams)
+        run: cargo check --workspace --features teams --all-targets
+
+      # Verify the offline-build airtightness invariant: the offline dep
+      # graph contains no networking code. Fails fast if anyone slips
+      # ureq or snipdesk-teams into the non-optional deps.
+      - name: Verify offline guarantee
+        shell: pwsh
+        run: |
+          $tree = cargo tree --manifest-path src-tauri/Cargo.toml
+          if ($tree -match 'snipdesk-teams|ureq') {
+            Write-Error "Offline dep graph contains networking code (snipdesk-teams or ureq). Move it behind the 'teams' feature."
+            exit 1
+          }
+          Write-Host "Offline dep graph is clean."

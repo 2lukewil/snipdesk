@@ -158,7 +158,9 @@ impl Db {
         let mut params_vec: Vec<String> = Vec::new();
 
         if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
-            sql.push_str(" AND (LOWER(title) LIKE ?1 OR LOWER(body) LIKE ?1 OR LOWER(tags) LIKE ?1)");
+            sql.push_str(
+                " AND (LOWER(title) LIKE ?1 OR LOWER(body) LIKE ?1 OR LOWER(tags) LIKE ?1)",
+            );
             params_vec.push(format!("%{}%", q.to_lowercase()));
         }
         if let Some(t) = tag.filter(|t| !t.trim().is_empty()) {
@@ -249,7 +251,9 @@ impl Db {
         // Cascade variable_history — no FK enforcement.
         self.conn
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
-        let n = self.conn.execute("DELETE FROM snippets WHERE id = ?1", [id])?;
+        let n = self
+            .conn
+            .execute("DELETE FROM snippets WHERE id = ?1", [id])?;
         if n == 0 {
             anyhow::bail!("snippet not found: {id}");
         }
@@ -761,7 +765,10 @@ mod tests {
     fn normalize_path_strips_whitespace_and_collapses_slashes() {
         assert_eq!(normalize_path("Billing/Refunds"), "Billing/Refunds");
         assert_eq!(normalize_path("  Billing // Refunds / "), "Billing/Refunds");
-        assert_eq!(normalize_path("/leading/and/trailing/"), "leading/and/trailing");
+        assert_eq!(
+            normalize_path("/leading/and/trailing/"),
+            "leading/and/trailing"
+        );
         assert_eq!(normalize_path(""), "");
         assert_eq!(normalize_path("///"), "");
         assert_eq!(normalize_path(" Solo "), "Solo");

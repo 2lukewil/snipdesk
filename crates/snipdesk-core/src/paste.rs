@@ -46,7 +46,9 @@ pub fn write_clipboard_unicode(text: &str) -> Result<(), String> {
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
     use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
     // CF_UNICODETEXT requires a zero-terminated wide string.
@@ -237,8 +239,8 @@ fn try_wm_paste(target_hwnd: isize) -> bool {
 #[cfg(windows)]
 fn send_ctrl_v_windows() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT, VK_V,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+        VK_CONTROL, VK_MENU, VK_SHIFT, VK_V,
     };
 
     unsafe fn key_event(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
@@ -394,8 +396,8 @@ fn read_clipboard_unicode_text() -> Option<String> {
 #[cfg(windows)]
 fn send_ctrl_c_windows() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_C, VK_CONTROL, VK_MENU, VK_SHIFT,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_C,
+        VK_CONTROL, VK_MENU, VK_SHIFT,
     };
 
     unsafe fn key_event(vk: VIRTUAL_KEY, key_up: bool) -> INPUT {
@@ -414,10 +416,7 @@ fn send_ctrl_c_windows() {
     }
 
     unsafe {
-        let flush = [
-            key_event(VK_SHIFT, true),
-            key_event(VK_MENU, true),
-        ];
+        let flush = [key_event(VK_SHIFT, true), key_event(VK_MENU, true)];
         SendInput(
             flush.len() as u32,
             flush.as_ptr(),

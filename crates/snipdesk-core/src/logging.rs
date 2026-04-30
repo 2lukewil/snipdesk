@@ -38,14 +38,13 @@ pub fn init(data_dir: &Path, retention_days: u32) {
         }
     }
 
-    let file = match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-    {
+    let file = match OpenOptions::new().create(true).append(true).open(&log_path) {
         Ok(f) => f,
         Err(err) => {
-            eprintln!("logging: failed to open log file {}: {err}", log_path.display());
+            eprintln!(
+                "logging: failed to open log file {}: {err}",
+                log_path.display()
+            );
             return;
         }
     };
@@ -92,8 +91,12 @@ pub fn log_info(msg: &str) {
 
 // No-op if init() didn't run or the file failed to open. Logging must never panic.
 fn log_raw(line: &str) {
-    let Some(mutex) = LOG_FILE.get() else { return; };
-    let Ok(mut guard) = mutex.lock() else { return; };
+    let Some(mutex) = LOG_FILE.get() else {
+        return;
+    };
+    let Ok(mut guard) = mutex.lock() else {
+        return;
+    };
     if let Some(file) = guard.as_mut() {
         let _ = writeln!(file, "{line}");
         let _ = file.flush();

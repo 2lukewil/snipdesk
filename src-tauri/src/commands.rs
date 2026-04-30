@@ -132,7 +132,8 @@ pub struct DeleteFolderArgs {
 #[tauri::command]
 pub fn delete_folder(state: State<'_, AppState>, args: DeleteFolderArgs) -> CmdResult<()> {
     let db = state.db.lock().map_err(e)?;
-    db.delete_folder(&args.path, args.delete_snippets).map_err(e)
+    db.delete_folder(&args.path, args.delete_snippets)
+        .map_err(e)
 }
 
 // ---- Variable autosuggest history ----
@@ -298,14 +299,15 @@ pub fn update_settings(
         if !new_settings.quick_add_hotkey.trim().is_empty() {
             if let Some(sc_new) = crate::parse_shortcut(&new_settings.quick_add_hotkey) {
                 let handle = app.clone();
-                if let Err(err) = app.global_shortcut().on_shortcut(
-                    sc_new,
-                    move |_app, _sc, event| {
-                        if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                            crate::trigger_quick_add_from_selection(&handle);
-                        }
-                    },
-                ) {
+                if let Err(err) =
+                    app.global_shortcut()
+                        .on_shortcut(sc_new, move |_app, _sc, event| {
+                            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed
+                            {
+                                crate::trigger_quick_add_from_selection(&handle);
+                            }
+                        })
+                {
                     eprintln!("quick-add re-register failed: {err}");
                 }
             } else {
@@ -408,8 +410,12 @@ pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResul
         }
         // PhraseExpress: "pex" = .pex/.pxx XML; "pexdb" = SQLite;
         // "phraseexpress" auto-detects via magic header.
-        "pex" => crate::phraseexpress::parse_pex_xml(std::path::Path::new(&args.path)).map_err(e)?,
-        "pexdb" => crate::phraseexpress::parse_pexdb(std::path::Path::new(&args.path)).map_err(e)?,
+        "pex" => {
+            crate::phraseexpress::parse_pex_xml(std::path::Path::new(&args.path)).map_err(e)?
+        }
+        "pexdb" => {
+            crate::phraseexpress::parse_pexdb(std::path::Path::new(&args.path)).map_err(e)?
+        }
         "phraseexpress" => {
             crate::phraseexpress::parse(std::path::Path::new(&args.path)).map_err(e)?
         }
@@ -442,7 +448,6 @@ pub fn resume_hide_on_blur(state: State<'_, AppState>) -> CmdResult<()> {
     state.hide_on_blur_suppressed.store(false, Ordering::SeqCst);
     Ok(())
 }
-
 
 // ---- Duplicate-title detection ----
 
@@ -675,7 +680,11 @@ fn parse_csv(contents: &str) -> anyhow::Result<Vec<NewSnippet>> {
     }
 
     let header = rows.remove(0);
-    let find = |name: &str| header.iter().position(|h| h.trim().eq_ignore_ascii_case(name));
+    let find = |name: &str| {
+        header
+            .iter()
+            .position(|h| h.trim().eq_ignore_ascii_case(name))
+    };
     let title_idx = find("title").ok_or_else(|| anyhow::anyhow!("missing 'title' column"))?;
     let body_idx = find("body").ok_or_else(|| anyhow::anyhow!("missing 'body' column"))?;
     let tags_idx = find("tags");
@@ -713,7 +722,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

@@ -3,9 +3,7 @@ mod commands;
 
 // Re-export shared modules under short names so call sites stay stable as
 // crates get reshuffled. Add new re-exports here when modules move.
-pub use snipdesk_core::{
-    backup, db, logging, paste, phraseexpress, settings, shared_library,
-};
+pub use snipdesk_core::{backup, db, logging, paste, phraseexpress, settings, shared_library};
 // Teams-only — gated so the free build's dep tree contains no `snipdesk-teams`
 // and no `ureq`. Verify with `cargo tree --no-default-features`.
 #[cfg(feature = "teams")]
@@ -112,13 +110,21 @@ pub fn run() {
                 Some(open_accelerator.as_str()),
             )?;
             let new_item = MenuItem::with_id(app, "new", "New Snippet...", true, None::<&str>)?;
-            let settings_item = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
             let sep1 = PredefinedMenuItem::separator(app)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit SnipDesk", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&open_item, &sep1, &new_item, &settings_item, &sep2, &quit_item],
+                &[
+                    &open_item,
+                    &sep1,
+                    &new_item,
+                    &settings_item,
+                    &sep2,
+                    &quit_item,
+                ],
             )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
@@ -175,27 +181,29 @@ pub fn run() {
             });
 
             let app_handle = app.handle().clone();
-            app.global_shortcut().on_shortcut(shortcut, move |_app, _sc, event| {
-                if event.state() == ShortcutState::Pressed {
-                    if let Some(win) = app_handle.get_webview_window("main") {
-                        toggle_window_with_state(&app_handle, &win);
+            app.global_shortcut()
+                .on_shortcut(shortcut, move |_app, _sc, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        if let Some(win) = app_handle.get_webview_window("main") {
+                            toggle_window_with_state(&app_handle, &win);
+                        }
                     }
-                }
-            })?;
+                })?;
 
             // Quick-add hotkey. Empty = disabled; malformed = log + skip
             // (a typo here must not brick launch).
             if !settings.quick_add_hotkey.trim().is_empty() {
                 if let Some(quick_sc) = parse_shortcut(&settings.quick_add_hotkey) {
                     let quick_handle = app.handle().clone();
-                    if let Err(err) = app.global_shortcut().on_shortcut(quick_sc, move |_app, _sc, event| {
-                        if event.state() == ShortcutState::Pressed {
-                            trigger_quick_add_from_selection(&quick_handle);
-                        }
-                    }) {
-                        logging::log_error(&format!(
-                            "quick-add hotkey register failed: {err}"
-                        ));
+                    if let Err(err) =
+                        app.global_shortcut()
+                            .on_shortcut(quick_sc, move |_app, _sc, event| {
+                                if event.state() == ShortcutState::Pressed {
+                                    trigger_quick_add_from_selection(&quick_handle);
+                                }
+                            })
+                    {
+                        logging::log_error(&format!("quick-add hotkey register failed: {err}"));
                     }
                 } else {
                     logging::log_error(&format!(
@@ -648,9 +656,7 @@ fn friendly_shortcut(hk: &str) -> String {
                 } else {
                     let mut chars = other.chars();
                     match chars.next() {
-                        Some(c) => {
-                            c.to_ascii_uppercase().to_string() + chars.as_str()
-                        }
+                        Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
                         None => String::new(),
                     }
                 }
@@ -716,14 +722,42 @@ fn code_from_str(s: &str) -> Option<Code> {
         "F11" => F11,
         "F12" => F12,
         s if s.len() == 1 => match s.chars().next().unwrap() {
-            'A' => KeyA, 'B' => KeyB, 'C' => KeyC, 'D' => KeyD, 'E' => KeyE,
-            'F' => KeyF, 'G' => KeyG, 'H' => KeyH, 'I' => KeyI, 'J' => KeyJ,
-            'K' => KeyK, 'L' => KeyL, 'M' => KeyM, 'N' => KeyN, 'O' => KeyO,
-            'P' => KeyP, 'Q' => KeyQ, 'R' => KeyR, 'S' => KeyS, 'T' => KeyT,
-            'U' => KeyU, 'V' => KeyV, 'W' => KeyW, 'X' => KeyX, 'Y' => KeyY,
+            'A' => KeyA,
+            'B' => KeyB,
+            'C' => KeyC,
+            'D' => KeyD,
+            'E' => KeyE,
+            'F' => KeyF,
+            'G' => KeyG,
+            'H' => KeyH,
+            'I' => KeyI,
+            'J' => KeyJ,
+            'K' => KeyK,
+            'L' => KeyL,
+            'M' => KeyM,
+            'N' => KeyN,
+            'O' => KeyO,
+            'P' => KeyP,
+            'Q' => KeyQ,
+            'R' => KeyR,
+            'S' => KeyS,
+            'T' => KeyT,
+            'U' => KeyU,
+            'V' => KeyV,
+            'W' => KeyW,
+            'X' => KeyX,
+            'Y' => KeyY,
             'Z' => KeyZ,
-            '0' => Digit0, '1' => Digit1, '2' => Digit2, '3' => Digit3, '4' => Digit4,
-            '5' => Digit5, '6' => Digit6, '7' => Digit7, '8' => Digit8, '9' => Digit9,
+            '0' => Digit0,
+            '1' => Digit1,
+            '2' => Digit2,
+            '3' => Digit3,
+            '4' => Digit4,
+            '5' => Digit5,
+            '6' => Digit6,
+            '7' => Digit7,
+            '8' => Digit8,
+            '9' => Digit9,
             _ => return None,
         },
         _ => return None,

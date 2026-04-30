@@ -127,10 +127,26 @@ fn default_log_retention_days() -> u32 {
 /// Tuned for WHMCS ticket replies (Markdown-ish).
 fn default_format_rules() -> Vec<FormatRule> {
     vec![
-        FormatRule { label: "Bold".into(), prefix: "**".into(), suffix: "**".into() },
-        FormatRule { label: "Italic".into(), prefix: "*".into(), suffix: "*".into() },
-        FormatRule { label: "Code".into(), prefix: "`".into(), suffix: "`".into() },
-        FormatRule { label: "Link".into(), prefix: "[".into(), suffix: "](https://)".into() },
+        FormatRule {
+            label: "Bold".into(),
+            prefix: "**".into(),
+            suffix: "**".into(),
+        },
+        FormatRule {
+            label: "Italic".into(),
+            prefix: "*".into(),
+            suffix: "*".into(),
+        },
+        FormatRule {
+            label: "Code".into(),
+            prefix: "`".into(),
+            suffix: "`".into(),
+        },
+        FormatRule {
+            label: "Link".into(),
+            prefix: "[".into(),
+            suffix: "](https://)".into(),
+        },
     ]
 }
 

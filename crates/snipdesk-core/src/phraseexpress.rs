@@ -78,8 +78,8 @@ fn encrypted_pexdb_error() -> anyhow::Error {
 // ---------------- .pex XML ----------------
 
 pub fn parse_pex_xml(path: &Path) -> Result<Vec<NewSnippet>> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("read pex xml file {:?}", path))?;
+    let contents =
+        std::fs::read_to_string(path).with_context(|| format!("read pex xml file {:?}", path))?;
 
     let mut reader = Reader::from_str(&contents);
     reader.config_mut().trim_text(true);
@@ -181,7 +181,11 @@ pub fn parse_pex_xml(path: &Path) -> Result<Vec<NewSnippet>> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(anyhow::anyhow!("xml parse error at pos {}: {}", reader.buffer_position(), e));
+                return Err(anyhow::anyhow!(
+                    "xml parse error at pos {}: {}",
+                    reader.buffer_position(),
+                    e
+                ));
             }
             _ => {}
         }
@@ -204,10 +208,7 @@ fn is_folder_tag(tag: &str) -> bool {
 
 fn phrase_from_map(m: &HashMap<String, String>, folders: &[String]) -> Option<NewSnippet> {
     // Field aliases vary across PhraseExpress versions.
-    let title = first_nonempty(
-        m,
-        &["description", "name", "title", "shortname", "subject"],
-    );
+    let title = first_nonempty(m, &["description", "name", "title", "shortname", "subject"]);
     let body = first_nonempty(
         m,
         &[
@@ -295,10 +296,8 @@ pub fn parse_pexdb(path: &Path) -> Result<Vec<NewSnippet>> {
     }
 
     // PE may have the file locked or have a stray WAL — work from a temp copy.
-    let temp_path = std::env::temp_dir().join(format!(
-        "snipdesk-import-{}.pexdb",
-        std::process::id()
-    ));
+    let temp_path =
+        std::env::temp_dir().join(format!("snipdesk-import-{}.pexdb", std::process::id()));
     std::fs::copy(path, &temp_path)
         .with_context(|| format!("copy pexdb to temp {:?}", temp_path))?;
 
@@ -334,19 +333,39 @@ fn parse_pexdb_conn(conn: &Connection) -> Result<Vec<NewSnippet>> {
         let cols = list_columns(conn, table)?;
         let col_lower: Vec<String> = cols.iter().map(|c| c.to_lowercase()).collect();
 
-        let body_col = pick_col(&col_lower, &cols, &[
-            "phrasecontent", "phrase", "content", "body", "text", "value",
-            "phrase_text", "rtf", "rtfcontent", "html", "htmlcontent", "data",
-        ]);
-        let title_col = pick_col(&col_lower, &cols, &[
-            "description", "name", "title", "shortname", "subject",
-        ]);
-        let autotext_col = pick_col(&col_lower, &cols, &[
-            "autotext", "shortcut", "abbreviation", "key",
-        ]);
-        let parent_col = pick_col(&col_lower, &cols, &[
-            "parent_id", "parentid", "folder_id", "folderid", "parent",
-        ]);
+        let body_col = pick_col(
+            &col_lower,
+            &cols,
+            &[
+                "phrasecontent",
+                "phrase",
+                "content",
+                "body",
+                "text",
+                "value",
+                "phrase_text",
+                "rtf",
+                "rtfcontent",
+                "html",
+                "htmlcontent",
+                "data",
+            ],
+        );
+        let title_col = pick_col(
+            &col_lower,
+            &cols,
+            &["description", "name", "title", "shortname", "subject"],
+        );
+        let autotext_col = pick_col(
+            &col_lower,
+            &cols,
+            &["autotext", "shortcut", "abbreviation", "key"],
+        );
+        let parent_col = pick_col(
+            &col_lower,
+            &cols,
+            &["parent_id", "parentid", "folder_id", "folderid", "parent"],
+        );
 
         let Some(body_col) = body_col else {
             continue; // not a phrase-like table
@@ -387,10 +406,8 @@ fn parse_pexdb_conn(conn: &Connection) -> Result<Vec<NewSnippet>> {
         // Bodies are TEXT or BLOB (RTF / UTF-16LE / UTF-8) depending on version.
         let rows = stmt.query_map([], |row| {
             let body = decode_cell(row.get_ref(0)?);
-            let title = title_idx
-                .and_then(|i| row.get_ref(i).ok().and_then(decode_cell));
-            let autotext = autotext_idx
-                .and_then(|i| row.get_ref(i).ok().and_then(decode_cell));
+            let title = title_idx.and_then(|i| row.get_ref(i).ok().and_then(decode_cell));
+            let autotext = autotext_idx.and_then(|i| row.get_ref(i).ok().and_then(decode_cell));
             let parent = parent_idx.and_then(|i| match row.get_ref(i).ok()? {
                 ValueRef::Integer(n) => Some(n),
                 _ => None,
@@ -535,7 +552,10 @@ fn cleanup_body(s: &str) -> String {
         return rtf_to_plain(trimmed);
     }
     let lower_head: String = trimmed.chars().take(200).collect::<String>().to_lowercase();
-    if lower_head.contains("<html") || lower_head.contains("<!doctype html") || lower_head.starts_with("<p>") {
+    if lower_head.contains("<html")
+        || lower_head.contains("<!doctype html")
+        || lower_head.starts_with("<p>")
+    {
         return strip_html(trimmed);
     }
     trimmed.to_string()
@@ -626,7 +646,11 @@ fn rtf_to_plain(src: &str) -> String {
                     }
                     "u" => {
                         if let Some(n) = num {
-                            let code = if n < 0 { (n + 0x10000) as u32 } else { n as u32 };
+                            let code = if n < 0 {
+                                (n + 0x10000) as u32
+                            } else {
+                                n as u32
+                            };
                             if let Some(ch) = char::from_u32(code) {
                                 if skip_depth.is_none() {
                                     out.push(ch);
@@ -724,9 +748,18 @@ fn build_folder_map(conn: &Connection, tables: &[String]) -> Result<HashMap<i64,
 
         let id_col = pick_col(&lower, &cols, &["id", "folder_id", "folderid"]);
         let name_col = pick_col(&lower, &cols, &["description", "name", "title"]);
-        let body_col = pick_col(&lower, &cols, &[
-            "phrasecontent", "phrase", "content", "body", "text", "phrase_text",
-        ]);
+        let body_col = pick_col(
+            &lower,
+            &cols,
+            &[
+                "phrasecontent",
+                "phrase",
+                "content",
+                "body",
+                "text",
+                "phrase_text",
+            ],
+        );
 
         // Folder-shaped: id + name, no body column.
         if let (Some(id), Some(name)) = (id_col, name_col) {

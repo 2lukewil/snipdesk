@@ -4,9 +4,7 @@
 
 use std::time::Duration;
 
-use snipdesk_core::shared_library::{
-    TeamLibrary, FETCH_CONNECT_TIMEOUT, FETCH_READ_TIMEOUT,
-};
+use snipdesk_core::shared_library::{TeamLibrary, FETCH_CONNECT_TIMEOUT, FETCH_READ_TIMEOUT};
 
 /// Blocking fetch — runs on the sync thread or from a "Sync now" command.
 /// Timeouts are short: this runs at startup and a hung DNS lookup must not stall the app.
@@ -35,8 +33,8 @@ pub fn fetch(url: &str) -> Result<TeamLibrary, String> {
         .into_string()
         .map_err(|e| format!("read failed: {e}"))?;
 
-    let lib: TeamLibrary = serde_json::from_str(&body)
-        .map_err(|e| format!("invalid shared library JSON: {e}"))?;
+    let lib: TeamLibrary =
+        serde_json::from_str(&body).map_err(|e| format!("invalid shared library JSON: {e}"))?;
 
     if lib.version != 1 {
         return Err(format!(

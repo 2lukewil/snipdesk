@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <title>SnipDesk</title>
+    <!-- Empty data URI suppresses the favicon.ico request Vite would
+         otherwise log as 404 in dev. The actual app icon lives in the
+         OS window chrome, not in the webview document. -->
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -88,6 +92,9 @@
               ></textarea>
             </div>
           </div>
+          <!-- Save errors land here, not the main status bar (which sits
+               behind this modal at default window size). -->
+          <div id="editor-error" class="editor-error hidden" role="alert"></div>
           <div class="modal-actions">
             <button id="editor-cancel" class="btn-secondary">Cancel</button>
             <button id="editor-save" class="btn-primary">Save (Ctrl+S)</button>

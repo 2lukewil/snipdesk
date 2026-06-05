@@ -229,6 +229,8 @@ html, body {
   padding: 4px 10px;
   cursor: pointer;
   color: var(--text-dim);
+  user-select: none;
+  -webkit-user-select: none;
   border-left: 3px solid transparent;
   white-space: nowrap;
   overflow: hidden;
@@ -279,6 +281,11 @@ html, body {
   padding: 8px 12px;
   cursor: pointer;
   border-left: 3px solid transparent;
+  /* Required for drag: otherwise mousedown on the body text starts a text
+     selection on Windows, which preempts the HTML5 drag operation. The
+     preview pane is where text-selection actually matters. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .snippet-list li:hover {
   background: var(--bg-2);
@@ -1042,6 +1049,20 @@ body.compact .search-bar {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* --- Editor save-error banner --- */
+.editor-error {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border-left: 3px solid var(--danger);
+  color: var(--text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.editor-error.hidden {
+  display: none;
 }
 
 /* --- Duplicate-title warning modal --- */

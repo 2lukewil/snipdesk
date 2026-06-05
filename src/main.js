@@ -306,6 +306,7 @@ const els = {
   editorFolderInput: document.getElementById("editor-folder-input"),
   editorTagsInput: document.getElementById("editor-tags-input"),
   editorBodyInput: document.getElementById("editor-body-input"),
+  editorError: document.getElementById("editor-error"),
   editorFormatToolbar: document.getElementById("editor-format-toolbar"),
   editorSave: document.getElementById("editor-save"),
   editorCancel: document.getElementById("editor-cancel"),
@@ -759,12 +760,12 @@ async function refresh() {
     renderPreview();
     renderSavings();
     updateFolderDatalist();
-    // Sidebar hides only when there are no folders AND no team library.
-    const hasTeamFolder = TEAMS_BUILD && !!(state.settings?.team_library_url);
-    els.pane.classList.toggle(
-      "no-sidebar",
-      state.folders.length === 0 && !hasTeamFolder
-    );
+    // The sidebar always renders. It used to auto-hide when there were zero
+    // folders and no team library URL, but that left users with no visible
+    // way to add a folder (the "+" button lives in the sidebar header), so
+    // an empty library looked broken. "All snippets" + "+" stay useful even
+    // with nothing in the tree.
+    els.pane.classList.remove("no-sidebar");
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
   }
@@ -813,16 +814,26 @@ async function reparentFolder(srcPath, destFolder) {
 }
 
 // Wire a sidebar node as a drop target. `targetPath` is "" for Unfiled/root.
+//
+// Both dragenter AND dragover must preventDefault for the drop to be accepted;
+// some browsers won't update the cursor reliably without dragenter, so we
+// register both with identical handling. dropEffect:"none" on invalid targets
+// gives a "no-drop" cursor without entirely rejecting the event, which keeps
+// the cursor feedback snappy as the user moves between folders.
 function attachFolderDropTarget(node, targetPath) {
-  node.addEventListener("dragover", (e) => {
+  const evaluate = (e) => {
     if (!dragState) return;
-    if (dragState.type === "folder" && !canReparent(dragState.path, targetPath)) {
-      return; // invalid move — don't accept (cursor shows no-drop)
-    }
+    const valid = !(
+      dragState.type === "folder" && !canReparent(dragState.path, targetPath)
+    );
+    // Always preventDefault so the drop event can fire; let dropEffect signal
+    // the visual state.
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    node.classList.add("drop-target");
-  });
+    e.dataTransfer.dropEffect = valid ? "move" : "none";
+    node.classList.toggle("drop-target", valid);
+  };
+  node.addEventListener("dragenter", evaluate);
+  node.addEventListener("dragover", evaluate);
   node.addEventListener("dragleave", () => node.classList.remove("drop-target"));
   node.addEventListener("drop", async (e) => {
     e.preventDefault();
@@ -833,7 +844,11 @@ function attachFolderDropTarget(node, targetPath) {
     if (ds.type === "snippets") {
       await bulkMoveToFolder(ds.ids, targetPath);
     } else if (ds.type === "folder") {
-      await reparentFolder(ds.path, targetPath);
+      // Silently no-op on invalid drops (drop into self/descendant); the
+      // cursor already told the user it wasn't allowed.
+      if (canReparent(ds.path, targetPath)) {
+        await reparentFolder(ds.path, targetPath);
+      }
     }
   });
 }
@@ -1608,8 +1623,19 @@ function openEditor(snippet = null, overrides = {}) {
   els.editorFolderInput.value = prefillFolder;
   updateFolderDatalist();
   renderFormatToolbar();
+  clearEditorError();
   els.editor.classList.remove("hidden");
   requestAnimationFrame(() => els.editorTitleInput.focus());
+}
+
+function showEditorError(msg) {
+  els.editorError.textContent = msg;
+  els.editorError.classList.remove("hidden");
+}
+
+function clearEditorError() {
+  els.editorError.textContent = "";
+  els.editorError.classList.add("hidden");
 }
 
 function closeEditor() {
@@ -1736,9 +1762,10 @@ async function saveEditor() {
   const folder_path = folderRaw ? folderRaw : null;
 
   if (!title) {
-    setStatus("Title is required", "err");
+    showEditorError("Title is required.");
     return;
   }
+  clearEditorError();
 
   // Backend excludes the editing id from the match — case-sensitive.
   let conflict = null;
@@ -1785,7 +1812,9 @@ async function doSaveEditor({ title, body, tags, folder_path }) {
     }
     await refresh();
   } catch (err) {
-    setStatus(`Error: ${err}`, "err");
+    // Surface the failure inside the editor (the main status bar is hidden
+    // behind this modal at default window size).
+    showEditorError(`Couldn't save snippet: ${err}`);
   }
 }
 
@@ -2311,6 +2340,8 @@ function textInputModal({ title, label, value = "", placeholder = "", confirmTex
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
+        // Stop the global Enter handler from also pasting the active snippet.
+        e.stopPropagation();
         submit();
       }
     });
@@ -2937,7 +2968,12 @@ function bindEvents() {
 }
 
 function anyModalOpen() {
+  // .app-modal covers the dynamic dialogs (text input, confirm, folder
+  // picker) that are added to document.body at runtime — they wouldn't show
+  // up in the static checks below, so a folder-create Enter would otherwise
+  // fall through to the global paste handler.
   return (
+    !!document.querySelector(".app-modal") ||
     !els.editor.classList.contains("hidden") ||
     !els.varPrompt.classList.contains("hidden") ||
     !els.linkPrompt.classList.contains("hidden") ||

@@ -10,8 +10,12 @@ A self-hostable backend for the SnipDesk Teams edition that adds:
 
 1. **Per-user accounts** with OIDC (Google Workspace primary) and a
    username/password fallback for orgs without SSO.
-2. **End-to-end encrypted personal snippets** synced across the user's
-   devices. The server stores ciphertext only and cannot decrypt.
+2. **Personal snippets encrypted at rest** and synced across the user's
+   devices. The server holds the encryption key; database dumps reveal
+   nothing, but operators with shell access can technically decrypt. The
+   admin dashboard never exposes personal snippet bodies via any path. See
+   the *Encryption* section for the full trust model and the *Future:
+   end-to-end encryption* section for the upgrade path.
 3. A **shared team library** of canned snippets, curated by admins, visible
    to all signed-in members.
 4. A **manager dashboard** for user management, library curation, and
@@ -37,19 +41,24 @@ A self-hostable backend for the SnipDesk Teams edition that adds:
 │ desktop client   │ ───────────────► │  ┌──────────────────────┐  │
 │  (Tauri)         │                  │  │  Axum HTTP API       │  │
 │                  │                  │  │  /api/auth/*         │  │
-│ - vault_key in   │ ◄─────────────── │  │  /api/snippets/*     │  │
-│   OS keychain    │  ciphertext +    │  │  /api/library/*      │  │
-│ - encrypt before │  metadata only   │  │  /api/admin/*        │  │
-│   upload         │                  │  └──────────────────────┘  │
+│ - Talks plain    │ ◄─────────────── │  │  /api/snippets/*     │  │
+│   JSON to API    │  JSON +          │  │  /api/library/*      │  │
+│ - Server-side    │  metadata        │  │  /api/admin/*        │  │
+│   crypto         │                  │  └──────────────────────┘  │
 └──────────────────┘                  │  ┌──────────────────────┐  │
                                       │  │  htmx dashboard      │  │
 ┌──────────────────┐                  │  │  (embedded assets)   │  │
 │ Browser          │   HTTPS + JWT    │  │  /                   │  │
 │ (admin)          │ ───────────────► │  └──────────────────────┘  │
 │                  │                  │  ┌──────────────────────┐  │
-│                  │   HTML partials  │  │  SQLite (default)    │  │
-│                  │ ◄─────────────── │  │  Postgres optional   │  │
-└──────────────────┘                  │  └──────────────────────┘  │
+│                  │   HTML partials  │  │  Crypto layer        │  │
+│                  │ ◄─────────────── │  │  AES-GCM, master     │  │
+└──────────────────┘                  │  │  key from env/config │  │
+                                      │  └──────────────────────┘  │
+                                      │  ┌──────────────────────┐  │
+                                      │  │  SQLite (default)    │  │
+                                      │  │  Postgres optional   │  │
+                                      │  └──────────────────────┘  │
                                       └────────────────────────────┘
 ```
 
@@ -93,35 +102,19 @@ CREATE TABLE users (
   oidc_subject    TEXT UNIQUE                 -- OIDC `sub` claim (SSO)
 );
 
--- E2E vault: server stores only the WRAPPED key (never the plain key)
-CREATE TABLE user_vault (
-  user_id                   TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  -- AES-GCM(vault_key, key=Argon2id(vault_passphrase, salt=vault_salt))
-  wrapped_vault_key         BLOB NOT NULL,
-  vault_salt                BLOB NOT NULL,
-  -- AES-GCM(vault_key, key=Argon2id(recovery_code, salt=recovery_salt))
-  recovery_wrapped_vault_key BLOB NOT NULL,
-  recovery_salt             BLOB NOT NULL,
-  kdf_params                TEXT NOT NULL,    -- JSON: argon2 m, t, p
-  created_at                INTEGER NOT NULL,
-  rotated_at                INTEGER
-);
-
--- Personal snippets: ciphertext only. Server cannot read any body field.
+-- Personal snippets: user-provided content is encrypted at rest by the
+-- server using its master key. Client sends plaintext JSON over TLS; the
+-- server encrypts before insert and decrypts before returning to an
+-- authorized owner. A DB dump reveals ciphertext + key_version only.
 CREATE TABLE personal_snippets (
   id                  TEXT PRIMARY KEY,        -- client-generated UUID
   owner_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  -- All of these are AES-GCM ciphertext with the user's vault_key.
-  -- Server treats them as opaque bytes.
-  title_ciphertext    BLOB NOT NULL,
-  title_nonce         BLOB NOT NULL,
-  body_ciphertext     BLOB NOT NULL,
-  body_nonce          BLOB NOT NULL,
-  tags_ciphertext     BLOB NOT NULL,           -- JSON array, then encrypted
-  tags_nonce          BLOB NOT NULL,
-  folder_ciphertext   BLOB,                    -- nullable: NULL = unfiled
-  folder_nonce        BLOB,
-  -- Server-managed
+  -- AES-256-GCM ciphertext + nonce. Plaintext is a JSON object:
+  -- { title, body, tags: [...], folder_path: "..." | null }
+  payload_ciphertext  BLOB NOT NULL,
+  payload_nonce       BLOB NOT NULL,
+  key_version         INTEGER NOT NULL,        -- which master key generation
+  -- Server-managed metadata (plaintext)
   version             INTEGER NOT NULL,        -- monotonic per-snippet, for sync
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL,
@@ -150,74 +143,128 @@ CREATE TABLE user_activity (
 );
 ```
 
-## Encryption design (E2E)
+## Encryption (server-side at rest)
 
-### Vault model
+### Why server-side, not end-to-end
 
-Every user has a 256-bit `vault_key` that encrypts all their personal
-snippet content (title, body, tags, folder path). **The server never sees
-the plain `vault_key`.** Two wrapped copies of `vault_key` are stored
-server-side:
+This is an internal company tool deployed inside a trust boundary that
+already includes the team operating the server. Engineering cryptographic
+protection *from* operators who could also push a malicious client binary,
+or capture credentials at the OIDC step, is theatre rather than security.
+A simpler model that's honestly described is more valuable than a complex
+one whose claims don't hold up to scrutiny.
 
-1. **Passphrase-wrapped:** `wrapped_vault_key = AES-GCM(vault_key, K_p)`
-   where `K_p = Argon2id(vault_passphrase, salt=vault_salt)`.
-2. **Recovery-wrapped:** `recovery_wrapped_vault_key = AES-GCM(vault_key, K_r)`
-   where `K_r = Argon2id(recovery_code, salt=recovery_salt)`.
+The pragmatic posture for v1:
 
-The `vault_passphrase` is set by the user on first login, **separate from
-SSO/password.** It is required once per device (then cached in the OS
-keychain via the `keyring` crate). The `recovery_code` is a 24-character
-base32 string shown once at vault creation with strong instructions to save
-it; it never appears in the server logs.
+- **Database dumps are safe.** Stolen backup files, lost laptops with the
+  DB cloned, accidental S3 misconfigurations — none of these expose snippet
+  content.
+- **Server operators with shell access can decrypt** by reading the master
+  key from the server's config. We don't advertise otherwise.
+- **The admin dashboard never exposes personal snippet bodies.** Admins
+  see usage metrics, not content.
+- **API access is strictly per-user.** A signed-in user can only read
+  their own personal snippets via the API. Cross-user access is impossible
+  without admin shell access.
 
-This separation is what lets E2E coexist with OIDC: SSO authenticates the
-user to the server; the vault passphrase decrypts their data on the client.
-The server can authenticate but cannot decrypt.
+If this trust model ever changes — e.g. SnipDesk Teams becomes a hosted
+SaaS where customers don't trust the operators — the *Future: end-to-end
+encryption* section below outlines the upgrade path. The schema and API
+have been designed so that E2E can be added later without breaking the
+v1 protocol.
+
+### Master key management
+
+The server holds a 256-bit master key used for AES-GCM encryption of all
+personal snippet payloads. Sources, in priority order:
+
+1. `SNIPDESK_MASTER_KEY` environment variable (base64-encoded). Preferred
+   for container deployments — keeps the secret out of disk-resident
+   config.
+2. `master_key_file = "/path/to/file"` in `config.toml`. The file must be
+   readable only by the server's user (mode `0600`).
+3. `master_key = "..."` in `config.toml` directly. Discouraged but
+   supported for development.
+
+If no key is configured at startup, the server **refuses to start**. There
+is no auto-generated default — that's a footgun (operators forget to set
+it, then can't decrypt their data after a config wipe).
+
+A one-time bootstrap helper command generates a fresh key:
+
+```
+snipdesk-server gen-key   # prints base64; pipe to your secret store
+```
 
 ### Per-snippet encryption
 
-Each field uses **AES-256-GCM** with a fresh 96-bit nonce. The authentication
-tag is stored alongside the ciphertext (the `aes-gcm` crate handles this
-inline). Associated data (AD) for each field is
-`snippet_id || field_name || version` so a server-side swap of ciphertext
-between fields or snippets is detected on decrypt.
+Each snippet's user-provided fields are serialized as a JSON object:
 
-### Client key handling
+```json
+{ "title": "...", "body": "...", "tags": ["..."], "folder_path": "..." }
+```
 
-- New device login: client downloads `wrapped_vault_key` + `vault_salt` +
-  `kdf_params`, prompts the user for the vault passphrase, runs Argon2id +
-  AES-GCM-decrypt locally, caches the resulting `vault_key` in the OS
-  keychain (Windows Credential Manager, macOS Keychain, libsecret on Linux).
-- The cached key has the same scope as the OIDC/auth session: signing out
-  wipes both the JWT and the cached vault key.
+…then encrypted as a single blob using **AES-256-GCM** with a fresh
+96-bit nonce. The authentication tag is stored inline (the `aes-gcm` crate
+handles this). Associated data (AD) is `snippet_id || owner_id ||
+version` so server-side swapping of ciphertext between snippets or users
+is detected on decrypt.
 
-### Vault passphrase recovery
+Encrypting the payload as one blob rather than per-field keeps the schema
+flat and makes future schema additions (new optional fields) trivial —
+they just become new keys in the JSON, no migration of column structure.
 
-If the user forgets their passphrase, they enter the recovery code instead.
-Client downloads `recovery_wrapped_vault_key` + `recovery_salt`, decrypts
-locally, then prompts the user to set a new passphrase, which re-wraps
-`vault_key` under the new passphrase + a fresh salt. The new
-`wrapped_vault_key` is uploaded to the server. The recovery code itself
-remains unchanged so the user doesn't have to write down a new one.
+### Key rotation
 
-### What about searching encrypted snippets?
+`key_version` on each row identifies which master key encrypted it.
+Multiple master keys can be active simultaneously: the latest is used for
+writes; older versions stay in the config to decrypt existing rows. A
+background re-encryption job (not in v1) walks old rows and re-encrypts
+under the latest key, then the old key can be removed.
 
-Search is client-side: the client downloads the user's full ciphertext
-collection (typically tens of KB to a few MB for hundreds of snippets),
-decrypts in memory, and searches locally. This is also how the launcher's
-search field already works today against the local SQLite mirror — the
-existing code path doesn't change, only its data source does.
+For v1, key rotation is a documented manual procedure (stop server, run
+re-encrypt CLI subcommand against the DB, start with new key). Automated
+zero-downtime rotation is v1.1 work.
 
-### What metadata leaks to the server?
+### What the client sees
 
-By design:
+The desktop client talks plain JSON over TLS. It does no cryptography
+itself for the snippet payloads — the server is responsible. Local
+snippets are mirrored in the client's SQLite cache (unencrypted, same as
+the Lite build today; the OS file permissions are the protection).
 
-- The fact that user X owns N snippets and when they were last modified.
-- Snippet IDs (random UUIDs, no information content).
-- The user's email, display name, role, last-seen time.
+### Search
 
-What does **not** leak: snippet titles, bodies, tags, folder names, and
-the contents of any field a user enters into a snippet.
+Server-side: full-text search over personal snippets requires
+on-the-fly decryption (a hot path could maintain an in-memory index, but
+that's v1.1). For v1, the client downloads the user's full snippet
+collection on sync and searches locally — exactly how the launcher already
+works in Lite. Snippet counts are small (typically <1k per user), so this
+is fast and the privacy posture is consistent.
+
+### What's in plaintext server-side and what's encrypted
+
+- **Plaintext:** user account info (email, display name, role, last-seen),
+  snippet IDs, owner IDs, timestamps, sync versions, tombstone flags.
+- **Encrypted:** snippet title, body, tags, folder path.
+- **Shared library:** plaintext. Library snippets are explicitly shared
+  content (canned replies everyone uses); encrypting them buys nothing
+  because every authenticated member needs to read them anyway.
+
+### Future: end-to-end encryption
+
+If the trust model ever changes — a SaaS offering, regulated customer
+deployments, or simply user demand — the schema upgrade path is:
+
+1. Add `user_vault` table (server-stored wrapped keys, never the plain
+   key).
+2. On vault setup, client generates `vault_key`, encrypts payloads with
+   it from then on, server's master key becomes irrelevant for new rows.
+3. Migrate existing rows by server-decrypting once, sending plaintext over
+   TLS to the now-logged-in client, client re-encrypts with `vault_key`,
+   uploads, server discards its decryptable copy.
+
+This is a v2 feature with a clear roadmap, not a v1 commitment.
 
 ## Authentication
 
@@ -264,17 +311,11 @@ All endpoints under `/api`. JSON request/response unless noted. JWT in the
 - `POST /api/auth/logout` — invalidates server-side refresh token (no-op for stateless JWTs in v1)
 - `GET  /api/me` → `{ user, has_vault }`
 
-### Vault
-- `POST /api/vault/init` — first-time vault setup. Body:
-  `{ wrapped_vault_key, vault_salt, recovery_wrapped_vault_key, recovery_salt, kdf_params }`
-- `GET  /api/vault` — return current wrapped key + salt for this device to decrypt
-- `PUT  /api/vault/passphrase` — re-wrap under a new passphrase (after recovery flow or rotation)
-
-### Personal snippets (E2E ciphertext)
-- `GET  /api/snippets?since=VERSION` — incremental sync; returns snippets where `version > since`
-- `POST /api/snippets` — create. Body: client-generated UUID + all ciphertext fields
-- `PUT  /api/snippets/:id` — update. Body: ciphertext fields + `expected_version` for optimistic concurrency
-- `DELETE /api/snippets/:id` — soft delete (sets `is_deleted = 1`)
+### Personal snippets (server-encrypted at rest, plaintext JSON over TLS)
+- `GET  /api/snippets?since=VERSION` — incremental sync; returns snippets where `version > since`. Server decrypts before returning.
+- `POST /api/snippets` — create. Body: client-generated UUID + `{ title, body, tags, folder_path }`. Server encrypts before insert.
+- `PUT  /api/snippets/:id` — update. Body: same shape + `expected_version` for optimistic concurrency.
+- `DELETE /api/snippets/:id` — soft delete (sets `is_deleted = 1`).
 
 ### Shared library (plaintext, all members can read)
 - `GET  /api/library?since=VERSION` — incremental sync of library snippets
@@ -331,22 +372,20 @@ JSON) is replaced. New responsibilities for the Teams build:
 1. **Settings: replace the team-library URL field** with a server URL +
    login UI (email + password for fallback, "Sign in with Google" button
    for OIDC).
-2. **First-login flow:** after authentication, prompt to either set up
-   the vault (new account) or unlock it (existing account from another
-   device). Show the recovery code once, with copy-to-clipboard + "I've
-   saved this somewhere safe" confirmation.
-3. **Existing local snippets migration:** on first login, prompt to upload
-   the user's existing local snippets to the server. Each is encrypted
-   with the freshly-created `vault_key` and POSTed. The local copies
-   become the read cache; they're no longer authoritative.
+2. **First-login flow:** sign in, done. No vault passphrase, no recovery
+   code — the server holds the encryption key. Total onboarding is
+   typically two clicks (OIDC) or two fields (password fallback).
+3. **Existing local snippets migration:** on first login, prompt to
+   upload the user's existing local snippets to the server. Each is sent
+   as plaintext JSON over TLS; the server encrypts before storing. The
+   local copies become the read cache; they're no longer authoritative.
 4. **Background sync thread** (replaces the existing team-library polling
    thread): pulls library + personal snippets, pushes local changes.
 5. **Offline handling:** writes queue locally if the server is unreachable
    and drain on reconnect. Reads are served from the local SQLite mirror,
-   so the launcher works fully offline (encryption keys stay in the OS
-   keychain).
-6. **Vault key handling:** decrypt-on-load when the app starts; clear on
-   logout. Never written to disk except in the OS keychain.
+   so the launcher works fully offline.
+6. **JWT handling:** the auth token is stored in the OS keychain via the
+   `keyring` crate, scoped to the server URL. Sign-out clears it.
 
 ## Dashboard (htmx)
 
@@ -411,70 +450,82 @@ Each phase is a separate committable milestone. We can pause for review
 between any two.
 
 1. **Server skeleton.** `crates/snipdesk-server`, Axum hello-world,
-   SQLite + sqlx, config file parser, Dockerfile, GitHub Actions release
+   SQLite + sqlx, config file parser with master-key loading (env var
+   primary), `gen-key` CLI subcommand, Dockerfile, GitHub Actions release
    workflow that publishes the Docker image on tag push.
 2. **Auth: password mode.** Signup, login, JWT, `/api/me`. Argon2id.
-   Tested with `curl` + integration tests in the crate.
-3. **Vault.** `POST /api/vault/init`, `GET /api/vault`,
-   `PUT /api/vault/passphrase`. Client-side AES-GCM + Argon2id helpers
-   added to `snipdesk-core` (shared by client and server-side test
-   harness).
-4. **Personal snippet sync API.** CRUD + incremental sync. Round-trip
+   First-admin auto-promotion. Tested with `curl` + integration tests.
+3. **Personal snippet sync API.** CRUD + incremental sync. Server-side
+   AES-GCM encryption layer in front of the storage path. Round-trip
    tested with a CLI tool.
-5. **Client integration: login + sync.** The Teams desktop client gets
-   the new settings UI, login flow, vault setup, migration prompt for
-   existing local snippets, and background sync. Throw away
+4. **Client integration: login + sync.** The Teams desktop client gets
+   the new settings UI, login flow, migration prompt for existing local
+   snippets, and background sync. Throw away
    `snipdesk-teams::shared_url`.
-6. **Shared library.** `/api/library` endpoints, client-side rendering
+5. **Shared library.** `/api/library` endpoints, client-side rendering
    under the existing "Team Library" sidebar pseudo-folder. Admins manage
    via the dashboard (next phase).
-7. **Dashboard.** htmx + askama. Users list, library curation, server
+6. **Dashboard.** htmx + askama. Users list, library curation, server
    settings.
-8. **OIDC.** Google Workspace flow end-to-end. Tauri custom-URL handler
+7. **OIDC.** Google Workspace flow end-to-end. Tauri custom-URL handler
    for the JWT handoff.
-9. **Polish + docs.** Deployment guide, recovery-code UX review,
-   security review of crypto code (ideally by someone outside the project),
-   public release notes.
+8. **Polish + docs.** Deployment guide, security review of crypto code
+   (ideally by someone outside the project), public release notes.
 
 ## Open questions for the backend team
 
-- Is there a preferred reverse proxy / TLS termination convention in your
+- **Reverse proxy / TLS:** is there a preferred convention in your
   infrastructure? (Caddy / nginx / Cloudflare / something internal?)
-- Is there an existing Google Workspace OIDC client we should reuse, or
-  create a new one for SnipDesk?
-- Any preferred logging/observability stack to integrate with (structured
-  JSON to stdout is the default and works with most things)?
-- Backup/restore expectations: should the server expose a maintenance
-  endpoint to dump-and-restore the SQLite DB, or is filesystem-level backup
-  (the data directory) sufficient?
-- Capacity expectations for v1: how many users on the initial deployment?
-  (SQLite is comfortable to ~1k active users on one box; Postgres becomes
-  worth the swap above that.)
+- **OIDC client:** is there an existing Google Workspace OIDC client we
+  should reuse, or create a new one for SnipDesk?
+- **Master-key storage:** preferred form for the `SNIPDESK_MASTER_KEY`
+  secret — env var injected by your container orchestrator (e.g. K8s
+  Secret, Docker secret), a mounted file, or something else?
+- **Logging/observability:** any preferred stack to integrate with?
+  Structured JSON to stdout is the default; works with Loki, Vector,
+  Datadog, etc.
+- **Backup/restore:** filesystem-level backup of the data directory
+  (including the encrypted DB file) is the simplest answer. Should the
+  server also expose a maintenance endpoint for online dumps?
+- **Capacity expectations:** how many users on the initial deployment?
+  SQLite is comfortable up to ~1k active users on one box; Postgres
+  becomes worth the swap above that. The schema is identical either way.
+- **Disaster recovery:** if the master key is lost (e.g. secret rotation
+  mistake without preserving the old key), personal snippets become
+  unrecoverable. Confirm your team has a key-backup convention you want
+  us to document around.
 
 ## Security posture summary
 
 If your CTO or security reviewer asks "what protects user data?", the
-honest answer:
+honest answer for v1:
 
-- **In transit:** TLS (either built-in or terminated at the reverse proxy).
-- **At rest (personal snippets):** AES-256-GCM with a per-user key the
-  server has never seen. A full DB dump reveals nothing.
-- **At rest (shared library):** plaintext, but only accessible to
-  authenticated members. Shared canned replies aren't a secret.
-- **In memory (server):** never. The server handles only ciphertext for
-  personal snippets.
-- **In memory (client):** the `vault_key` is in process memory while the
-  app is running, and in the OS keychain when it isn't. Standard for any
-  E2E desktop app.
-- **Account compromise:** if an attacker steals a user's OIDC session,
-  they can read snippet metadata but cannot decrypt content without also
-  obtaining the vault passphrase. The vault is the second factor.
-- **Server compromise:** an attacker with shell access to the server can
-  see ciphertext and metadata only. They cannot decrypt personal snippets
-  even with the JWT secret and DB access combined.
-- **Lost passphrase:** recovered via the recovery code shown once at
-  setup. Lost both: data is unrecoverable (this is the correct outcome
-  for E2E).
+- **In transit:** TLS, terminated either at the reverse proxy or by the
+  server's built-in option.
+- **At rest (personal snippets):** AES-256-GCM with a server-held master
+  key sourced from an env var or mode-`0600` config file (never embedded
+  in the image). A full DB dump reveals nothing without the key.
+- **At rest (shared library):** plaintext. Only accessible to
+  authenticated members. Shared canned replies aren't secret content.
+- **In memory (server):** plaintext briefly during encrypt/decrypt around
+  each API call. The server is the trusted middleware here.
+- **In memory (client):** plaintext, same as Lite — the local SQLite
+  mirror is a regular file, protected by OS user permissions.
+- **API authorization:** every personal-snippet endpoint enforces
+  `snippet.owner_id == authenticated_user.id`. A signed-in user
+  cannot access another user's snippets via any documented API path.
+- **Dashboard:** never displays personal snippet bodies. Admin views are
+  counts, timestamps, and account metadata only.
+- **Account compromise (OIDC session theft):** an attacker can read that
+  user's personal snippets via the API. Mitigation: short JWT TTL (24h),
+  ability for admins to disable users from the dashboard.
+- **Server compromise (shell access):** an attacker with the master key
+  and DB can decrypt all personal snippets. This is the explicit
+  v1 limit — operators of the server are inside the trust boundary.
+
+If the trust model needs to change (external SaaS, untrusted operators),
+see *Future: end-to-end encryption* in the Encryption section for the
+upgrade path. The v1 schema is forward-compatible.
 
 ---
 

@@ -28,3 +28,10 @@ desktop.ini
 # Editor
 .vscode/
 .idea/
+
+# Local secrets for signing release builds (TAURI_SIGNING_PRIVATE_KEY +
+# passphrase). NEVER commit these. CI gets them from GitHub Secrets; see
+# .env.example for the local-build format.
+.env
+.env.local
+.env.*.local

@@ -18,6 +18,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readdirSync, renameSync, existsSync } from "node:fs";
 
+import { loadEnv } from "./load-env.mjs";
+
+// Pull signing key + passphrase from .env if present so local builds can
+// sign updater artifacts without per-shell env-var ceremony. No-op in CI.
+loadEnv();
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
 // Extra args after `--` (e.g. `npm run tauri:build:teams -- --bundles nsis`)

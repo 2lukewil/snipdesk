@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "node scripts/tauri-build.mjs",
     "tauri:build:teams": "node scripts/build-teams.mjs"
   },
   "devDependencies": {

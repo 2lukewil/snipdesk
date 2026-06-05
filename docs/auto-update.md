@@ -118,11 +118,11 @@ If CI is broken and you need to ship anyway, the manual local path:
 ```powershell
 cd E:\snipdesk
 
-# Build both flavors with the signing env vars set so .sig files appear.
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $HOME\.snipdesk-update.key -Raw
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<your-passphrase>"
+# One-time setup: copy .env.example to .env and fill in
+# TAURI_SIGNING_PRIVATE_KEY_PATH + TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+# Both npm scripts below pick up .env automatically via scripts/load-env.mjs.
 
-npx @tauri-apps/cli build --bundles nsis
+npm run tauri:build -- --bundles nsis
 npm run tauri:build:teams -- --bundles nsis
 
 # The Teams build self-renames its installer to SnipDesk-Teams-setup.exe.

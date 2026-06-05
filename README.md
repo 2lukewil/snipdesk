@@ -54,7 +54,7 @@ on {payment_method} within 3-5 business days.
 
 ## Data location
 
-Your snippet database and settings live under the OS app-data folder, keyed by the build's identifier (`com.snipdesk.lite` for the free build, `com.snipdesk.app` for Teams):
+Your snippet database and settings live under the OS app-data folder, keyed by the build's identifier (`com.snipdesk.lite` for the free build, `com.snipdesk.teams` for Teams):
 
 - Windows: `%APPDATA%\com.snipdesk.lite\`
 - macOS: `~/Library/Application Support/com.snipdesk.lite/`

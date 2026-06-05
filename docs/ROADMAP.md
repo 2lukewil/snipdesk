@@ -137,7 +137,7 @@ needs a break.
   the agent at least gets a copy-only flow instead of silent failure.
 - **Side-by-side install identifiers.** *(Done.)* The free build is
   `SnipDesk Lite` / `com.snipdesk.lite`; Teams is `SnipDesk` /
-  `com.snipdesk.app`. The Teams overrides live in
+  `com.snipdesk.teams`. The Teams overrides live in
   `src-tauri/tauri.teams.conf.json`; release installers are normalized to
   `SnipDesk-Lite-setup.exe` / `SnipDesk-Teams-setup.exe`.
 - **First-run onboarding.** `Settings.onboarding_completed` exists but

@@ -14,7 +14,14 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
-const envPath = resolve(repoRoot, ".env");
+// Both files are gitignored. `.env.local` matches the convention used by
+// Vite/Next.js (a local-only override) and is checked first; `.env`
+// follows as a fallback. Existing process.env values still win over both
+// so CI is unaffected.
+const envFiles = [
+  resolve(repoRoot, ".env.local"),
+  resolve(repoRoot, ".env"),
+];
 
 // KEY=VALUE per line. Values may be wrapped in double quotes to preserve
 // surrounding whitespace and embedded newlines. `#` starts a comment when
@@ -67,17 +74,27 @@ function parseEnv(text) {
 }
 
 export function loadEnv() {
-  if (!existsSync(envPath)) return { loaded: false };
-  let parsed;
-  try {
-    parsed = parseEnv(readFileSync(envPath, "utf8"));
-  } catch (err) {
-    console.error(`[env] couldn't read ${envPath}: ${err.message}`);
-    return { loaded: false };
+  // Files iterated in priority order: earlier wins on duplicate keys.
+  // (We don't bother reading later files for keys already set by an
+  // earlier one — just check + skip.)
+  const merged = {};
+  const sources = [];
+  for (const p of envFiles) {
+    if (!existsSync(p)) continue;
+    try {
+      const parsed = parseEnv(readFileSync(p, "utf8"));
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!(k in merged)) merged[k] = v;
+      }
+      sources.push(p);
+    } catch (err) {
+      console.error(`[env] couldn't read ${p}: ${err.message}`);
+    }
   }
-  // CI values (set before this script runs) take precedence over .env.
+  if (sources.length === 0) return { loaded: false };
+  // CI values (set before this script runs) take precedence over both files.
   let applied = 0;
-  for (const [k, v] of Object.entries(parsed)) {
+  for (const [k, v] of Object.entries(merged)) {
     if (process.env[k] === undefined) {
       process.env[k] = v;
       applied++;
@@ -100,5 +117,5 @@ export function loadEnv() {
       );
     }
   }
-  return { loaded: true, applied };
+  return { loaded: true, applied, sources };
 }

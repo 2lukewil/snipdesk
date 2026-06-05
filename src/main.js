@@ -415,6 +415,7 @@ async function init() {
   // Supplier reads state.folders live so new folders show up without a refresh hop.
   attachCombobox(els.editorFolderInput, () => state.folders.map((f) => f.path));
   bindEvents();
+  attachTreeRootDropTarget();
   focusSearch();
 
   // Hotkey re-opened the window: reset launcher state.
@@ -785,6 +786,51 @@ function clearDropTargets() {
   for (const el of els.folderTree.querySelectorAll(".drop-target")) {
     el.classList.remove("drop-target");
   }
+  els.folderTree.classList.remove("root-drop-target");
+}
+
+// Treat the empty space below the folder list as a "drop to top level"
+// zone. Dropping a nested folder there un-nests it; dropping a snippet
+// there moves it to Unfiled. Events on real folder nodes still fire their
+// own handlers — we only act when the cursor is over the tree container
+// itself (not over a child node).
+function isEmptyTreeArea(e) {
+  return e.target === els.folderTree;
+}
+function attachTreeRootDropTarget() {
+  const handle = (e) => {
+    if (!dragState) return;
+    if (!isEmptyTreeArea(e)) {
+      els.folderTree.classList.remove("root-drop-target");
+      return;
+    }
+    const valid =
+      dragState.type === "snippets" ||
+      (dragState.type === "folder" && canReparent(dragState.path, ""));
+    e.preventDefault();
+    e.dataTransfer.dropEffect = valid ? "move" : "none";
+    els.folderTree.classList.toggle("root-drop-target", valid);
+  };
+  els.folderTree.addEventListener("dragenter", handle);
+  els.folderTree.addEventListener("dragover", handle);
+  els.folderTree.addEventListener("dragleave", (e) => {
+    if (e.target === els.folderTree) {
+      els.folderTree.classList.remove("root-drop-target");
+    }
+  });
+  els.folderTree.addEventListener("drop", async (e) => {
+    if (!isEmptyTreeArea(e)) return;
+    e.preventDefault();
+    els.folderTree.classList.remove("root-drop-target");
+    const ds = dragState;
+    dragState = null;
+    if (!ds) return;
+    if (ds.type === "snippets") {
+      await bulkMoveToFolder(ds.ids, "");
+    } else if (ds.type === "folder" && canReparent(ds.path, "")) {
+      await reparentFolder(ds.path, "");
+    }
+  });
 }
 
 // Can `srcPath` be reparented under `destFolder` ("" = root)?
@@ -2366,7 +2412,7 @@ function confirmModal({ title, message, confirmText = "OK", danger = false }) {
     p.className = "dlg-msg";
     p.textContent = message;
     card.appendChild(p);
-    dlgActions(card, [
+    const actions = dlgActions(card, [
       { label: "Cancel", onClick: () => finish(false) },
       {
         label: confirmText,
@@ -2374,6 +2420,13 @@ function confirmModal({ title, message, confirmText = "OK", danger = false }) {
         onClick: () => finish(true),
       },
     ]);
+    // Focus the confirm button so Enter activates it naturally without
+    // catching the global paste-on-Enter handler. Escape still cancels
+    // via the overlay's keyhandler.
+    setTimeout(() => {
+      const confirmBtn = actions.querySelector("button:last-child");
+      if (confirmBtn) confirmBtn.focus();
+    }, 0);
   });
 }
 
@@ -2425,6 +2478,89 @@ async function chooseFolderPath(currentPath = null) {
     return name ?? undefined;
   }
   return res.path;
+}
+
+// ---------- Hotkey capture ----------
+// Convert a regular text input into a "click here and press a key combo"
+// field. Lets users set hotkeys by demonstrating them instead of typing
+// "Alt+Space" by hand. Output format matches what parse_shortcut accepts
+// on the Rust side.
+function enableHotkeyCapture(input, { allowClear = false } = {}) {
+  input.readOnly = true;
+  let originalValue = "";
+  const originalPlaceholder = input.placeholder || "";
+
+  input.addEventListener("focus", () => {
+    originalValue = input.value;
+    input.value = "";
+    input.placeholder = "Press a key combination…";
+  });
+
+  input.addEventListener("blur", () => {
+    // User tabbed away or clicked elsewhere without pressing a key — put
+    // back what was there. The "intentionally clear" path goes through
+    // Backspace below (only for inputs where blank means "disabled").
+    if (!input.value) input.value = originalValue;
+    input.placeholder = originalPlaceholder;
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      input.value = originalValue;
+      input.blur();
+      return;
+    }
+    if (allowClear && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault();
+      e.stopPropagation();
+      input.value = "";
+      originalValue = "";
+      input.blur();
+      return;
+    }
+    // Modifier-only press — keep waiting for the main key.
+    if (["Control", "Shift", "Alt", "Meta", "OS"].includes(e.key)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const keyToken = codeToHotkeyToken(e.code);
+    if (!keyToken) return; // unmappable (numpad, etc.) — ignore
+
+    const mods = [];
+    if (e.ctrlKey) mods.push("Ctrl");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+    if (e.metaKey) mods.push("Cmd");
+
+    // Function keys are fine alone (F1–F12 are common global hotkeys);
+    // everything else needs at least one modifier to avoid registering
+    // bare letters as a global hotkey that swallows normal typing.
+    const isFunctionKey = /^F\d+$/.test(keyToken);
+    if (!isFunctionKey && mods.length === 0) return;
+
+    input.value = [...mods, keyToken].join("+");
+    input.blur();
+  });
+}
+
+function codeToHotkeyToken(code) {
+  if (code.startsWith("Key")) return code.slice(3); // KeyA → A
+  if (code.startsWith("Digit")) return code.slice(5); // Digit1 → 1
+  if (/^F\d+$/.test(code)) return code; // F1 → F1
+  const map = {
+    Space: "Space",
+    Enter: "Enter",
+    Tab: "Tab",
+    Backspace: "Backspace",
+    ArrowUp: "Up",
+    ArrowDown: "Down",
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+  };
+  return map[code] || null;
 }
 
 function showContextMenu(x, y, items) {
@@ -2817,8 +2953,14 @@ async function importSnippets() {
     if (lower.endsWith(".csv")) format = "csv";
     else format = "json";
 
-    const n = await invoke("import_snippets", { args: { path, format } });
-    setStatus(`Imported ${n} snippet${n === 1 ? "" : "s"}`, "ok");
+    const result = await invoke("import_snippets", { args: { path, format } });
+    const imported = result?.imported ?? 0;
+    const skipped = result?.skipped_duplicates ?? 0;
+    const parts = [`Imported ${imported} snippet${imported === 1 ? "" : "s"}`];
+    if (skipped > 0) {
+      parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
+    }
+    setStatus(parts.join(" — "), skipped > 0 && imported === 0 ? "err" : "ok");
     await refresh();
   } catch (err) {
     const message = typeof err === "string" ? err : err?.message || String(err);
@@ -2953,6 +3095,12 @@ function bindEvents() {
   els.updateLater.addEventListener("click", dismissUpdateToast);
 
   els.setSave.addEventListener("click", saveSettings);
+
+  // Hotkey fields: click-and-press to capture, instead of typing chord
+  // strings by hand. Quick-add allows clearing via Backspace/Delete
+  // (blank = disabled); the main launcher hotkey is always required.
+  enableHotkeyCapture(els.setHotkey);
+  enableHotkeyCapture(els.setQuickAddHotkey, { allowClear: true });
   els.setCancel.addEventListener("click", closeSettings);
   els.btnExport.addEventListener("click", exportSnippets);
   els.btnImport.addEventListener("click", importSnippets);
@@ -3073,7 +3221,11 @@ async function onKeyDown(ev) {
     if (s) await duplicateSnippet(s.id);
     return;
   }
-  if (ev.key === "Delete" && document.activeElement !== els.search) {
+  if (
+    ev.key === "Delete" &&
+    document.activeElement !== els.search &&
+    !anyModalOpen()
+  ) {
     ev.preventDefault();
     await deleteCurrent();
     return;

@@ -20,7 +20,9 @@ snipdesk-core = { path = "../crates/snipdesk-core" }
 # `cargo tree --no-default-features` should not list this crate or ureq.
 snipdesk-teams = { path = "../crates/snipdesk-teams", optional = true }
 
-tauri = { version = "2.1", features = ["tray-icon"] }
+# `devtools` keeps the Chromium DevTools available in release builds so
+# users can self-diagnose. Right-click → Inspect, or F12.
+tauri = { version = "2.1", features = ["tray-icon", "devtools"] }
 tauri-plugin-global-shortcut = "2.2"
 tauri-plugin-clipboard-manager = "2.2"
 tauri-plugin-dialog = "2.2"

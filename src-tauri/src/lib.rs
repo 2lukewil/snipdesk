@@ -435,11 +435,11 @@ pub fn toggle_window_with_state(handle: &tauri::AppHandle, win: &tauri::WebviewW
                 s.was_minimized.store(currently, Ordering::SeqCst);
             }
         });
-        // Re-center only when coming from fully hidden — restoring from
-        // minimize should land back at the user's prior position.
-        if !is_minimized {
-            let _ = win.center();
-        }
+        // No explicit re-center: tauri-plugin-window-state restores the
+        // user's last position from disk on launch, and we want subsequent
+        // hotkey-toggles to respect whatever position they've dragged the
+        // window to during this session. Re-centering every reopen wiped
+        // their preference; users found this jarring.
         let _ = win.emit("snipdesk://opened", ());
     }
 }

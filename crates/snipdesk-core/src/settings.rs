@@ -18,8 +18,11 @@ pub struct Settings {
     pub close_to_tray: bool,
     #[serde(default = "default_true")]
     pub minimize_to_tray: bool,
-    /// `--autostart` always starts hidden regardless of this.
-    #[serde(default)]
+    /// `--autostart` always starts hidden regardless of this. Default is
+    /// true: SnipDesk is a launcher, so the natural pattern is "start
+    /// hidden, summon with Alt+Space" rather than a stray window taking
+    /// focus on every login.
+    #[serde(default = "default_true")]
     pub start_in_tray: bool,
     #[serde(default)]
     pub hide_on_blur: bool,
@@ -166,7 +169,7 @@ impl Default for Settings {
             start_with_windows: true,
             close_to_tray: true,
             minimize_to_tray: true,
-            start_in_tray: false,
+            start_in_tray: true,
             hide_on_blur: false,
             always_on_top: false,
             theme: "dark".to_string(),

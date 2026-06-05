@@ -57,6 +57,12 @@ pub enum SortOrder {
     Usage,
 }
 
+#[derive(Debug, Serialize, Clone, Copy)]
+pub struct ImportResult {
+    pub imported: usize,
+    pub skipped_duplicates: usize,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -511,11 +517,31 @@ impl Db {
         self.list(None, None, None, SortOrder::Alphabetical)
     }
 
-    pub fn import(&self, items: Vec<NewSnippet>) -> Result<usize> {
+    pub fn import(&self, items: Vec<NewSnippet>) -> Result<ImportResult> {
+        // Pre-load existing titles for case-insensitive duplicate detection.
+        // Imports that bring the same canned reply twice (a common mistake
+        // when exporting+re-importing) would otherwise quietly create
+        // hundreds of "Greeting"s in the user's library.
+        let mut existing: std::collections::HashSet<String> = self
+            .conn
+            .prepare("SELECT title FROM snippets")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .map(|t| t.trim().to_lowercase())
+            .collect();
+
         let tx = self.conn.unchecked_transaction()?;
         let now = Utc::now().timestamp();
-        let mut n = 0;
+        let mut imported = 0;
+        let mut skipped_duplicates = 0;
         for item in items {
+            let key = item.title.trim().to_lowercase();
+            // Empty titles are unsalvageable; treat as a duplicate of
+            // "everything else" rather than letting them in.
+            if key.is_empty() || existing.contains(&key) {
+                skipped_duplicates += 1;
+                continue;
+            }
             let id = Uuid::new_v4().to_string();
             let tags = encode_tags(&item.tags);
             let folder = normalize_folder(item.folder_path.as_deref());
@@ -532,10 +558,16 @@ impl Db {
                  VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, ?6, ?6)",
                 params![id, item.title, item.body, tags, folder, now],
             )?;
-            n += 1;
+            // Track titles seen in this batch too, so a file that itself
+            // contains internal duplicates only imports the first copy.
+            existing.insert(key);
+            imported += 1;
         }
         tx.commit()?;
-        Ok(n)
+        Ok(ImportResult {
+            imported,
+            skipped_duplicates,
+        })
     }
 
     fn seed_examples(&self) -> Result<()> {

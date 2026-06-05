@@ -418,18 +418,21 @@
                 <button id="btn-open-logs" class="btn-secondary" type="button">Open logs folder</button>
               </div>
               <div id="log-path-display" class="log-path-display"></div>
+              <hr class="settings-divider" />
+              <p class="hint-block">
+                Export your snippets to JSON or CSV, or import from a previous
+                export. Imports skip duplicate titles automatically.
+              </p>
+              <div class="maint-buttons">
+                <button id="btn-export" class="btn-secondary" type="button">Export</button>
+                <button id="btn-import" class="btn-secondary" type="button">Import</button>
+              </div>
             </div>
           </div>
 
-          <div class="modal-actions between">
-            <div class="io-buttons">
-              <button id="btn-export" class="btn-secondary">Export…</button>
-              <button id="btn-import" class="btn-secondary">Import…</button>
-            </div>
-            <div>
-              <button id="set-cancel" class="btn-secondary">Cancel</button>
-              <button id="set-save" class="btn-primary">Save</button>
-            </div>
+          <div class="modal-actions">
+            <button id="set-cancel" class="btn-secondary">Cancel</button>
+            <button id="set-save" class="btn-primary">Save</button>
           </div>
         </div>
       </section>

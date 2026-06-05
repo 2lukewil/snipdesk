@@ -1100,6 +1100,11 @@ body.compact .search-bar {
 .log-path-display:empty {
   display: none;
 }
+.settings-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 14px 0 6px;
+}
 
 /* --- In-app dialogs (replace window.prompt/confirm) --- */
 /* Layer above the editor/settings modals (z-index 10) and update toast (50). */
@@ -1192,4 +1197,26 @@ body.compact .search-bar {
 }
 .folder-node.dragging {
   opacity: 0.45;
+}
+/* Hovering with a drag over the empty area below the folder list signals
+ * "release here to move to top level / Unfiled" — a soft dashed outline
+ * around the tree's empty real estate, plus a hint line at the bottom. */
+#folder-tree.root-drop-target {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -3px;
+  position: relative;
+}
+#folder-tree.root-drop-target::after {
+  content: "Drop here to move to top level";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 6px;
+  pointer-events: none;
 }

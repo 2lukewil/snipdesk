@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-use crate::db::{FolderInfo, NewSnippet, Snippet, SortOrder, UpdateSnippet};
+use crate::db::{FolderInfo, ImportResult, NewSnippet, Snippet, SortOrder, UpdateSnippet};
 use crate::paste;
 use crate::settings::{Settings, SettingsPath};
 #[cfg(feature = "teams")]
@@ -384,7 +384,7 @@ pub struct ImportArgs {
 }
 
 #[tauri::command]
-pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResult<usize> {
+pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResult<ImportResult> {
     let items: Vec<NewSnippet> = match args.format.as_str() {
         "json" => {
             let contents = std::fs::read_to_string(&args.path).map_err(e)?;

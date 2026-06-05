@@ -66,6 +66,8 @@ pub fn run() {
         // tauri.conf.json; the frontend drives check/download/install.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Remember the main window's last size/position across launches.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let data_dir = app
                 .path()

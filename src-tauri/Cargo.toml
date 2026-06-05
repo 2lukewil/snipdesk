@@ -5,6 +5,7 @@ description = "Snippet launcher for support agents"
 authors = ["2lukewil"]
 edition = "2021"
 rust-version = "1.75"
+license = "MIT"
 
 [lib]
 name = "snipdesk_lib"
@@ -30,6 +31,8 @@ tauri-plugin-autostart = "2"
 # `ureq`/`snipdesk-teams` specifically, so this doesn't trip it.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Persists the main window's size/position across launches.
+tauri-plugin-window-state = "2"
 
 serde = { workspace = true }
 serde_json = { workspace = true }

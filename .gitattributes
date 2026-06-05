@@ -1,0 +1,29 @@
+# Normalize line endings: text files store as LF in the repo, check out with
+# the platform default. Stops Windows checkouts from quietly committing CRLF
+# and silences the "LF will be replaced by CRLF" warning on every commit.
+* text=auto eol=lf
+
+# Files that must stay CRLF on Windows regardless (PowerShell + batch).
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary — never normalize.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.pdf   binary
+*.exe   binary
+*.msi   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+*.zip   binary
+*.gz    binary
+*.7z    binary
+*.db    binary
+*.sqlite binary

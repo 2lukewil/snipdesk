@@ -136,11 +136,7 @@ impl Db {
             "CREATE INDEX IF NOT EXISTS idx_snippets_folder ON snippets(folder_path);",
         )?;
 
-        let me = Db { conn };
-        if me.count()? == 0 {
-            me.seed_examples()?;
-        }
-        Ok(me)
+        Ok(Db { conn })
     }
 
     pub fn count(&self) -> Result<i64> {
@@ -568,43 +564,6 @@ impl Db {
             imported,
             skipped_duplicates,
         })
-    }
-
-    fn seed_examples(&self) -> Result<()> {
-        let examples = vec![
-            NewSnippet {
-                title: "Greeting".into(),
-                body: "Hi {customer_name},\n\nThanks for reaching out to support! I'm happy to help.".into(),
-                tags: vec!["greeting".into(), "general".into()],
-                folder_path: Some("General".into()),
-            },
-            NewSnippet {
-                title: "Ask for server details".into(),
-                body: "Could you please share your service ID and the exact error message you're seeing? That'll help me track down what's happening on our end.".into(),
-                tags: vec!["diagnostic".into()],
-                folder_path: Some("Diagnostics".into()),
-            },
-            NewSnippet {
-                title: "Refund follow-up".into(),
-                body: "Your refund for invoice #{invoice_id} has been processed. It usually takes 3-5 business days to show up on {payment_method}.\n\nLet me know if you need anything else!".into(),
-                tags: vec!["billing".into(), "refund".into()],
-                folder_path: Some("Billing/Refunds".into()),
-            },
-            NewSnippet {
-                title: "Cancellation confirmation".into(),
-                body: "Your service ({service_type}) has been scheduled for cancellation on {cancellation_date}. You'll have access until that date — after that, the server will be deprovisioned and any data removed.".into(),
-                tags: vec!["billing".into(), "cancellation".into()],
-                folder_path: Some("Billing/Cancellations".into()),
-            },
-            NewSnippet {
-                title: "Closing".into(),
-                body: "Is there anything else I can help you with? Otherwise, have a great day!".into(),
-                tags: vec!["closing".into(), "general".into()],
-                folder_path: Some("General".into()),
-            },
-        ];
-        self.import(examples)?;
-        Ok(())
     }
 
     /// Case-insensitive title match. `exclude_id` skips self when checking

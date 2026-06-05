@@ -15,9 +15,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Match what the dev machine uses. Bump in lockstep with package.json's
-  # engines field and rust-toolchain.toml's channel.
+  # Node version for the JS toolchain (vite build). Keep in lockstep with
+  # release.yml and rust-toolchain.toml's channel.
   NODE_VERSION: '24'
+  # Run bundled JavaScript actions (rust-cache, etc.) on Node 24 instead of
+  # the deprecated Node 20 runtime. GitHub force-enables this in June 2026;
+  # opting in now keeps runs warning-free and forward-compatible.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   validate:

@@ -21,6 +21,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # Run bundled JavaScript actions (action-gh-release, rust-cache) on Node 24
+  # instead of the deprecated Node 20 runtime. GitHub force-enables this in
+  # June 2026; opting in now keeps runs warning-free and forward-compatible.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build, sign, publish

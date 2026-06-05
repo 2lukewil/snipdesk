@@ -1079,3 +1079,96 @@ body.compact .search-bar {
 .log-path-display:empty {
   display: none;
 }
+
+/* --- In-app dialogs (replace window.prompt/confirm) --- */
+/* Layer above the editor/settings modals (z-index 10) and update toast (50). */
+.app-modal {
+  z-index: 60;
+}
+.dlg-card {
+  width: min(440px, 92vw);
+  gap: 12px;
+}
+.dlg-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.dlg-card input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+}
+.dlg-card input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.btn-danger {
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  background: var(--danger);
+  color: white;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-danger:hover {
+  filter: brightness(1.1);
+}
+
+/* --- Folder picker --- */
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+.folder-picker-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-picker-item:hover {
+  background: var(--bg-hover);
+}
+.folder-picker-item.current {
+  color: var(--text-dim);
+}
+
+/* --- Folder snippet-count badge --- */
+.folder-count {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+/* --- Drag-and-drop feedback --- */
+.folder-node.drop-target {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.snippet-list li.dragging {
+  opacity: 0.45;
+}
+.folder-node.dragging {
+  opacity: 0.45;
+}

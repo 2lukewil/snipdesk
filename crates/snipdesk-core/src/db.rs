@@ -46,6 +46,8 @@ pub struct FolderInfo {
     pub path: String,
     /// True if at least one snippet is directly in this folder (not just descendants).
     pub has_snippets: bool,
+    /// Number of snippets directly in this folder (not counting descendants).
+    pub count: i64,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -298,7 +300,9 @@ impl Db {
     /// always surfaces "Billing".
     pub fn list_folders(&self) -> Result<Vec<FolderInfo>> {
         let mut paths = std::collections::BTreeSet::new();
-        let mut has_direct_snippets = std::collections::BTreeSet::new();
+        // Direct (non-recursive) snippet count per folder_path.
+        let mut direct_counts: std::collections::BTreeMap<String, i64> =
+            std::collections::BTreeMap::new();
 
         {
             let mut stmt = self.conn.prepare("SELECT path FROM folders")?;
@@ -311,13 +315,15 @@ impl Db {
             }
         }
         {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT folder_path FROM snippets WHERE folder_path IS NOT NULL AND folder_path <> ''")?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            let mut stmt = self.conn.prepare(
+                "SELECT folder_path, COUNT(*) FROM snippets \
+                 WHERE folder_path IS NOT NULL AND folder_path <> '' \
+                 GROUP BY folder_path",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
             for r in rows {
-                let p = r?;
-                has_direct_snippets.insert(p.clone());
+                let (p, c) = r?;
+                direct_counts.insert(p.clone(), c);
                 for ancestor in path_ancestors(&p) {
                     paths.insert(ancestor);
                 }
@@ -327,10 +333,11 @@ impl Db {
         Ok(paths
             .into_iter()
             .map(|p| {
-                let has_snippets = has_direct_snippets.contains(&p);
+                let count = direct_counts.get(&p).copied().unwrap_or(0);
                 FolderInfo {
                     path: p,
-                    has_snippets,
+                    has_snippets: count > 0,
+                    count,
                 }
             })
             .collect())

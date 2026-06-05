@@ -776,6 +776,68 @@ function sortModeFromSettings() {
 }
 
 // ---------- Folder tree rendering ----------
+// ---------- Drag-and-drop (move snippets, reparent folders) ----------
+let dragState = null;
+
+// Clear any lingering drop-target highlight (e.g. a drop that landed off-target).
+function clearDropTargets() {
+  for (const el of els.folderTree.querySelectorAll(".drop-target")) {
+    el.classList.remove("drop-target");
+  }
+}
+
+// Can `srcPath` be reparented under `destFolder` ("" = root)?
+function canReparent(srcPath, destFolder) {
+  if (destFolder === srcPath) return false; // onto itself
+  if (destFolder.startsWith(srcPath + "/")) return false; // into its own descendant
+  const currentParent = srcPath.includes("/")
+    ? srcPath.slice(0, srcPath.lastIndexOf("/"))
+    : "";
+  if (destFolder === currentParent) return false; // already there — no-op
+  return true;
+}
+
+async function reparentFolder(srcPath, destFolder) {
+  if (!canReparent(srcPath, destFolder)) return;
+  const base = srcPath.split("/").pop();
+  const newPath = destFolder ? `${destFolder}/${base}` : base;
+  try {
+    await invoke("rename_folder", { args: { old_path: srcPath, new_path: newPath } });
+    if (destFolder) state.expandedFolders.add(destFolder);
+    if (state.selectedFolder === srcPath) state.selectedFolder = newPath;
+    setStatus(`Moved folder to ${newPath}`, "ok");
+    await refresh();
+  } catch (err) {
+    setStatus(`Error: ${err}`, "err");
+  }
+}
+
+// Wire a sidebar node as a drop target. `targetPath` is "" for Unfiled/root.
+function attachFolderDropTarget(node, targetPath) {
+  node.addEventListener("dragover", (e) => {
+    if (!dragState) return;
+    if (dragState.type === "folder" && !canReparent(dragState.path, targetPath)) {
+      return; // invalid move — don't accept (cursor shows no-drop)
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    node.classList.add("drop-target");
+  });
+  node.addEventListener("dragleave", () => node.classList.remove("drop-target"));
+  node.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    node.classList.remove("drop-target");
+    const ds = dragState;
+    dragState = null;
+    if (!ds) return;
+    if (ds.type === "snippets") {
+      await bulkMoveToFolder(ds.ids, targetPath);
+    } else if (ds.type === "folder") {
+      await reparentFolder(ds.path, targetPath);
+    }
+  });
+}
+
 function renderFolders() {
   els.folderTree.innerHTML = "";
 
@@ -801,6 +863,8 @@ function renderFolders() {
       false
     );
     rootNode.addEventListener("click", () => selectFolder(ROOT_FOLDER));
+    // Drop here to unfile a snippet or move a folder to the top level.
+    attachFolderDropTarget(rootNode, "");
     els.folderTree.appendChild(rootNode);
   }
 
@@ -844,8 +908,23 @@ function renderFolders() {
       state.selectedFolder === f.path,
       depth,
       hasChildren.has(f.path),
-      state.expandedFolders.has(f.path)
+      state.expandedFolders.has(f.path),
+      f.count
     );
+    // Drag to reparent; drop snippets/folders onto it.
+    node.draggable = true;
+    node.addEventListener("dragstart", (e) => {
+      dragState = { type: "folder", path: f.path };
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", f.path);
+      node.classList.add("dragging");
+    });
+    node.addEventListener("dragend", () => {
+      node.classList.remove("dragging");
+      clearDropTargets();
+      dragState = null;
+    });
+    attachFolderDropTarget(node, f.path);
     // Active folder wears .active; companions in the multi-set get .multi-selected.
     if (
       state.selectedFolderPaths.has(f.path) &&
@@ -903,7 +982,7 @@ function toggleFolderExpanded(path) {
   renderFolders();
 }
 
-function folderNodeEl(path, label, isActive, depth, hasChildren, expanded) {
+function folderNodeEl(path, label, isActive, depth, hasChildren, expanded, count) {
   const div = document.createElement("div");
   div.className = "folder-node" + (isActive ? " active" : "");
   div.dataset.path = path ?? "";
@@ -926,6 +1005,13 @@ function folderNodeEl(path, label, isActive, depth, hasChildren, expanded) {
   labelSpan.className = "folder-label";
   labelSpan.textContent = label;
   div.appendChild(labelSpan);
+
+  if (count > 0) {
+    const badge = document.createElement("span");
+    badge.className = "folder-count";
+    badge.textContent = String(count);
+    div.appendChild(badge);
+  }
 
   return div;
 }
@@ -1120,10 +1206,15 @@ function handleFolderClick(path, ev) {
 async function bulkDeleteFolders(paths, mode) {
   if (paths.length === 0) return;
   const deleteSnippets = mode === "with";
-  const confirmMsg = deleteSnippets
-    ? `Delete ${paths.length} folder(s) AND every snippet inside? This cannot be undone.`
-    : `Delete ${paths.length} folder(s)? Snippets inside will be moved to Unfiled.`;
-  if (!confirm(confirmMsg)) return;
+  const confirmed = await confirmModal({
+    title: deleteSnippets ? "Delete folders and snippets" : "Delete folders",
+    message: deleteSnippets
+      ? `Delete ${paths.length} folder(s) AND every snippet inside? This cannot be undone.`
+      : `Delete ${paths.length} folder(s)? Snippets inside will be moved to Unfiled.`,
+    confirmText: deleteSnippets ? "Delete everything" : "Delete",
+    danger: true,
+  });
+  if (!confirmed) return;
   const sorted = [...paths].sort((a, b) => b.split("/").length - a.split("/").length);
   let ok = 0;
   let fail = 0;
@@ -1265,6 +1356,31 @@ function renderList() {
       }
       showSnippetContextMenu(e.clientX, e.clientY, s);
     });
+
+    // Drag to a folder to move. Team snippets are read-only — not draggable.
+    const isTeamSnip = typeof s.id === "string" && s.id.startsWith("team:");
+    if (!isTeamSnip) {
+      li.draggable = true;
+      li.addEventListener("dragstart", (e) => {
+        // Drag the whole selection when this row is part of it; else just it.
+        const ids =
+          state.selectedIds.has(s.id) && state.selectedIds.size > 1
+            ? [...state.selectedIds].filter(
+                (id) => !(typeof id === "string" && id.startsWith("team:"))
+              )
+            : [s.id];
+        dragState = { type: "snippets", ids };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", ids.join(","));
+        li.classList.add("dragging");
+      });
+      li.addEventListener("dragend", () => {
+        li.classList.remove("dragging");
+        clearDropTargets();
+        dragState = null;
+      });
+    }
+
     els.list.appendChild(li);
   }
 
@@ -1719,7 +1835,13 @@ async function deleteCurrent() {
     setStatus("Team library snippets are read-only. Edit the team JSON instead.", "err");
     return;
   }
-  if (!confirm(`Delete "${s.title}"?`)) return;
+  const ok = await confirmModal({
+    title: "Delete snippet",
+    message: `Delete "${s.title}"? This cannot be undone.`,
+    confirmText: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await invoke("delete_snippet", { id: s.id });
     setStatus("Snippet deleted", "ok");
@@ -1774,6 +1896,7 @@ function showSnippetContextMenu(x, y, snippet) {
     items.push({ label: "Copy to my library", action: () => duplicateSnippet(snippet.id) });
   } else {
     items.push({ label: "Edit…", action: () => openEditor(snippet) });
+    items.push({ label: "Move to folder…", action: () => moveSnippetToFolder(snippet) });
     items.push({ label: "Duplicate", action: () => duplicateSnippet(snippet.id) });
     items.push({ separator: true });
     items.push({ label: "Delete", danger: true, action: () => deleteCurrent() });
@@ -1833,13 +1956,13 @@ async function bulkDelete(ids) {
     setStatus("Nothing to delete — all selected snippets are read-only.", "err");
     return;
   }
-  if (
-    !confirm(
-      `Delete ${ids.length} snippet${ids.length === 1 ? "" : "s"}? This cannot be undone.`
-    )
-  ) {
-    return;
-  }
+  const confirmed = await confirmModal({
+    title: "Delete snippets",
+    message: `Delete ${ids.length} snippet${ids.length === 1 ? "" : "s"}? This cannot be undone.`,
+    confirmText: "Delete",
+    danger: true,
+  });
+  if (!confirmed) return;
   let ok = 0;
   let fail = 0;
   for (const id of ids) {
@@ -1860,15 +1983,49 @@ async function bulkDelete(ids) {
   await refresh();
 }
 
-async function bulkMoveToFolder(ids) {
+// Move a single snippet via the folder picker. Used by the snippet context
+// menu and as the drop handler for snippet→folder drag.
+async function moveSnippetToFolder(snippet, targetOverride) {
+  if (typeof snippet.id === "string" && snippet.id.startsWith("team:")) {
+    setStatus("Team library snippets are read-only.", "err");
+    return;
+  }
+  let target;
+  if (targetOverride !== undefined) {
+    target = targetOverride || null;
+  } else {
+    const chosen = await chooseFolderPath(snippet.folder_path ?? null);
+    if (chosen === undefined) return;
+    target = chosen || null;
+  }
+  if ((snippet.folder_path ?? null) === target) return;
+  try {
+    await invoke("update_snippet", {
+      id: snippet.id,
+      input: {
+        title: snippet.title,
+        body: snippet.body,
+        tags: snippet.tags,
+        folder_path: target,
+      },
+    });
+    setStatus(target ? `Moved to "${target}"` : "Moved to Unfiled", "ok");
+    await refresh();
+  } catch (err) {
+    setStatus(`Error: ${err}`, "err");
+  }
+}
+
+async function bulkMoveToFolder(ids, targetOverride) {
   if (ids.length === 0) return;
-  const available = (state.folders || []).map((f) => f.path).join("\n  ");
-  const msg = available
-    ? `Move ${ids.length} snippet(s) to folder.\n\nExisting folders:\n  ${available}\n\nEnter a folder path (nested with '/'). Leave blank for Unfiled.`
-    : `Move ${ids.length} snippet(s) to folder.\n\nEnter a folder path (nested with '/'). Leave blank for Unfiled.`;
-  const raw = prompt(msg, "");
-  if (raw === null) return;
-  const target = raw.trim() || null;
+  let target;
+  if (targetOverride !== undefined) {
+    target = targetOverride || null;
+  } else {
+    const chosen = await chooseFolderPath(null);
+    if (chosen === undefined) return;
+    target = chosen || null;
+  }
   const { ok, fail } = await forEachBulk(ids, async (s) => {
     await invoke("update_snippet", {
       id: s.id,
@@ -1889,14 +2046,12 @@ async function bulkMoveToFolder(ids) {
 
 async function bulkEditTags(ids) {
   if (ids.length === 0) return;
-  const raw = prompt(
-    `Edit tags for ${ids.length} snippet(s).\n\n` +
-      `Prefix with '+' to ADD tags (keeps existing).\n` +
-      `Prefix with '-' to REMOVE tags.\n` +
-      `No prefix: REPLACE all tags with the given list.\n\n` +
-      `Example: +urgent, escalation`,
-    ""
-  );
+  const raw = await textInputModal({
+    title: `Edit tags for ${ids.length} snippet${ids.length === 1 ? "" : "s"}`,
+    label: "'+tag' adds · '-tag' removes · no prefix replaces all (comma-separated)",
+    placeholder: "+urgent, escalation",
+    confirmText: "Apply",
+  });
   if (raw === null) return;
   const trimmed = raw.trim();
   let mode = "set";
@@ -1959,11 +2114,16 @@ async function bulkDuplicate(ids) {
 }
 
 async function createNewFolderPrompt() {
-  const name = prompt("Folder path (use '/' for nesting):");
-  if (!name || !name.trim()) return;
+  const name = await textInputModal({
+    title: "New folder",
+    label: "Folder path (use '/' for nesting)",
+    placeholder: "Billing/Refunds",
+    confirmText: "Create",
+  });
+  if (!name) return;
   try {
-    await invoke("create_folder", { args: { path: name.trim() } });
-    const parts = name.trim().split("/").filter(Boolean);
+    await invoke("create_folder", { args: { path: name } });
+    const parts = name.split("/").filter(Boolean);
     for (let i = 1; i < parts.length; i++) {
       state.expandedFolders.add(parts.slice(0, i).join("/"));
     }
@@ -1978,11 +2138,15 @@ function showFolderContextMenu(x, y, folderPath) {
     {
       label: "New subfolder…",
       action: async () => {
-        const name = prompt(`Create subfolder of "${folderPath}":`);
-        if (!name || !name.trim()) return;
+        const name = await textInputModal({
+          title: "New subfolder",
+          label: `Subfolder of "${folderPath}"`,
+          confirmText: "Create",
+        });
+        if (!name) return;
         try {
           await invoke("create_folder", {
-            args: { path: `${folderPath}/${name.trim()}` },
+            args: { path: `${folderPath}/${name}` },
           });
           state.expandedFolders.add(folderPath);
           await refresh();
@@ -1995,10 +2159,15 @@ function showFolderContextMenu(x, y, folderPath) {
       label: "Rename…",
       action: async () => {
         const current = folderPath.split("/").pop();
-        const next = prompt(`Rename "${folderPath}" to:`, current);
-        if (!next || !next.trim() || next === current) return;
+        const next = await textInputModal({
+          title: "Rename folder",
+          label: `Rename "${folderPath}" to`,
+          value: current,
+          confirmText: "Rename",
+        });
+        if (!next || next === current) return;
         const parts = folderPath.split("/");
-        parts[parts.length - 1] = next.trim();
+        parts[parts.length - 1] = next;
         const newPath = parts.join("/");
         try {
           await invoke("rename_folder", {
@@ -2016,8 +2185,13 @@ function showFolderContextMenu(x, y, folderPath) {
     {
       label: "Delete folder (keep snippets)",
       action: async () => {
-        if (!confirm(`Delete folder "${folderPath}"? Snippets inside will be moved to Unfiled.`))
-          return;
+        const ok = await confirmModal({
+          title: "Delete folder",
+          message: `Delete folder "${folderPath}"? Snippets inside will be moved to Unfiled.`,
+          confirmText: "Delete",
+          danger: true,
+        });
+        if (!ok) return;
         try {
           await invoke("delete_folder", {
             args: { path: folderPath, delete_snippets: false },
@@ -2033,12 +2207,13 @@ function showFolderContextMenu(x, y, folderPath) {
       label: "Delete folder AND snippets",
       danger: true,
       action: async () => {
-        if (
-          !confirm(
-            `Delete folder "${folderPath}" AND every snippet inside? This cannot be undone.`
-          )
-        )
-          return;
+        const ok = await confirmModal({
+          title: "Delete folder and snippets",
+          message: `Delete folder "${folderPath}" AND every snippet inside? This cannot be undone.`,
+          confirmText: "Delete everything",
+          danger: true,
+        });
+        if (!ok) return;
         try {
           await invoke("delete_folder", {
             args: { path: folderPath, delete_snippets: true },
@@ -2052,6 +2227,173 @@ function showFolderContextMenu(x, y, folderPath) {
     },
   ];
   showContextMenu(x, y, items);
+}
+
+// ---------- In-app dialogs ----------
+// Promise-based replacements for window.prompt/confirm, which are unreliable
+// in some webviews (notably macOS WKWebView returns null silently) and ignore
+// the app's styling. Built dynamically so they layer above the context menu
+// and the editor/settings modals.
+function openModal(buildBody) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal app-modal";
+    const card = document.createElement("div");
+    card.className = "modal-card dlg-card";
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      resolve(value);
+    };
+    // Capture + stopImmediatePropagation so Escape closes only this dialog and
+    // never reaches the app's global Escape (which hides the window).
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        finish(null);
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    overlay.addEventListener("mousedown", (e) => {
+      if (e.target === overlay) finish(null);
+    });
+
+    buildBody(card, finish);
+  });
+}
+
+function dlgActions(card, buttons) {
+  const actions = document.createElement("div");
+  actions.className = "modal-actions";
+  for (const b of buttons) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = b.className || "btn-secondary";
+    btn.textContent = b.label;
+    btn.addEventListener("click", b.onClick);
+    actions.appendChild(btn);
+  }
+  card.appendChild(actions);
+  return actions;
+}
+
+// Single-line text input. Resolves to the trimmed value, or null if cancelled
+// or left empty.
+function textInputModal({ title, label, value = "", placeholder = "", confirmText = "OK" }) {
+  return openModal((card, finish) => {
+    const h = document.createElement("h2");
+    h.textContent = title;
+    card.appendChild(h);
+
+    const lab = document.createElement("label");
+    if (label) {
+      const span = document.createElement("span");
+      span.textContent = label;
+      lab.appendChild(span);
+    }
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value;
+    input.placeholder = placeholder;
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    lab.appendChild(input);
+    card.appendChild(lab);
+
+    const submit = () => finish(input.value.trim() || null);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+    });
+    dlgActions(card, [
+      { label: "Cancel", onClick: () => finish(null) },
+      { label: confirmText, className: "btn-primary", onClick: submit },
+    ]);
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  });
+}
+
+// Confirmation. Resolves true/false.
+function confirmModal({ title, message, confirmText = "OK", danger = false }) {
+  return openModal((card, finish) => {
+    const h = document.createElement("h2");
+    h.textContent = title;
+    card.appendChild(h);
+    const p = document.createElement("p");
+    p.className = "dlg-msg";
+    p.textContent = message;
+    card.appendChild(p);
+    dlgActions(card, [
+      { label: "Cancel", onClick: () => finish(false) },
+      {
+        label: confirmText,
+        className: danger ? "btn-danger" : "btn-primary",
+        onClick: () => finish(true),
+      },
+    ]);
+  });
+}
+
+// Folder chooser. Resolves to { path } for an existing folder ("" = Unfiled),
+// { create: true } to make a new one, or null if cancelled.
+function folderPickerModal({ title = "Move to folder", currentPath = null } = {}) {
+  return openModal((card, finish) => {
+    const h = document.createElement("h2");
+    h.textContent = title;
+    card.appendChild(h);
+
+    const list = document.createElement("div");
+    list.className = "folder-picker";
+    const addItem = (label, value, depth, isCurrent) => {
+      const it = document.createElement("div");
+      it.className = "folder-picker-item" + (isCurrent ? " current" : "");
+      it.style.paddingLeft = `${10 + depth * 14}px`;
+      it.textContent = label;
+      it.addEventListener("click", () => finish({ path: value }));
+      list.appendChild(it);
+    };
+    addItem("∘ Unfiled (no folder)", "", 0, currentPath == null || currentPath === "");
+    for (const f of state.folders || []) {
+      const parts = f.path.split("/");
+      addItem(`📁 ${parts[parts.length - 1]}`, f.path, parts.length - 1, currentPath === f.path);
+    }
+    card.appendChild(list);
+
+    const actions = dlgActions(card, [
+      { label: "New folder…", onClick: () => finish({ create: true }) },
+      { label: "Cancel", onClick: () => finish(null) },
+    ]);
+    actions.classList.add("between");
+  });
+}
+
+// Orchestrates the picker + "New folder…" path. Resolves to the chosen
+// folder_path ("" = Unfiled), or undefined if cancelled at any step.
+async function chooseFolderPath(currentPath = null) {
+  const res = await folderPickerModal({ currentPath });
+  if (!res) return undefined;
+  if (res.create) {
+    const name = await textInputModal({
+      title: "New folder",
+      label: "Folder path (use '/' for nesting)",
+      placeholder: "Billing/Refunds",
+      confirmText: "Create",
+    });
+    return name ?? undefined;
+  }
+  return res.path;
 }
 
 function showContextMenu(x, y, items) {

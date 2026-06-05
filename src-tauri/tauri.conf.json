@@ -25,7 +25,8 @@
         "skipTaskbar": false,
         "visible": false,
         "center": true,
-        "focus": true
+        "focus": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

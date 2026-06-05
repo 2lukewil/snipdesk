@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SnipDesk Lite",
+  "version": "1.0.0",
+  "identifier": "com.snipdesk.lite",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SnipDesk",
+        "width": 720,
+        "height": 520,
+        "minWidth": 520,
+        "minHeight": 380,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": false,
+        "center": true,
+        "focus": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: asset: https://asset.localhost"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/2lukewil/snipdesk/releases/latest/download/snipdesk-update.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIwNzg5ODdGODZERjU1NzkKUldSNVZkK0dmNWg0c1A3ME16K0Z0clE2ZVhXcDlHNXBpQ2VVQWF1NzVpc01UdHl4QUxPZDJjTisK"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Snippet launcher for support agents",
+    "longDescription": "SnipDesk is a fast, searchable snippet launcher triggered by a global hotkey. Built for support agents who send similar replies many times a day."
+  }
+}

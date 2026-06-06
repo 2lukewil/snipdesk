@@ -515,9 +515,14 @@ between any two.
    the new settings UI, login flow, migration prompt for existing local
    snippets, and background sync. Throw away
    `snipdesk-teams::shared_url`.
-5. **Shared library.** `/api/library` endpoints, client-side rendering
-   under the existing "Team Library" sidebar pseudo-folder. Admins manage
-   via the dashboard (next phase).
+5. **Shared library.** `/api/library` endpoints (GET for any signed-in
+   member, POST/PUT/DELETE for admins). Client pulls library snippets
+   on the same sync tick as personal snippets, with a separate
+   high-water-mark, into the existing `team_snippets` table. When the
+   user is signed in, the legacy `team_library_url` JSON poll pauses so
+   the two paths don't fight over the same table. Admin CRUD over the
+   dashboard lands in the next phase; for now writes happen via curl /
+   admin tooling against `/api/library`.
 6. **Dashboard.** htmx + askama. Users list, library curation, server
    settings.
 7. **OIDC.** Google Workspace flow end-to-end. Tauri custom-URL handler

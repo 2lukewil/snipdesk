@@ -135,15 +135,20 @@ pub fn server_login(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> {
 }
 
 #[tauri::command]
-pub fn server_logout(state: State<'_, AppState>) -> CmdResult<()> {
+pub fn server_logout(app: AppHandle) -> CmdResult<()> {
+    let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if !server_url.is_empty() {
         let _ = credentials::delete(&server_url);
     }
     clear_signed_in_user(&state)?;
     if let Ok(db) = state.db.lock() {
+        // reset_sync_metadata drops team_snippets too, so the badge
+        // ought to be zeroed on the same tick. Emit the update so the
+        // sidebar redraws without waiting for the next pass.
         let _ = db.reset_sync_metadata();
     }
+    refresh_team_snippet_count(&app, &state);
     Ok(())
 }
 
@@ -182,8 +187,26 @@ pub fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
         .ok_or_else(|| "not signed in".to_string())?;
     let outcome = sync::tick(&state.db, &server_url, &token).map_err(map_api_err)?;
     save_last_sync(&state, &outcome)?;
+    refresh_team_snippet_count(&app, &state);
     let _ = app.emit("snipdesk://server-sync", outcome.clone());
     Ok(outcome)
+}
+
+/// Re-read the row count of team_snippets and update the
+/// `team_snippet_count` atomic + emit `snipdesk://team-library-updated`.
+/// Called after every server sync tick (manual or background) because
+/// the library pull mutates that table.
+pub fn refresh_team_snippet_count(app: &AppHandle, state: &AppState) {
+    let count = state
+        .db
+        .lock()
+        .ok()
+        .and_then(|db| db.count_team_snippets().ok())
+        .unwrap_or(0) as usize;
+    state
+        .team_snippet_count
+        .store(count, std::sync::atomic::Ordering::SeqCst);
+    let _ = app.emit("snipdesk://team-library-updated", ());
 }
 
 #[tauri::command]
@@ -257,6 +280,7 @@ pub fn start_server_sync_thread(handle: AppHandle) {
             match sync::tick(&state.db, &server_url, &token) {
                 Ok(outcome) => {
                     let _ = save_last_sync(&state, &outcome);
+                    refresh_team_snippet_count(&handle, &state);
                     let _ = handle.emit("snipdesk://server-sync", outcome);
                 }
                 Err(ApiError::Unauthorized) => {

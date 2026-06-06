@@ -47,6 +47,16 @@ pub fn router(state: AppState) -> Router {
             "/api/snippets/:id",
             put(handlers::snippets::update).delete(handlers::snippets::delete),
         )
+        // Shared team library — GET is open to any signed-in member; the
+        // write handlers gate on `auth.require_admin()` internally.
+        .route(
+            "/api/library",
+            post(handlers::library::create).get(handlers::library::list),
+        )
+        .route(
+            "/api/library/:id",
+            put(handlers::library::update).delete(handlers::library::delete),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

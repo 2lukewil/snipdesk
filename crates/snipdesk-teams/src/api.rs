@@ -262,3 +262,92 @@ pub fn delete_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> 
         .call();
     handle_unit(res)
 }
+
+// ---- Library (shared team snippets) ----
+//
+// Wire-shape mirrors of `snipdesk-server::handlers::library` — kept
+// separate from the personal-snippet types because the library has its
+// own version stream (org-wide rather than per-user) and a different
+// authorization model (read-any, write-admin-only).
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryPayload {
+    pub title: String,
+    pub body: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub folder_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibraryView {
+    pub id: String,
+    pub version: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub is_deleted: bool,
+    pub payload: Option<LibraryPayload>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibrarySyncResponse {
+    pub snippets: Vec<LibraryView>,
+    pub high_water_mark: i64,
+}
+
+pub fn list_library(server_url: &str, token: &str, since: i64) -> ApiResult<LibrarySyncResponse> {
+    let res = ureq::get(&url(server_url, "/api/library"))
+        .set("authorization", &format!("Bearer {token}"))
+        .query("since", &since.to_string())
+        .call();
+    handle_response(res)
+}
+
+#[derive(Debug, Serialize)]
+pub struct LibraryCreateBody<'a> {
+    pub id: &'a str,
+    #[serde(flatten)]
+    pub payload: &'a LibraryPayload,
+}
+
+pub fn create_library_snippet(
+    server_url: &str,
+    token: &str,
+    body: &LibraryCreateBody<'_>,
+) -> ApiResult<WriteResponse> {
+    let res = ureq::post(&url(server_url, "/api/library"))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json")
+        .send_json(body);
+    handle_response(res)
+}
+
+#[derive(Debug, Serialize)]
+pub struct LibraryUpdateBody<'a> {
+    pub expected_version: i64,
+    #[serde(flatten)]
+    pub payload: &'a LibraryPayload,
+}
+
+pub fn update_library_snippet(
+    server_url: &str,
+    token: &str,
+    id: &str,
+    body: &LibraryUpdateBody<'_>,
+) -> ApiResult<WriteResponse> {
+    let path = format!("/api/library/{id}");
+    let res = ureq::put(&url(server_url, &path))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json")
+        .send_json(body);
+    handle_response(res)
+}
+
+pub fn delete_library_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> {
+    let path = format!("/api/library/{id}");
+    let res = ureq::delete(&url(server_url, &path))
+        .set("authorization", &format!("Bearer {token}"))
+        .call();
+    handle_unit(res)
+}

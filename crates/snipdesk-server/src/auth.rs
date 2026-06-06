@@ -120,6 +120,22 @@ pub fn generate_jwt_secret() -> String {
 /// request short-circuits with 401 before the handler runs.
 pub struct AuthUser(pub Claims);
 
+impl AuthUser {
+    /// Returns `Ok(())` when the caller has the `admin` role; otherwise a
+    /// 403-grade ApiError. Used by library / admin handlers that any
+    /// signed-in member can READ but only admins can WRITE.
+    pub fn require_admin(&self) -> Result<(), ApiError> {
+        if self.0.role == "admin" {
+            Ok(())
+        } else {
+            Err(ApiError::forbidden(
+                "admin_required",
+                "this action requires admin privileges",
+            ))
+        }
+    }
+}
+
 #[axum::async_trait]
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = ApiError;

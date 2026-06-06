@@ -486,29 +486,59 @@ pub fn show_and_focus(handle: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     });
 }
 
+/// Returns true when the user is signed in to a server backend — the
+/// `server_url` setting is non-empty AND a credential is stored for it.
+/// While signed in, the server-side library sync owns the team_snippets
+/// table; the legacy URL fetcher pauses so the two don't fight over it.
+#[cfg(feature = "teams")]
+fn signed_into_server(state: &AppState) -> bool {
+    let url = match state.settings.lock() {
+        Ok(g) => g.server_url.clone(),
+        Err(_) => return false,
+    };
+    if url.trim().is_empty() {
+        return false;
+    }
+    snipdesk_teams::credentials::load(&url)
+        .map(|t| t.is_some())
+        .unwrap_or(false)
+}
+
 /// Team-library refetch loop. Re-reads settings each iteration so URL/interval
 /// edits take effect on the next tick; empty URL pauses (no error spam).
 /// 30s sleep granularity so interval shortening is responsive.
+///
+/// **Coexistence with server library** (phase 5+): when the user is
+/// signed in to a server, `snipdesk-teams::sync::tick` populates
+/// team_snippets from `/api/library`; this legacy URL loop yields the
+/// table to it by skipping every tick. The user can still leave a
+/// `team_library_url` configured — it just won't run while signed in.
+/// Signing out re-enables it on the next 30s pass.
 #[cfg(feature = "teams")]
 pub fn start_team_sync_thread(handle: tauri::AppHandle) {
     thread::spawn(move || {
         // Optional one-shot at startup so fresh snippets land before the
-        // first interval tick.
+        // first interval tick. Skipped if signed in — the server library
+        // sync thread handles that path.
         let did_startup_sync = {
             let state = match handle.try_state::<AppState>() {
                 Some(s) => s,
                 None => return,
             };
-            let on_startup = state
-                .settings
-                .lock()
-                .map(|g| g.team_library_sync_on_startup && !g.team_library_url.is_empty())
-                .unwrap_or(false);
-            if on_startup {
-                run_one_team_sync(&handle);
-                true
-            } else {
+            if signed_into_server(&state) {
                 false
+            } else {
+                let on_startup = state
+                    .settings
+                    .lock()
+                    .map(|g| g.team_library_sync_on_startup && !g.team_library_url.is_empty())
+                    .unwrap_or(false);
+                if on_startup {
+                    run_one_team_sync(&handle);
+                    true
+                } else {
+                    false
+                }
             }
         };
         if did_startup_sync {
@@ -520,11 +550,12 @@ pub fn start_team_sync_thread(handle: tauri::AppHandle) {
         let mut last_sync = SystemTime::now();
         loop {
             thread::sleep(Duration::from_secs(30));
-            let (url_empty, interval_mins) = {
+            let (url_empty, interval_mins, signed_in) = {
                 let state = match handle.try_state::<AppState>() {
                     Some(s) => s,
                     None => return,
                 };
+                let signed_in = signed_into_server(&state);
                 let g = match state.settings.lock() {
                     Ok(g) => g,
                     Err(_) => continue,
@@ -532,9 +563,10 @@ pub fn start_team_sync_thread(handle: tauri::AppHandle) {
                 (
                     g.team_library_url.trim().is_empty(),
                     g.team_library_sync_interval_mins.max(1) as u64,
+                    signed_in,
                 )
             };
-            if url_empty {
+            if signed_in || url_empty {
                 continue;
             }
             let elapsed = SystemTime::now()

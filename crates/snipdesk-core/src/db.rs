@@ -198,6 +198,23 @@ impl Db {
             "CREATE INDEX IF NOT EXISTS idx_snippets_dirty ON snippets(dirty) WHERE dirty = 1;",
         )?;
 
+        // Migration: incremental library-sync columns on team_snippets.
+        // `server_version` lets the engine upsert by row instead of the
+        // legacy nuke-and-pave (`replace_team_snippets`). Existing local
+        // rows from the JSON-URL flow have no server version, so they
+        // default to 0 — the next library sync overwrites them in place.
+        let team_cols: std::collections::HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(team_snippets)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if !team_cols.contains("server_version") {
+            conn.execute(
+                "ALTER TABLE team_snippets ADD COLUMN server_version INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
         Ok(Db { conn })
     }
 
@@ -824,12 +841,15 @@ impl Db {
     /// state so the next sign-in starts as if from a fresh device.
     /// Local snippet content is preserved — only the sync metadata is
     /// wiped. Pending deletes are also cleared (the new server may not
-    /// know about those rows).
+    /// know about those rows). The library mirror is also wiped — a
+    /// different org's shared snippets shouldn't bleed into the next
+    /// session, and the new server will repopulate from its own data.
     pub fn reset_sync_metadata(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("UPDATE snippets SET server_version = NULL, dirty = 1", [])?;
         tx.execute("DELETE FROM pending_deletes", [])?;
         tx.execute("DELETE FROM sync_state", [])?;
+        tx.execute("DELETE FROM team_snippets", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -949,6 +969,47 @@ impl Db {
             .conn
             .query_row("SELECT COUNT(*) FROM team_snippets", [], |r| r.get(0))?;
         Ok(n)
+    }
+
+    /// Apply one row from `GET /api/library`. The server pushes both
+    /// fresh rows and updates through the same path — `INSERT OR REPLACE`
+    /// is fine here because team_snippets has no per-row local state
+    /// (no usage_count, no variable_history) that we'd lose.
+    pub fn upsert_library_snippet(
+        &self,
+        team_id: &str,
+        title: &str,
+        body: &str,
+        tags: &[String],
+        folder_path: Option<&str>,
+        server_version: i64,
+    ) -> Result<()> {
+        let tags = encode_tags(tags);
+        let folder = normalize_folder(folder_path);
+        let now = Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO team_snippets \
+             (team_id, title, body, tags, folder_path, fetched_at, server_version) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![team_id, title, body, tags, folder, now, server_version],
+        )?;
+        Ok(())
+    }
+
+    /// Remove a library snippet the server says is gone. Mirror of
+    /// `apply_remote_delete` on the personal-snippet side.
+    pub fn delete_library_snippet(&self, team_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM team_snippets WHERE team_id = ?1", [team_id])?;
+        Ok(())
+    }
+
+    /// Wipe every library row. Called on logout so a member who signs in
+    /// against a different server doesn't carry the previous org's
+    /// shared snippets into the new session.
+    pub fn clear_library_snippets(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM team_snippets", [])?;
+        Ok(())
     }
 }
 

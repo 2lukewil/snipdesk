@@ -35,6 +35,14 @@ pub struct SyncOutcome {
     pub pulled: usize,
     pub deleted_remote: usize,
     pub applied_local_deletes: usize,
+    /// Library rows refreshed or freshly inserted into team_snippets
+    /// during this tick. Surfaced for parity with `pulled` so the UI can
+    /// report "library: N changes" alongside personal-snippet stats.
+    #[serde(default)]
+    pub library_pulled: usize,
+    /// Library rows the server tombstoned that we dropped locally.
+    #[serde(default)]
+    pub library_deleted: usize,
     /// Best-effort error count. A network blip during one snippet
     /// doesn't fail the tick; we just count it and move on.
     pub errors: usize,
@@ -189,6 +197,65 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
     let new_hwm = resp.high_water_mark.max(pull_since);
     if let Ok(db) = db.lock() {
         let _ = db.save_sync_state("high_water_mark", &new_hwm.to_string());
+    }
+
+    // 4. Pull the shared library since the last library-HWM. Tracked
+    //    under its own sync_state key because the library has a
+    //    separate version stream (org-wide rather than per-user) on the
+    //    server; mixing the two cursors would either re-download
+    //    library rows or skip personal updates depending on which was
+    //    higher. The library is pull-only from the desktop client (admin
+    //    writes happen in the dashboard), so this is a strict mirror
+    //    into team_snippets.
+    let library_since = {
+        let db = db
+            .lock()
+            .map_err(|e| ApiError::Network(format!("db poisoned: {e}")))?;
+        db.load_sync_state("library_high_water_mark")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
+    };
+    match api::list_library(server_url, token, library_since) {
+        Ok(lib) => {
+            for s in &lib.snippets {
+                if s.is_deleted {
+                    if let Ok(db) = db.lock() {
+                        let _ = db.delete_library_snippet(&s.id);
+                    }
+                    out.library_deleted += 1;
+                } else if let Some(p) = &s.payload {
+                    if let Ok(db) = db.lock() {
+                        if let Err(e) = db.upsert_library_snippet(
+                            &s.id,
+                            &p.title,
+                            &p.body,
+                            &p.tags,
+                            p.folder_path.as_deref(),
+                            s.version,
+                        ) {
+                            eprintln!("library upsert {} failed: {e}", s.id);
+                            out.errors += 1;
+                            continue;
+                        }
+                    }
+                    out.library_pulled += 1;
+                }
+            }
+            let lib_hwm = lib.high_water_mark.max(library_since);
+            if let Ok(db) = db.lock() {
+                let _ = db.save_sync_state("library_high_water_mark", &lib_hwm.to_string());
+            }
+        }
+        Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+        Err(e) => {
+            // Library is non-critical for v1 — a transient failure here
+            // shouldn't sink the whole tick. Surface as an error count
+            // and keep the personal-sync results.
+            eprintln!("library pull failed: {e}");
+            out.errors += 1;
+        }
     }
 
     Ok(out)

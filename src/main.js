@@ -3143,19 +3143,6 @@ function renderTrashList(items) {
   }
 }
 
-/// Quick relative-time formatter for "deleted X ago" labels. Cheap,
-/// no Intl.RelativeTimeFormat dep.
-function formatRelativeTime(unixSec) {
-  if (!unixSec) return "";
-  const now = Math.floor(Date.now() / 1000);
-  const diff = now - unixSec;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}d ago`;
-  return new Date(unixSec * 1000).toLocaleDateString();
-}
-
 /// Minimal HTML escape for status / error strings that we inject as
 /// innerHTML. Avoids depending on the textContent path for these tiny
 /// status messages.

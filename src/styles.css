@@ -491,6 +491,10 @@ body.compact .search-bar {
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
+  /* So setStatus()'s injected `.modal-status` can absolute-position
+     itself to the modal-card's lower-left corner without affecting
+     layout. */
+  position: relative;
   min-height: 0;
 }
 .modal-card h2 {
@@ -659,23 +663,24 @@ body.compact .search-bar {
 .status.ok { color: var(--success); }
 .status.err { color: var(--danger); }
 
-/* Dynamically-injected by setStatus() when a modal is open, so messages
-   like "Uploaded N snippets to the server" surface to the user instead
-   of being hidden behind the modal at default window size. Sits as a
-   strip at the bottom of the modal-card. Empty when idle - no extra
-   height taken so layout doesn't shift each time it fires. */
+/* Dynamically-injected by setStatus() when a modal is open. Floats
+   over the modal-card's lower-left corner instead of pushing content
+   around: the message comes and goes without shifting any controls.
+   Pointer-events disabled so the user can still click buttons that
+   happen to sit underneath. Modal cards need position:relative for
+   this to anchor correctly; that's set in .modal-card already. */
 .modal-status {
+  position: absolute;
+  left: 16px;
+  bottom: 14px;
   font-size: 12px;
   color: var(--text-dim);
-  padding: 6px 0 0;
-  text-align: right;
-  min-height: 0;
+  pointer-events: none;
+  max-width: calc(100% - 32px);
+  /* When empty, take zero space and stay invisible. */
 }
-.modal-status:not(:empty) {
-  padding: 10px 12px;
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-  text-align: left;
+.modal-status:empty {
+  display: none;
 }
 .modal-status.ok { color: var(--success); }
 .modal-status.err { color: var(--danger); }

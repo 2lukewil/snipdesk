@@ -159,20 +159,40 @@ impl FromRequestParts<AppState> for AuthUser {
             .ok_or_else(|| ApiError::unauthorized("bad_auth_scheme", "expected Bearer token"))?;
         let claims = verify_token(token.trim(), &state.jwt_secret)?;
 
-        // Refresh last_seen_at on every authenticated request. This is
-        // the only signal we have that a user is alive: the desktop
-        // client makes far more GET /api/snippets calls than it makes
-        // explicit logins, so without this, last_seen would only ever
-        // tick when the user re-enters credentials (a rare event with
-        // 24h JWTs). One UPDATE on a primary-key row is cheap under
-        // WAL; we deliberately don't throttle because adding a read +
-        // compare would cost more than just writing.
+        // Check is_disabled at every request. An admin disabling the
+        // account from the dashboard should take effect immediately -
+        // not at JWT expiry 24h later. We piggy-back on the same row
+        // read that updates last_seen_at, so this is one round-trip,
+        // not two. If the row vanished entirely (admin deleted the
+        // user), we treat it like a disabled account: terminate the
+        // session right now.
         let now = chrono::Utc::now().timestamp();
-        let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
-            .bind(now)
-            .bind(&claims.sub)
-            .execute(&state.pool)
-            .await;
+        let status: Option<(i64,)> =
+            sqlx::query_as("UPDATE users SET last_seen_at = ? WHERE id = ? RETURNING is_disabled")
+                .bind(now)
+                .bind(&claims.sub)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+
+        match status {
+            None => {
+                // Account no longer exists (deleted between issue and
+                // now). Distinct error code so the desktop client can
+                // wipe its session rather than just retrying.
+                return Err(ApiError::forbidden(
+                    "account_gone",
+                    "your account no longer exists; sign in again",
+                ));
+            }
+            Some((disabled,)) if disabled != 0 => {
+                return Err(ApiError::forbidden(
+                    "account_disabled",
+                    "your account is disabled - contact your administrator",
+                ));
+            }
+            _ => {}
+        }
 
         Ok(AuthUser(claims))
     }

@@ -486,6 +486,18 @@ async function init() {
       setStatus("Signed out: server rejected your session. Please sign in again.", "err");
     });
 
+    // Server forced us out because the account is disabled or deleted.
+    // Distinct from a routine 401 - the user can't fix it by signing
+    // back in, they need to contact an admin. The signed-out event
+    // (emitted alongside) handles the UI reset; this listener exists
+    // to surface the specific reason.
+    await listen("snipdesk://server-account-inactive", async (event) => {
+      const reason = typeof event.payload === "string"
+        ? event.payload
+        : "Your account is no longer active.";
+      setStatus(reason, "err");
+    });
+
     // Initial paint when settings opens; load once at boot too so the
     // signed-in state is ready by the time Settings is opened.
     await loadServerStatus();

@@ -185,11 +185,38 @@ pub fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
     let token = credentials::load(&server_url)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "not signed in".to_string())?;
-    let outcome = sync::tick(&state.db, &server_url, &token).map_err(map_api_err)?;
+    let outcome = match sync::tick(&state.db, &server_url, &token) {
+        Ok(o) => o,
+        Err(ApiError::AccountInactive(msg)) => {
+            handle_account_inactive(&app, &state, &server_url, &msg);
+            return Err(msg);
+        }
+        Err(e) => return Err(map_api_err(e)),
+    };
     save_last_sync(&state, &outcome)?;
     refresh_team_snippet_count(&app, &state);
+    // Persist the refreshed user record so server_status sees the new
+    // role / display name without waiting for a reload.
+    if let Some(u) = &outcome.user {
+        let _ = save_signed_in_user(&state, u);
+    }
     let _ = app.emit("snipdesk://server-sync", outcome.clone());
     Ok(outcome)
+}
+
+/// Server says the account is disabled or gone. Wipe local credentials
+/// and emit a signed-out event so the frontend bounces the user back
+/// to the login form with a clear reason. Idempotent - no-op if the
+/// credential is already gone.
+pub fn handle_account_inactive(app: &AppHandle, state: &AppState, server_url: &str, reason: &str) {
+    let _ = credentials::delete(server_url);
+    let _ = clear_signed_in_user(state);
+    if let Ok(db) = state.db.lock() {
+        let _ = db.reset_sync_metadata();
+    }
+    refresh_team_snippet_count(app, state);
+    let _ = app.emit("snipdesk://server-account-inactive", reason.to_string());
+    let _ = app.emit("snipdesk://server-signed-out", ());
 }
 
 /// Re-read the row count of team_snippets and update the
@@ -281,7 +308,14 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                 Ok(outcome) => {
                     let _ = save_last_sync(&state, &outcome);
                     refresh_team_snippet_count(&handle, &state);
+                    if let Some(u) = &outcome.user {
+                        let _ = save_signed_in_user(&state, u);
+                    }
                     let _ = handle.emit("snipdesk://server-sync", outcome);
+                }
+                Err(ApiError::AccountInactive(msg)) => {
+                    eprintln!("background sync: account inactive ({msg}); signing out");
+                    handle_account_inactive(&handle, &state, &server_url, &msg);
                 }
                 Err(ApiError::Unauthorized) => {
                     // Earlier we auto-deleted the credential here. That

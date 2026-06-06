@@ -48,6 +48,15 @@ pub struct SyncOutcome {
     pub errors: usize,
     /// When the tick was performed (unix seconds).
     pub at: i64,
+    /// The user record as the server sees it right now. Populated by
+    /// the GET /api/me probe at the start of each tick; surfaced so
+    /// the IPC layer can detect "my role just changed" and re-render
+    /// the identity panel without waiting for the user to sign out
+    /// and back in. None when the probe itself didn't run (e.g.
+    /// network failure) - the caller should treat that as "use the
+    /// previous value" rather than "user vanished".
+    #[serde(default)]
+    pub user: Option<api::UserDto>,
 }
 
 /// One full sync round. Takes a locked Db so the caller (Tauri
@@ -57,6 +66,24 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
         at: chrono::Utc::now().timestamp(),
         ..SyncOutcome::default()
     };
+
+    // 0. Probe /api/me first. This is what makes role changes and
+    //    account-disable propagate to the running desktop client
+    //    without the user having to sign out and back in. The probe
+    //    also hits the AuthUser extractor on the server, which is the
+    //    enforcement point for is_disabled / account_gone, so any
+    //    "your account is no longer valid" condition bubbles up here
+    //    rather than later in the tick. Network failures are tolerated
+    //    (None in out.user means "I couldn't check this round").
+    match api::me(server_url, token) {
+        Ok(me) => out.user = Some(me.user),
+        Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+        Err(ApiError::AccountInactive(msg)) => return Err(ApiError::AccountInactive(msg)),
+        Err(e) => {
+            eprintln!("me probe failed: {e}");
+            out.errors += 1;
+        }
+    }
 
     // 1. Drain tombstones first. If a user deleted then re-created with
     //    the same id (impossible - UUIDs - but defensive), processing
@@ -85,6 +112,7 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
                 out.deleted_remote += 1;
             }
             Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+            Err(ApiError::AccountInactive(msg)) => return Err(ApiError::AccountInactive(msg)),
             Err(e) => {
                 eprintln!("delete {id} failed: {e}");
                 out.errors += 1;
@@ -146,6 +174,7 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
                 out.errors += 1;
             }
             Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+            Err(ApiError::AccountInactive(msg)) => return Err(ApiError::AccountInactive(msg)),
             Err(e) => {
                 eprintln!("push {} failed: {e}", d.id);
                 out.errors += 1;

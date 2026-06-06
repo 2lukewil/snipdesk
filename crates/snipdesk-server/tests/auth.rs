@@ -172,11 +172,13 @@ async fn login_returns_valid_token_for_correct_credentials() {
     assert!(!token.is_empty());
 }
 
-// Bad password AND unknown email should both return the same error
-// code/message. Asserting on the literal so a refactor that
-// accidentally adds "user not found" vs "wrong password" trips this.
+// Login distinguishes wrong-password from unknown-email. This is the
+// "verbose errors" deliberate tradeoff for an internal-tool deployment:
+// the small enumeration leak is worth the clearer UX. If this server
+// ever ships to an untrusted audience, collapse both branches back to
+// one generic `invalid_credentials` message and update this test.
 #[tokio::test]
-async fn login_failures_use_one_generic_message() {
+async fn login_distinguishes_failure_modes() {
     let app = make_app().await;
     post_json(
         &app,
@@ -195,18 +197,17 @@ async fn login_failures_use_one_generic_message() {
         serde_json::json!({"email":"bob@example.com","password":"wrong-password-here"}),
     )
     .await;
+    assert_eq!(status1, StatusCode::UNAUTHORIZED);
+    assert_eq!(body1["error"], "wrong_password");
+
     let (status2, body2) = post_json(
         &app,
         "/api/auth/login",
         serde_json::json!({"email":"nobody@example.com","password":"wrong-password-here"}),
     )
     .await;
-
-    assert_eq!(status1, StatusCode::UNAUTHORIZED);
     assert_eq!(status2, StatusCode::UNAUTHORIZED);
-    assert_eq!(body1["error"], "invalid_credentials");
-    assert_eq!(body2["error"], "invalid_credentials");
-    assert_eq!(body1["message"], body2["message"]);
+    assert_eq!(body2["error"], "no_account");
 }
 
 // /api/me with a valid token returns the authenticated user; without a

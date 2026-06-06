@@ -29,6 +29,16 @@ pub enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
 
+    /// HTTP 403 with code `account_disabled` or `account_gone`. The
+    /// admin disabled the account from the dashboard (or deleted it).
+    /// The desktop client treats this as an involuntary sign-out: wipe
+    /// credentials, drop the user back to the login screen, surface a
+    /// message explaining why. Distinct from Unauthorized (which can
+    /// be a transient token-validation hiccup that resolves on
+    /// re-login) - this one needs the user to actually contact someone.
+    #[error("account inactive: {0}")]
+    AccountInactive(String),
+
     /// The server returned a 4xx/5xx we didn't classify specifically.
     /// `code` is the machine string ("invalid_email", "weak_password",
     /// ...); `message` is the human detail.
@@ -133,6 +143,9 @@ fn handle_response<T: serde::de::DeserializeOwned>(
             };
             Err(match (status, code.as_str()) {
                 (401, _) => ApiError::Unauthorized,
+                (403, "account_disabled") | (403, "account_gone") => {
+                    ApiError::AccountInactive(message)
+                }
                 (409, "version_conflict") => ApiError::VersionConflict,
                 _ => ApiError::Server {
                     status,

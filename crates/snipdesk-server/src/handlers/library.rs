@@ -128,10 +128,6 @@ pub async fn list(
     auth: AuthUser,
     Query(q): Query<SyncQuery>,
 ) -> Result<Json<SyncResponse>, ApiError> {
-    // Touching this endpoint = the user is alive. Update last_seen so the
-    // admin dashboard's "active in the last N days" view stays honest
-    // even for users who only consume library snippets.
-    let _ = auth;
     let since = q.since.unwrap_or(0);
 
     let rows: Vec<LibraryRow> = sqlx::query_as(
@@ -143,6 +139,18 @@ pub async fn list(
     .bind(since)
     .fetch_all(&state.pool)
     .await?;
+
+    // Diagnostic: helps when a desktop client reports "shared library
+    // snippets aren't showing up". If this line says `returned=0` while
+    // the dashboard's Library tab shows N cards, the client's cursor
+    // is past everything the server has - look at the desktop's
+    // library_high_water_mark sync_state row.
+    tracing::info!(
+        caller = %auth.0.sub,
+        since,
+        returned = rows.len(),
+        "library list"
+    );
 
     let mut high_water_mark = since;
     let snippets = rows
@@ -221,6 +229,13 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    tracing::info!(
+        library_id = %body.id,
+        created_by = %auth.0.sub,
+        version,
+        "library_snippet created"
+    );
 
     Ok((
         StatusCode::CREATED,

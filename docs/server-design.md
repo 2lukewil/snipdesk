@@ -540,7 +540,16 @@ cargo run -p snipdesk-server -- gen-jwt-secret  # → base64 JWT secret
 
 # Copy example config, fill in the secrets:
 cp snipdesk-server.example.toml snipdesk-server.toml
-# Edit snipdesk-server.toml: paste master_key in [crypto], jwt_secret at top.
+# Edit snipdesk-server.toml (NOT the .example.toml — that's a committed
+# template; secrets pasted there would land in git history). The file
+# layout matters: master_key goes UNDER `[crypto]`, not at top level.
+#
+#   bind_addr = "0.0.0.0:8080"
+#   data_dir = "./data"
+#   jwt_secret = "<base64 from gen-jwt-secret>"
+#
+#   [crypto]
+#   master_key = "<base64 from gen-key>"
 
 cargo run -p snipdesk-server -- --config snipdesk-server.toml
 # → "snipdesk-server listening on 127.0.0.1:8080"

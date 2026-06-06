@@ -365,7 +365,7 @@ html, body {
   margin-top: 3px;
 }
 
-/* Compact mode — applied via <body class="compact">. */
+/* Compact mode - applied via <body class="compact">. */
 body.compact .snippet-list li {
   padding: 4px 10px;
 }
@@ -570,7 +570,7 @@ body.compact .search-bar {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
-  /* pre-wrap (not pre) — preserves whitespace but soft-wraps; anywhere catches no-boundary tokens like long URLs. */
+  /* pre-wrap (not pre) - preserves whitespace but soft-wraps; anywhere catches no-boundary tokens like long URLs. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -715,7 +715,7 @@ body.compact .search-bar {
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  /* Transparent border so we don't double up — the real input draws the frame. */
+  /* Transparent border so we don't double up - the real input draws the frame. */
   border: 1px solid transparent;
   border-radius: var(--radius);
   padding: 8px 10px;
@@ -1278,7 +1278,7 @@ body.compact .search-bar {
   opacity: 0.45;
 }
 /* Hovering with a drag over the empty area below the folder list signals
- * "release here to move to top level / Unfiled" — a soft dashed outline
+ * "release here to move to top level / Unfiled" - a soft dashed outline
  * around the tree's empty real estate, plus a hint line at the bottom. */
 #folder-tree.root-drop-target {
   outline: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);

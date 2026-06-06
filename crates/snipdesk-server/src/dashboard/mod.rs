@@ -49,7 +49,7 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard/library", post(pages::library_create))
         .route("/dashboard/library/:id", put(pages::library_update))
         .route("/dashboard/library/:id", delete(pages::library_delete))
-        // Static assets — vendored htmx + a small CSS file. Served as
+        // Static assets - vendored htmx + a small CSS file. Served as
         // raw bytes via plain handlers (no fs reads at runtime; the
         // bytes are baked into the binary by include_str!).
         .route("/static/htmx.min.js", get(assets::htmx))

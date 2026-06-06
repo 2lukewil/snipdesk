@@ -12,7 +12,7 @@
 //!     between users would fail authentication on decrypt.
 //!
 //! The payload itself is the JSON encoding of `SnippetPayload`. Encoding
-//! as JSON means schema additions are append-only — older rows with
+//! as JSON means schema additions are append-only - older rows with
 //! fewer fields decrypt into a struct that fills the missing fields with
 //! `#[serde(default)]`, no migration of column structure required.
 
@@ -25,7 +25,7 @@ use crate::config::MasterKey;
 
 /// The plaintext shape of every personal snippet, exactly as the client
 /// sends/receives it. New optional fields can be added later with
-/// `#[serde(default)]` — older rows will decrypt with the missing fields
+/// `#[serde(default)]` - older rows will decrypt with the missing fields
 /// filled in.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SnippetPayload {
@@ -57,7 +57,7 @@ pub struct EncryptedBlob {
 /// Bind the ciphertext to its (snippet_id, owner_id, version) tuple.
 /// A row-level swap (changing which user the ciphertext is filed under,
 /// or which row id holds it, or which version it claims to be) fails
-/// authentication on decrypt — the attacker would have to forge a
+/// authentication on decrypt - the attacker would have to forge a
 /// GCM tag, which they can't without the key.
 fn associated_data(snippet_id: &str, owner_id: &str, version: i64) -> Vec<u8> {
     format!("{snippet_id}|{owner_id}|{version}").into_bytes()
@@ -139,7 +139,7 @@ mod tests {
     // Two encrypts of the SAME plaintext must produce different
     // ciphertext (fresh nonce each time). If this regresses, our crypto
     // has become deterministic, which leaks "same plaintext under same
-    // key" — a real-world AES-GCM bug pattern when someone hardcodes a
+    // key" - a real-world AES-GCM bug pattern when someone hardcodes a
     // nonce.
     #[test]
     fn fresh_nonce_per_encryption() {
@@ -153,7 +153,7 @@ mod tests {
 
     // Each mis-matched context field must independently break decrypt.
     // Catches a regression where AD construction silently dropped a
-    // component (e.g., used owner only) — that would allow row swaps.
+    // component (e.g., used owner only) - that would allow row swaps.
     #[test]
     fn mismatched_context_fails_decrypt() {
         let key = MasterKey::generate();
@@ -168,7 +168,7 @@ mod tests {
 
     // Wrong key fails decrypt. If this passed, the encryption would be
     // effectively a no-op against an attacker who can guess the key
-    // length — but it's GCM, so any single-bit key flip should fail
+    // length - but it's GCM, so any single-bit key flip should fail
     // authentication.
     #[test]
     fn wrong_key_fails_decrypt() {

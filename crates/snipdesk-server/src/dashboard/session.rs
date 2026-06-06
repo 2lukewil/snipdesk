@@ -3,7 +3,7 @@
 //! We re-issue the same HS256 JWT the JSON API uses; the cookie is just
 //! a different transport. That means a single sign-out from the
 //! dashboard doesn't invalidate any desktop client tokens (and vice
-//! versa) — they're independent sessions sharing the same signing key.
+//! versa) - they're independent sessions sharing the same signing key.
 //! When we add a revocation list (v1.1) it would invalidate both.
 //!
 //! Cookie attributes:
@@ -11,7 +11,7 @@
 //!     attached automatically on requests; it never reads it.
 //!   - `SameSite=Lax`: blocks cross-site POSTs. We don't accept any
 //!     dashboard mutation from a third-party origin so this is safe.
-//!   - `Path=/`: required so /static/* requests carry the cookie too —
+//!   - `Path=/`: required so /static/* requests carry the cookie too -
 //!     not strictly necessary for static asset auth, but it means the
 //!     cookie behaves uniformly across the whole dashboard.
 //!   - `Secure`: omitted in v1 so localhost smoke tests work. In
@@ -39,12 +39,12 @@ pub fn build_cookie(token: String) -> Cookie<'static> {
         // No max-age: the cookie expires with the browser session. The
         // JWT inside has its own 24h TTL; we honor whichever expires
         // first. Persistent cookies would mean a forgotten browser tab
-        // stays admin-authenticated for the full JWT lifetime — wrong
+        // stays admin-authenticated for the full JWT lifetime - wrong
         // default for an admin tool.
         .build()
 }
 
-/// A removal cookie — same name/path/HttpOnly/SameSite as the issued
+/// A removal cookie - same name/path/HttpOnly/SameSite as the issued
 /// cookie, with `max_age` zeroed and an expiry in the past, so the
 /// browser drops it instead of just shadowing it. `make_removal()`
 /// handles both knobs in one call.
@@ -58,7 +58,7 @@ pub fn clear_cookie() -> Cookie<'static> {
     c
 }
 
-/// Authenticated dashboard session — extracted from the cookie jar.
+/// Authenticated dashboard session - extracted from the cookie jar.
 /// Holds the JWT claims; admin enforcement is layered on top via
 /// `DashboardAdmin` below.
 pub struct DashboardSession {
@@ -143,7 +143,7 @@ pub fn safe_next(raw: Option<&str>) -> String {
 }
 
 /// Look up the signed-in user's display name + role for the nav bar.
-/// Falls back to placeholders on a stray DB error — the nav must never
+/// Falls back to placeholders on a stray DB error - the nav must never
 /// block on metadata.
 pub async fn fetch_nav_user(state: &AppState, claims: &Claims) -> (String, String) {
     let row: Option<(String, String)> =

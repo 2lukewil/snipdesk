@@ -5,7 +5,7 @@
 //!
 //! Handlers return `Result<T, ApiError>` and use `?` against sqlx /
 //! serde / anyhow errors via the `From` impls below. Anything not
-//! explicitly classified maps to a 500 with a generic message — the
+//! explicitly classified maps to a 500 with a generic message - the
 //! detailed cause is logged but not exposed to the client (no
 //! information leakage from internal failures).
 
@@ -80,7 +80,7 @@ impl std::error::Error for ApiError {}
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // 5xx: log the detail server-side but only return a generic
-        // message to the client. 4xx: surface the message — clients need
+        // message to the client. 4xx: surface the message - clients need
         // to know what they did wrong.
         let public_message = if self.status.is_server_error() {
             tracing::error!(code = %self.code, error = %self.message, "server error");

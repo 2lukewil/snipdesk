@@ -70,13 +70,13 @@ pub fn write_clipboard_unicode(text: &str) -> Result<(), String> {
             return Err("OpenClipboard failed".into());
         }
 
-        // Must CloseClipboard before returning — the handle is process-global.
+        // Must CloseClipboard before returning - the handle is process-global.
         let result = (|| -> Result<(), String> {
             if EmptyClipboard() == 0 {
                 return Err("EmptyClipboard failed".into());
             }
 
-            // GMEM_MOVEABLE is required — SetClipboardData takes ownership and
+            // GMEM_MOVEABLE is required - SetClipboardData takes ownership and
             // the clipboard manager may relocate the block.
             let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
             if hmem.is_null() {
@@ -123,7 +123,7 @@ pub fn write_clipboard_unicode(_text: &str) -> Result<(), String> {
 ///
 /// Caveat: WM_PASTE works on Win32 edit, RichEdit, and Scintilla controls
 /// (Notepad, file dialogs, Word, WordPad, Outlook, Notepad++). It does NOT
-/// work on Chromium (Chrome/Edge/Slack/Discord/Teams/VS Code/Electron) —
+/// work on Chromium (Chrome/Edge/Slack/Discord/Teams/VS Code/Electron) -
 /// the text area isn't a real Win32 control. We detect those by class name
 /// and route to SendInput.
 ///
@@ -183,7 +183,7 @@ fn is_chromium_window(hwnd: isize) -> bool {
 }
 
 /// AttachThreadInput is required so GetFocus() returns the focused child
-/// control inside the target — without it we'd see our own focus or 0.
+/// control inside the target - without it we'd see our own focus or 0.
 #[cfg(windows)]
 fn try_wm_paste(target_hwnd: isize) -> bool {
     use windows_sys::Win32::Foundation::HWND;
@@ -209,7 +209,7 @@ fn try_wm_paste(target_hwnd: isize) -> bool {
             return false;
         }
         let focused = GetFocus();
-        // Detach immediately — leaving it attached interferes with the
+        // Detach immediately - leaving it attached interferes with the
         // target's own input handling.
         let _ = AttachThreadInput(our_tid, target_tid, 0);
 
@@ -259,7 +259,7 @@ fn send_ctrl_v_windows() {
     }
 
     unsafe {
-        // key-up is a no-op if the key isn't down — cheap to send unconditionally.
+        // key-up is a no-op if the key isn't down - cheap to send unconditionally.
         let flush = [
             key_event(VK_SHIFT, true),
             key_event(VK_MENU, true), // VK_MENU == Alt
@@ -287,7 +287,7 @@ fn send_ctrl_v_windows() {
 }
 
 /// Synthesize Ctrl+C in the foreground app and snapshot the result.
-/// Restores the prior clipboard contents — clobbering them is the worst
+/// Restores the prior clipboard contents - clobbering them is the worst
 /// class of "helper app" bug.
 ///
 /// Detection: snapshot GetClipboardSequenceNumber before Ctrl+C, poll for
@@ -301,7 +301,7 @@ pub fn capture_selection_windows() -> Result<Option<String>, String> {
         let pre_seq = GetClipboardSequenceNumber();
 
         // Only Unicode text is preserved across the round-trip. Images and
-        // file lists are lost — TODO if it bites users.
+        // file lists are lost - TODO if it bites users.
         let previous = read_clipboard_unicode_text();
 
         send_ctrl_c_windows();
@@ -332,7 +332,7 @@ pub fn capture_selection_windows() -> Result<Option<String>, String> {
                     ));
                 }
             }
-            // No prior text — leave our Ctrl+C result in place.
+            // No prior text - leave our Ctrl+C result in place.
         }
 
         Ok(selection.filter(|s| !s.is_empty()))
@@ -390,7 +390,7 @@ fn read_clipboard_unicode_text() -> Option<String> {
     }
 }
 
-/// Mirror of send_ctrl_v_windows with VK_C. Same modifier-flush rationale —
+/// Mirror of send_ctrl_v_windows with VK_C. Same modifier-flush rationale -
 /// stray Shift/Alt from the quick-add hotkey would turn this into
 /// Ctrl+Shift+C (devtools) or Ctrl+Alt+C.
 #[cfg(windows)]

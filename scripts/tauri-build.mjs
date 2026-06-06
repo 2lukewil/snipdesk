@@ -5,7 +5,7 @@
 // to set env vars in every shell session. Extra args after the npm script
 // are forwarded to tauri (e.g. `npm run tauri:build -- --bundles nsis`).
 //
-// CI doesn't go through this wrapper — release.yml calls `npx
+// CI doesn't go through this wrapper - release.yml calls `npx
 // @tauri-apps/cli build` directly with the env vars from GitHub Secrets.
 
 import { spawnSync } from "node:child_process";

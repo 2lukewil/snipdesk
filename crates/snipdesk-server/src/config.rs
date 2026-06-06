@@ -2,7 +2,7 @@
 //!
 //! The master encryption key is sourced with strict priority:
 //!   1. `SNIPDESK_MASTER_KEY` env var (base64-encoded 32 bytes). Preferred
-//!      for container deployments — keeps the secret out of disk-resident
+//!      for container deployments - keeps the secret out of disk-resident
 //!      config alongside other settings.
 //!   2. `[crypto].master_key_file` path in the config TOML. The file must
 //!      be readable only by the server's user (mode 0600 enforced on
@@ -64,7 +64,7 @@ pub struct MasterKey([u8; MASTER_KEY_LEN]);
 
 impl std::fmt::Debug for MasterKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Length only — never echo the actual bytes (even partially) so
+        // Length only - never echo the actual bytes (even partially) so
         // accidental debug logging can't leak the secret.
         f.debug_struct("MasterKey")
             .field("bytes", &"[redacted; 32 bytes]")

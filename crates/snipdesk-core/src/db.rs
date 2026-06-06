@@ -115,7 +115,7 @@ impl Db {
 
             -- Team-library snippets fetched from a remote JSON URL. Separate
             -- table so sync can DELETE + bulk reinsert without touching local
-            -- snippets. No usage_count — would be misleading on shared data.
+            -- snippets. No usage_count - would be misleading on shared data.
             -- Frontend routes through use_snippet via the `team:` id prefix.
             CREATE TABLE IF NOT EXISTS team_snippets (
                 team_id TEXT PRIMARY KEY,
@@ -202,7 +202,7 @@ impl Db {
         // `server_version` lets the engine upsert by row instead of the
         // legacy nuke-and-pave (`replace_team_snippets`). Existing local
         // rows from the JSON-URL flow have no server version, so they
-        // default to 0 — the next library sync overwrites them in place.
+        // default to 0 - the next library sync overwrites them in place.
         let team_cols: std::collections::HashSet<String> = {
             let mut stmt = conn.prepare("PRAGMA table_info(team_snippets)")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -337,7 +337,7 @@ impl Db {
         // Pull the row's server_version (if any) before we drop it, so we
         // know whether the server has heard of this snippet. Rows that
         // were never pushed (server_version IS NULL) can disappear
-        // without leaving a tombstone — the server has nothing to delete.
+        // without leaving a tombstone - the server has nothing to delete.
         let server_version: Option<i64> = self
             .conn
             .query_row(
@@ -346,7 +346,7 @@ impl Db {
                 |row| row.get(0),
             )
             .optional()?;
-        // Cascade variable_history — no FK enforcement.
+        // Cascade variable_history - no FK enforcement.
         self.conn
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
         let n = self
@@ -490,7 +490,7 @@ impl Db {
                 format!("{}/%", old_path),
             ],
         )?;
-        // Snippets touched by the rename get dirty=1 too — folder_path is
+        // Snippets touched by the rename get dirty=1 too - folder_path is
         // part of the encrypted payload, so the server needs to be told.
         tx.execute(
             "UPDATE snippets \
@@ -504,7 +504,7 @@ impl Db {
             ],
         )?;
 
-        // Rename may have created a new subtree — ensure its ancestors exist.
+        // Rename may have created a new subtree - ensure its ancestors exist.
         let now = Utc::now().timestamp();
         for ancestor in path_ancestors(&new_path) {
             tx.execute(
@@ -761,7 +761,7 @@ impl Db {
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
         self.conn
             .execute("DELETE FROM snippets WHERE id = ?1", [id])?;
-        // Idempotent — also clear any local tombstone for the same id,
+        // Idempotent - also clear any local tombstone for the same id,
         // since the server's already deleted it.
         self.conn
             .execute("DELETE FROM pending_deletes WHERE snippet_id = ?1", [id])?;
@@ -791,7 +791,7 @@ impl Db {
         }
         // ON CONFLICT DO UPDATE avoids INSERT OR REPLACE's cascade,
         // which would clobber variable_history. usage_count and
-        // last_used stay local-only — we don't overwrite them with
+        // last_used stay local-only - we don't overwrite them with
         // server values (which don't have them anyway).
         self.conn.execute(
             "INSERT INTO snippets \
@@ -839,9 +839,9 @@ impl Db {
     /// Logout housekeeping: drop the high-water-mark and any signed-in
     /// user record, AND reset every snippet's server_version + dirty
     /// state so the next sign-in starts as if from a fresh device.
-    /// Local snippet content is preserved — only the sync metadata is
+    /// Local snippet content is preserved - only the sync metadata is
     /// wiped. Pending deletes are also cleared (the new server may not
-    /// know about those rows). The library mirror is also wiped — a
+    /// know about those rows). The library mirror is also wiped - a
     /// different org's shared snippets shouldn't bleed into the next
     /// session, and the new server will repopulate from its own data.
     pub fn reset_sync_metadata(&self) -> Result<()> {
@@ -893,7 +893,7 @@ impl Db {
         let now = Utc::now().timestamp();
         let mut count = 0;
         for snip in snippets {
-            // Fallback id from title — keeps usage history stable across syncs
+            // Fallback id from title - keeps usage history stable across syncs
             // when the author didn't supply one.
             let team_id = snip
                 .id
@@ -972,7 +972,7 @@ impl Db {
     }
 
     /// Apply one row from `GET /api/library`. The server pushes both
-    /// fresh rows and updates through the same path — `INSERT OR REPLACE`
+    /// fresh rows and updates through the same path - `INSERT OR REPLACE`
     /// is fine here because team_snippets has no per-row local state
     /// (no usage_count, no variable_history) that we'd lose.
     pub fn upsert_library_snippet(
@@ -1087,7 +1087,7 @@ mod tests {
 
     // normalize_path / path_ancestors drive folder hierarchy everywhere
     // (create, rename, ensure_folder, list_folders). Their string handling
-    // — slash collapsing, whitespace trim, ancestor expansion — is the kind
+    // - slash collapsing, whitespace trim, ancestor expansion - is the kind
     // of logic that breaks silently on a refactor, so it's worth pinning.
     #[test]
     fn normalize_path_strips_whitespace_and_collapses_slashes() {

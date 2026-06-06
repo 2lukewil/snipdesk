@@ -2,7 +2,7 @@
 //!
 //! Spawned by `main.rs::run` when stdin is a TTY. Reads commands a
 //! line at a time and dispatches them against the same SQLite pool
-//! the HTTP layer is using. Modelled on Minecraft's server console —
+//! the HTTP layer is using. Modelled on Minecraft's server console -
 //! you type into the terminal that started the server; log output
 //! interleaves with your typing (that's the price of not pulling in a
 //! line-editor crate like rustyline). For complex sessions, the
@@ -16,16 +16,16 @@
 //! gates this whole module out in those environments.
 //!
 //! What the console can do:
-//!   - `help` — list commands
+//!   - `help` - list commands
 //!   - `users list / promote / demote / disable / enable / delete`
-//!   - `stop` / `quit` / `exit` — graceful shutdown
+//!   - `stop` / `quit` / `exit` - graceful shutdown
 //!
 //! What the console deliberately can't do:
-//!   - `users reset-password` — its prompt reads from stdin, which
+//!   - `users reset-password` - its prompt reads from stdin, which
 //!     would race with the console's own stdin reader. The standalone
 //!     subcommand handles it cleanly; the console refuses with a
 //!     pointer.
-//!   - `users delete <email>` without `--yes` — same reason: the
+//!   - `users delete <email>` without `--yes` - same reason: the
 //!     interactive confirmation needs stdin. Force the `--yes`.
 
 use anyhow::Result;
@@ -37,7 +37,7 @@ use tokio::sync::oneshot;
 use crate::cli::{self, UsersCmd};
 
 /// Top-level shape parsed from one console line. clap's derive does
-/// all the heavy lifting — quoted args, --flag handling, structured
+/// all the heavy lifting - quoted args, --flag handling, structured
 /// errors. We prepend a dummy "console" as argv[0] before calling
 /// `try_parse_from` so clap's binary-name expectation is satisfied.
 #[derive(Parser, Debug)]
@@ -59,7 +59,7 @@ struct ConsoleLine {
 enum ConsoleCmd {
     /// Show the list of available commands.
     Help,
-    /// User management — same subcommand tree as `snipdesk-server
+    /// User management - same subcommand tree as `snipdesk-server
     /// users` from the shell, minus reset-password (stdin clash).
     Users {
         #[command(subcommand)]
@@ -83,7 +83,7 @@ pub async fn run(pool: SqlitePool, shutdown_tx: oneshot::Sender<()>) {
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
 
-    // Use eprintln! for console UI text — keeps it on stderr, distinct
+    // Use eprintln! for console UI text - keeps it on stderr, distinct
     // from any stdout-only operators might want to capture (none today,
     // but future `--json` modes won't fight the banner).
     eprintln!("Console ready. Type `help` for commands; `stop` to shut down.");
@@ -106,7 +106,7 @@ pub async fn run(pool: SqlitePool, shutdown_tx: oneshot::Sender<()>) {
                 }
             }
             Ok(None) => {
-                // EOF on stdin — treat as a soft shutdown signal so a
+                // EOF on stdin - treat as a soft shutdown signal so a
                 // detached terminal doesn't pin the server alive.
                 eprintln!("stdin closed; shutting down.");
                 if let Some(tx) = tx.take() {
@@ -131,7 +131,7 @@ async fn handle_line(
     let parsed = match ConsoleLine::try_parse_from(&argv) {
         Ok(p) => p,
         Err(e) => {
-            // clap renders its own friendly diagnostics — let it print
+            // clap renders its own friendly diagnostics - let it print
             // straight to the terminal instead of wrapping in our own
             // error formatting.
             let _ = e.print();
@@ -162,7 +162,7 @@ async fn handle_line(
 async fn dispatch_users(pool: &SqlitePool, cmd: UsersCmd) -> Result<()> {
     match &cmd {
         UsersCmd::ResetPassword { .. } => {
-            eprintln!("`users reset-password` is not available in the console — its");
+            eprintln!("`users reset-password` is not available in the console - its");
             eprintln!("interactive password prompt would race with the console's stdin reader.");
             eprintln!(
                 "Run from a separate shell, e.g.:\n  \
@@ -191,7 +191,7 @@ fn print_help() {
     eprintln!("  help");
     eprintln!();
     eprintln!(
-        "Not available in console (stdin conflict — use a separate shell):\n  \
+        "Not available in console (stdin conflict - use a separate shell):\n  \
          users reset-password <email>"
     );
 }

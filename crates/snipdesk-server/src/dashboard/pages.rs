@@ -9,15 +9,15 @@
 //!     fragment.
 //!   - HTML is hand-rolled via `include_str!` + `{{KEY}}` substitution.
 //!     Anything user-controlled goes through `escape_html()` before
-//!     ending up inside a template — never trust input.
+//!     ending up inside a template - never trust input.
 //!
 //! What this doesn't do (deferred to later phases):
 //!   - Edit user display name / email (the admin tool exists to manage
-//!     access, not to maintain user records — users edit their own).
+//!     access, not to maintain user records - users edit their own).
 //!   - Filter / paginate the users list (the table is small enough for
 //!     this not to matter at v1 scale; SQLite + ORDER BY is fine).
 //!   - Per-user snippet activity timeline (we surface counts, not
-//!     content — the dashboard never reveals personal snippet bodies).
+//!     content - the dashboard never reveals personal snippet bodies).
 
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ const LOGIN: &str = include_str!("templates/login.html");
 /// Replace every `{{KEY}}` occurrence in `tpl` with its value. Order is
 /// deterministic (sorted keys) so a value containing `{{OTHER_KEY}}`
 /// from a previous substitution can't accidentally trigger a second
-/// round of substitution — keys are processed once each and the
+/// round of substitution - keys are processed once each and the
 /// remaining `{{...}}` placeholders are dropped at the end so unused
 /// slots don't leak.
 fn render(tpl: &str, vars: &[(&str, &str)]) -> String {
@@ -115,7 +115,7 @@ async fn render_page(
     ))
 }
 
-// ---- / (index — login or redirect) ----
+// ---- / (index - login or redirect) ----
 
 #[derive(Debug, Deserialize)]
 pub struct IndexQuery {
@@ -135,7 +135,7 @@ pub async fn index(
     // If the cookie is present and decodes to an admin claim, skip the
     // login form and send them in. (Members logged into the cookie get
     // bounced when they hit /dashboard/users.) We don't validate the
-    // role here — that's the admin extractor's job — so a member with
+    // role here - that's the admin extractor's job - so a member with
     // a fresh session gets to see the bounce page once, not the login
     // form with a confusing "still signed in" experience.
     let signed_in = jar.get(crate::dashboard::session::COOKIE_NAME).is_some();
@@ -204,7 +204,7 @@ pub async fn login_submit(
         Err(_) => return Redirect::to("/?error=invalid").into_response(),
     };
 
-    // Update last_seen_at on dashboard sign-in too — admins are users
+    // Update last_seen_at on dashboard sign-in too - admins are users
     // and should show up alive on the users page.
     let now = Utc::now().timestamp();
     let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
@@ -366,8 +366,8 @@ fn render_user_row(u: &crate::handlers::admin::AdminUserView, me_id: &str) -> St
     let actions = if u.id == me_id {
         // Self-row: no buttons. Anything we'd offer would be a
         // self-lockout risk, and the server-side gates already block
-        // them — better to hide than to show a button that always 400s.
-        "<span class=\"muted\">— you —</span>".to_string()
+        // them - better to hide than to show a button that always 400s.
+        "<span class=\"muted\">- you -</span>".to_string()
     } else {
         let toggle_role = if u.role == "admin" {
             ("member", "Demote")
@@ -423,7 +423,7 @@ fn render_user_row(u: &crate::handlers::admin::AdminUserView, me_id: &str) -> St
 }
 
 /// "5 min ago", "yesterday", "2 days ago", "Mar 14". Cheap and good
-/// enough for the dashboard — no humantime dep.
+/// enough for the dashboard - no humantime dep.
 fn format_relative(ts: i64) -> String {
     let now = Utc::now().timestamp();
     let delta = now - ts;
@@ -442,10 +442,10 @@ fn format_relative(ts: i64) -> String {
     Utc.timestamp_opt(ts, 0)
         .single()
         .map(|d| d.format("%b %-d").to_string())
-        .unwrap_or_else(|| "—".to_string())
+        .unwrap_or_else(|| "-".to_string())
 }
 
-// ---- /dashboard/users (POST) — create user ----
+// ---- /dashboard/users (POST) - create user ----
 
 #[derive(Debug, Deserialize)]
 pub struct CreateUserForm {
@@ -472,7 +472,7 @@ pub async fn user_create_row(
         return (
             StatusCode::BAD_REQUEST,
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            "<tr><td colspan=\"7\" class=\"banner error\">Invalid input — check email, name, and 10-char password.</td></tr>",
+            "<tr><td colspan=\"7\" class=\"banner error\">Invalid input - check email, name, and 10-char password.</td></tr>",
         ).into_response();
     }
 
@@ -531,7 +531,7 @@ pub async fn user_create_row(
         .into_response()
 }
 
-// ---- /dashboard/users/:id (PUT) — disable/enable + role ----
+// ---- /dashboard/users/:id (PUT) - disable/enable + role ----
 //
 // Reuses the JSON admin handler under the hood: we already validated
 // rules there (self-protection, last-admin, role values). Calling the
@@ -545,7 +545,7 @@ pub struct UserUpdateForm {
     is_disabled: Option<UpdateFlag>,
 }
 
-/// htmx encodes booleans as the JS literal — `true` or `false` —
+/// htmx encodes booleans as the JS literal - `true` or `false` -
 /// inside hx-vals JSON, but axum's Form codec posts them as strings.
 /// `UpdateFlag` accepts either shape.
 #[derive(Debug, Deserialize)]
@@ -640,7 +640,7 @@ pub async fn library_page(State(state): State<AppState>, admin: DashboardAdmin) 
     let rows = load_library(&state).await.unwrap_or_default();
     let mut body = String::new();
     body.push_str("<h1>Shared library</h1>");
-    body.push_str("<p class=\"muted\">Snippets here appear in every signed-in member's Team Library sidebar. They're plaintext at rest — don't put secrets in.</p>");
+    body.push_str("<p class=\"muted\">Snippets here appear in every signed-in member's Team Library sidebar. They're plaintext at rest - don't put secrets in.</p>");
     body.push_str(&library_create_form());
     body.push_str("<div class=\"library-list\" id=\"library-list\">");
     if rows.is_empty() {

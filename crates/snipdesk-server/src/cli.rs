@@ -12,7 +12,7 @@
 //! The commands open the same SQLite database the running server uses.
 //! SQLite's WAL mode handles a concurrent reader+writer fine, so it's
 //! safe to run these while the server is up. We deliberately don't
-//! bother with a lockfile or "stop the server first" — that would just
+//! bother with a lockfile or "stop the server first" - that would just
 //! introduce friction with no real benefit at single-file-DB scale.
 //!
 //! Last-admin protection (can't demote / disable / delete the only
@@ -56,7 +56,7 @@ pub enum UsersCmd {
     /// for `yes` confirmation unless `--yes` is passed.
     Delete {
         email: String,
-        /// Skip the interactive confirmation prompt — for scripted
+        /// Skip the interactive confirmation prompt - for scripted
         /// runs where the operator is already sure.
         #[arg(long)]
         yes: bool,
@@ -68,13 +68,13 @@ pub enum UsersCmd {
         email: String,
         /// Skip the "type new password twice" prompt; read a single
         /// line from stdin. For scripted use; do NOT pipe a literal
-        /// from a shell command — that puts the plaintext in history.
+        /// from a shell command - that puts the plaintext in history.
         #[arg(long)]
         from_stdin: bool,
     },
 }
 
-/// Entry point dispatched by main.rs's `Cmd::Users { cmd }` arm — opens
+/// Entry point dispatched by main.rs's `Cmd::Users { cmd }` arm - opens
 /// its own SQLite pool against `data_dir/snipdesk.db`.
 pub async fn run(data_dir: &Path, cmd: UsersCmd) -> Result<()> {
     let pool = open_pool(data_dir).await?;
@@ -100,7 +100,7 @@ pub async fn run_with_pool(pool: &SqlitePool, cmd: UsersCmd) -> Result<()> {
 }
 
 /// Open the same SQLite DB the server uses. We don't go through
-/// `db::open` because that runs migrations — fine to run again
+/// `db::open` because that runs migrations - fine to run again
 /// (migrations are idempotent) but slower and noisier than we need for
 /// a one-shot CLI command. The CLI assumes the schema is already up.
 async fn open_pool(data_dir: &Path) -> Result<SqlitePool> {
@@ -166,7 +166,7 @@ async fn admin_count(pool: &SqlitePool) -> Result<i64> {
 
 /// Bail if removing this user from the admin pool (by demote, disable,
 /// or delete) would leave the org with zero functioning admins.
-/// "Functioning" excludes disabled accounts — a disabled admin can't
+/// "Functioning" excludes disabled accounts - a disabled admin can't
 /// actually administrate, so we shouldn't count them.
 async fn guard_last_admin(pool: &SqlitePool, target: &UserRow, action: &str) -> Result<()> {
     if target.role != "admin" {
@@ -179,7 +179,7 @@ async fn guard_last_admin(pool: &SqlitePool, target: &UserRow, action: &str) -> 
     let counts_as_active = target.is_disabled == 0;
     if counts_as_active && active_admins <= 1 {
         bail!(
-            "refusing to {action} {email} — they're the only active admin. \
+            "refusing to {action} {email} - they're the only active admin. \
              Promote another user first.",
             email = target.email
         );
@@ -191,7 +191,7 @@ async fn guard_last_admin(pool: &SqlitePool, target: &UserRow, action: &str) -> 
 
 // Clippy flags the literal header values as "could be inlined into the
 // format string." Keeping them as positional args is what makes the
-// header line up with the data row that follows — both use the same
+// header line up with the data row that follows - both use the same
 // width-padded format string. Inlining would force the header into a
 // separate hand-padded string and create two sources of truth for
 // column widths.
@@ -210,7 +210,7 @@ async fn list(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     if rows.is_empty() {
-        println!("(no users yet — the first signup auto-promotes to admin)");
+        println!("(no users yet - the first signup auto-promotes to admin)");
         return Ok(());
     }
 
@@ -330,7 +330,7 @@ async fn delete(pool: &SqlitePool, email: &str, skip_confirm: bool) -> Result<()
         .execute(pool)
         .await?;
     if res.rows_affected() == 0 {
-        bail!("delete affected 0 rows — did someone else delete them first?");
+        bail!("delete affected 0 rows - did someone else delete them first?");
     }
     println!("Deleted {email}.");
     Ok(())
@@ -340,7 +340,7 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
     let user = find_by_email(pool, email).await?;
 
     // Always prefer rpassword-style no-echo input via `rpassword` if
-    // it's available — for v1 we read from stdin plaintext. The
+    // it's available - for v1 we read from stdin plaintext. The
     // `--from-stdin` flag reads a single line silently (operator
     // controls echo via their tty); without it we prompt twice with a
     // confirmation check, with plaintext echo (visible) so the user
@@ -364,7 +364,7 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
         io::stdin().read_line(&mut second)?;
         let second = second.trim_end_matches(['\r', '\n']).to_string();
         if first != second {
-            bail!("passwords don't match — aborting.");
+            bail!("passwords don't match - aborting.");
         }
         first
     };
@@ -374,7 +374,7 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
     }
 
     // Inline the hash here rather than calling crate::auth::hash_password
-    // — that returns ApiError which is shaped for HTTP responses; cleaner
+    // - that returns ApiError which is shaped for HTTP responses; cleaner
     // boundary if we don't drag that type into the CLI module.
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
@@ -389,7 +389,7 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
         .await?;
     println!(
         "Reset password for {email}. Their existing JWT(s) remain valid \
-         until expiry (24h) — rotate the server's jwt_secret if you need \
+         until expiry (24h) - rotate the server's jwt_secret if you need \
          immediate invalidation."
     );
     Ok(())

@@ -1,6 +1,6 @@
 //! Daily SQLite snapshot + retention pruning.
 //!
-//! Plain file copy, not VACUUM INTO — DBs are tiny and we have no long
+//! Plain file copy, not VACUUM INTO - DBs are tiny and we have no long
 //! transactions. Snapshots are keyed by date (`snippets-YYYYMMDD.db`) so
 //! repeated runs on the same day are idempotent. 6-hour cadence so always-on
 //! installs cross day boundaries.

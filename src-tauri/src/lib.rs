@@ -1,4 +1,4 @@
-// IPC surface — local to this crate because every fn is `#[tauri::command]`.
+// IPC surface - local to this crate because every fn is `#[tauri::command]`.
 mod commands;
 #[cfg(feature = "teams")]
 mod server_commands;
@@ -6,7 +6,7 @@ mod server_commands;
 // Re-export shared modules under short names so call sites stay stable as
 // crates get reshuffled. Add new re-exports here when modules move.
 pub use snipdesk_core::{backup, db, logging, paste, settings, shared_library};
-// Teams-only — gated so the offline build's dep tree contains no `snipdesk-teams`
+// Teams-only - gated so the offline build's dep tree contains no `snipdesk-teams`
 // and no `ureq`. Verify with `cargo tree --no-default-features`.
 #[cfg(feature = "teams")]
 pub use snipdesk_teams::shared_url;
@@ -41,7 +41,7 @@ pub struct AppState {
     /// momentarily report is_minimized=true) re-triggers minimize-to-tray
     /// and cycles the window open/closed.
     pub was_minimized: AtomicBool,
-    /// Team-library sync status — three atomics rather than a Mutex<struct>
+    /// Team-library sync status - three atomics rather than a Mutex<struct>
     /// because the frontend polls these on every status tick.
     #[cfg(feature = "teams")]
     pub team_last_fetched_unix: AtomicI64,
@@ -80,7 +80,7 @@ pub fn run() {
             let db_path = data_dir.join("snippets.db");
             let settings_path = data_dir.join("settings.json");
 
-            // Settings before logging/backup — both read retention windows from it.
+            // Settings before logging/backup - both read retention windows from it.
             let settings = settings::Settings::load_or_default(&settings_path);
 
             // Logging before Db::open so a corrupt-schema panic lands in snipdesk.log.
@@ -105,7 +105,7 @@ pub fn run() {
             });
             app.manage(settings::SettingsPath(settings_path));
 
-            // Teams-only — the free build has no network-touching threads.
+            // Teams-only - the free build has no network-touching threads.
             #[cfg(feature = "teams")]
             {
                 start_team_sync_thread(app.handle().clone());
@@ -143,7 +143,7 @@ pub fn run() {
             )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip(format!("SnipDesk — {open_accelerator}"))
+                .tooltip(format!("SnipDesk - {open_accelerator}"))
                 .menu(&menu)
                 .show_menu_on_left_click(false);
             if let Some(icon) = app.default_window_icon() {
@@ -264,7 +264,7 @@ pub fn run() {
                                 .and_then(|s| s.settings.lock().ok().map(|g| g.minimize_to_tray))
                                 .unwrap_or(false);
                             if minimize_to_tray {
-                                // Hide only — unminimizing here interrupts
+                                // Hide only - unminimizing here interrupts
                                 // the minimize animation and flashes the
                                 // full-size window for a frame. The unminimize
                                 // happens inside toggle_window_with_state
@@ -410,7 +410,7 @@ pub fn run() {
 /// Toggle the main window and capture the prior foreground HWND for paste.
 ///
 /// Tauri's `is_visible()` stays true while minimized, and "visible" doesn't
-/// mean "frontmost" — the three flags (visible/minimized/focused) drive:
+/// mean "frontmost" - the three flags (visible/minimized/focused) drive:
 ///   visible + !minimized + focused        -> hide
 ///   visible + !minimized + !focused       -> raise (buried behind another window)
 ///   minimized                             -> restore + focus
@@ -423,7 +423,7 @@ pub fn toggle_window_with_state(handle: &tauri::AppHandle, win: &tauri::WebviewW
     if is_visible && !is_minimized && is_focused {
         let _ = win.hide();
     } else if is_visible && !is_minimized {
-        // Buried but on screen — set_focus is sufficient; no unminimize/show.
+        // Buried but on screen - set_focus is sufficient; no unminimize/show.
         let target = paste::capture_foreground_hwnd();
         if let Some(state) = handle.try_state::<AppState>() {
             state.target_hwnd.store(target, Ordering::SeqCst);
@@ -486,7 +486,7 @@ pub fn show_and_focus(handle: &tauri::AppHandle, win: &tauri::WebviewWindow) {
     });
 }
 
-/// Returns true when the user is signed in to a server backend — the
+/// Returns true when the user is signed in to a server backend - the
 /// `server_url` setting is non-empty AND a credential is stored for it.
 /// While signed in, the server-side library sync owns the team_snippets
 /// table; the legacy URL fetcher pauses so the two don't fight over it.
@@ -512,13 +512,13 @@ fn signed_into_server(state: &AppState) -> bool {
 /// signed in to a server, `snipdesk-teams::sync::tick` populates
 /// team_snippets from `/api/library`; this legacy URL loop yields the
 /// table to it by skipping every tick. The user can still leave a
-/// `team_library_url` configured — it just won't run while signed in.
+/// `team_library_url` configured - it just won't run while signed in.
 /// Signing out re-enables it on the next 30s pass.
 #[cfg(feature = "teams")]
 pub fn start_team_sync_thread(handle: tauri::AppHandle) {
     thread::spawn(move || {
         // Optional one-shot at startup so fresh snippets land before the
-        // first interval tick. Skipped if signed in — the server library
+        // first interval tick. Skipped if signed in - the server library
         // sync thread handles that path.
         let did_startup_sync = {
             let state = match handle.try_state::<AppState>() {
@@ -630,14 +630,14 @@ pub fn run_one_team_sync(handle: &tauri::AppHandle) {
     }
 }
 
-/// Capture OS selection, open editor with prefill. Non-Windows: stub —
+/// Capture OS selection, open editor with prefill. Non-Windows: stub -
 /// the save-clipboard / Ctrl+C / poll / restore dance is Win32-only.
 pub fn trigger_quick_add_from_selection(handle: &tauri::AppHandle) {
     #[cfg(windows)]
     {
         let handle_clone = handle.clone();
         thread::spawn(move || {
-            // Off the shortcut thread pool — blocking it drops subsequent presses.
+            // Off the shortcut thread pool - blocking it drops subsequent presses.
             let captured = paste::capture_selection_windows();
             match captured {
                 Ok(Some(text)) if !text.trim().is_empty() => {
@@ -647,7 +647,7 @@ pub fn trigger_quick_add_from_selection(handle: &tauri::AppHandle) {
                     }
                 }
                 Ok(_) => {
-                    // Empty selection — open editor with no prefill rather
+                    // Empty selection - open editor with no prefill rather
                     // than swallow the hotkey silently.
                     if let Some(win) = handle_clone.get_webview_window("main") {
                         show_and_focus(&handle_clone, &win);
@@ -843,7 +843,7 @@ mod tests {
     fn parse_shortcut_rejects_invalid_input() {
         assert!(parse_shortcut("definitely+not+a+key").is_none());
         assert!(parse_shortcut("").is_none());
-        // Modifier-only — there's no key code, so the result should be None.
+        // Modifier-only - there's no key code, so the result should be None.
         assert!(parse_shortcut("Ctrl+Shift").is_none());
     }
 }

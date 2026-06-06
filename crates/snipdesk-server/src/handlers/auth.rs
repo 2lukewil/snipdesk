@@ -11,7 +11,7 @@
 //!   - POST /api/auth/logout is a no-op for stateless JWTs but exists
 //!     so the client has something to call. A future revoke-list lands
 //!     here when we need it.
-//!   - GET /api/me echoes the authenticated user — uses the AuthUser
+//!   - GET /api/me echoes the authenticated user - uses the AuthUser
 //!     extractor, which 401s if the token is missing/invalid.
 
 use axum::extract::State;
@@ -86,7 +86,7 @@ pub async fn signup(
 
     // Uniqueness check up front so we don't run an expensive Argon2 hash
     // for a request we already know will fail. The DB has a UNIQUE
-    // constraint on email too — that's the real guardrail; this is just
+    // constraint on email too - that's the real guardrail; this is just
     // a faster failure path.
     let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
         .bind(&email)
@@ -139,7 +139,7 @@ pub async fn signup(
 }
 
 /// What we hydrate from the users table on login. Strictly an internal
-/// row shape — `password_hash` and `is_disabled` aren't part of the wire
+/// row shape - `password_hash` and `is_disabled` aren't part of the wire
 /// response.
 #[derive(sqlx::FromRow)]
 struct LoginRow {
@@ -185,7 +185,7 @@ pub async fn login(
     if row.is_disabled != 0 {
         return Err(ApiError::unauthorized(
             "account_disabled",
-            "account is disabled — contact your administrator",
+            "account is disabled - contact your administrator",
         ));
     }
 
@@ -235,7 +235,7 @@ pub async fn me(
     Ok(Json(MeResponse { user }))
 }
 
-/// Permissive email check — RFC 5322 is too forgiving for a useful
+/// Permissive email check - RFC 5322 is too forgiving for a useful
 /// regex. Reject only the obvious junk (no '@', no '.' after it, etc.).
 /// The OIDC path handles real-world validation; this is the password
 /// fallback's seatbelt.

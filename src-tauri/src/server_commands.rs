@@ -285,7 +285,7 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                 }
                 Err(ApiError::Unauthorized) => {
                     // Earlier we auto-deleted the credential here. That
-                    // was too aggressive — a transient 401 (or any
+                    // was too aggressive - a transient 401 (or any
                     // misclassification on the server side) would wipe
                     // the user's session and confuse them. With no
                     // refresh-token flow yet (v1.1), we just log and

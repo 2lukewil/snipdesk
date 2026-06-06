@@ -76,7 +76,7 @@ function parseEnv(text) {
 export function loadEnv() {
   // Files iterated in priority order: earlier wins on duplicate keys.
   // (We don't bother reading later files for keys already set by an
-  // earlier one — just check + skip.)
+  // earlier one - just check + skip.)
   const merged = {};
   const sources = [];
   for (const p of envFiles) {

@@ -1,5 +1,5 @@
 //! HTTP client for the snipdesk-server API. Mirrors the wire shapes
-//! defined in `crates/snipdesk-server/src/handlers/` — we redefine them
+//! defined in `crates/snipdesk-server/src/handlers/` - we redefine them
 //! here rather than depending on the server crate to keep the workspace
 //! dependency graph one-way (client → server contract, no shared
 //! types crate, which would tangle Lite builds with server symbols).
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Errors the API client can surface. The sync engine and IPC layer
-/// pattern-match on variants — `VersionConflict` in particular is the
+/// pattern-match on variants - `VersionConflict` in particular is the
 /// happy-path branch where two clients edited the same snippet, not an
 /// error to bubble up to the user.
 #[derive(Debug, Error)]
@@ -265,7 +265,7 @@ pub fn delete_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> 
 
 // ---- Library (shared team snippets) ----
 //
-// Wire-shape mirrors of `snipdesk-server::handlers::library` — kept
+// Wire-shape mirrors of `snipdesk-server::handlers::library` - kept
 // separate from the personal-snippet types because the library has its
 // own version stream (org-wide rather than per-user) and a different
 // authorization model (read-any, write-admin-only).

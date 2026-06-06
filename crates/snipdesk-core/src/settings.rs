@@ -8,7 +8,7 @@ pub struct Settings {
     pub hotkey: String,
     /// "clipboard" or "auto_paste"
     pub paste_mode: String,
-    /// Delay before synthesizing Ctrl+V — lets the window finish closing.
+    /// Delay before synthesizing Ctrl+V - lets the window finish closing.
     pub auto_paste_delay_ms: u64,
     pub close_on_paste: bool,
     pub sort_by_usage: bool,
@@ -42,7 +42,7 @@ pub struct Settings {
     /// Off by default; needs typing_speed_wpm / hourly_wage to be meaningful.
     #[serde(default)]
     pub show_savings_estimate: bool,
-    /// 40 is population average; support agents self-report 55–75.
+    /// 40 is population average; support agents self-report 55-75.
     #[serde(default = "default_wpm")]
     pub typing_speed_wpm: u32,
     /// 0 = show time saved only, no money.
@@ -230,7 +230,7 @@ pub struct SettingsPath(pub PathBuf);
 mod tests {
     use super::*;
 
-    // Catches accidentally breaking the serde derives — every Settings field
+    // Catches accidentally breaking the serde derives - every Settings field
     // has to round-trip through JSON because that's how settings.json is
     // persisted on every save.
     #[test]
@@ -244,7 +244,7 @@ mod tests {
     }
 
     // Upgrade-path safety. When we add a new field, every existing user's
-    // settings.json must keep loading — anything else is a silent data-loss
+    // settings.json must keep loading - anything else is a silent data-loss
     // moment. This test pins the contract: missing fields fall back to
     // defaults, the load doesn't error.
     #[test]
@@ -283,7 +283,7 @@ mod tests {
     }
 
     // Exercises the file-IO fallback path (a missing settings.json on first
-    // run must yield defaults, not an error) — the others only test from_str.
+    // run must yield defaults, not an error) - the others only test from_str.
     #[test]
     fn load_or_default_returns_default_for_missing_file() {
         let nonexistent = std::path::Path::new("/__definitely_not_a_real_path__/settings.json");

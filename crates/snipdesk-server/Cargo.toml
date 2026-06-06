@@ -15,7 +15,7 @@ path = "src/main.rs"
 # HTTP + async runtime
 axum = { version = "0.7", features = ["macros"] }
 # Cookie jar extractor for the htmx admin dashboard. We don't need the
-# whole `typed-header` family — `cookie` carries `CookieJar` + the
+# whole `typed-header` family - `cookie` carries `CookieJar` + the
 # right `Set-Cookie` plumbing for our session JWT, and that's it.
 axum-extra = { version = "0.9", features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }

@@ -1,4 +1,4 @@
-//! snipdesk-server — self-hostable backend for SnipDesk Teams.
+//! snipdesk-server - self-hostable backend for SnipDesk Teams.
 //!
 //! Currently a phase-1 scaffold: config + master-key validation + SQLite
 //! migrations + an Axum `/api/health` endpoint. Auth, snippet sync, and
@@ -33,7 +33,7 @@ enum Cmd {
     Run {
         /// Force the interactive console on, regardless of TTY
         /// detection. Useful in terminals that report `is_terminal()
-        /// == false` despite being interactive — most notably MSYS /
+        /// == false` despite being interactive - most notably MSYS /
         /// Git Bash / mintty on Windows, where stdio runs through
         /// pipes rather than real Win32 console handles.
         #[arg(long, conflicts_with = "no_console")]
@@ -53,7 +53,7 @@ enum Cmd {
     GenJwtSecret,
     /// User-management commands. Reads `data_dir` from the same config
     /// file as `run`, so the CLI hits the same SQLite database the
-    /// server uses. Safe to run while the server is up — WAL mode
+    /// server uses. Safe to run while the server is up - WAL mode
     /// handles concurrent reader + writer.
     Users {
         #[command(subcommand)]
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
         }
         Cmd::Users { cmd } => {
             // Reuse the same config so `data_dir` is one source of truth
-            // — the CLI hits whichever DB the server is configured for.
+            // - the CLI hits whichever DB the server is configured for.
             let cfg = config::Config::load(&cli.config).with_context(|| {
                 format!("load config {} for users subcommand", cli.config.display())
             })?;
@@ -109,10 +109,10 @@ async fn main() -> Result<()> {
 /// Boot the HTTP server and (optionally) the interactive console.
 ///
 /// `force_console`:
-///   - `Some(true)` — always start the console (caller swore stdin is
+///   - `Some(true)` - always start the console (caller swore stdin is
 ///     interactive; useful for Git Bash / mintty).
-///   - `Some(false)` — never start the console, even on a TTY.
-///   - `None` — auto-detect via `is_terminal()`.
+///   - `Some(false)` - never start the console, even on a TTY.
+///   - `None` - auto-detect via `is_terminal()`.
 async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
     let cfg = config::Config::load(&config_path)
         .with_context(|| format!("load config {}", config_path.display()))?;
@@ -135,7 +135,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(
-            "jwt_secret not set in config — /api/auth/* and /api/me will 500 \
+            "jwt_secret not set in config - /api/auth/* and /api/me will 500 \
              until you set one. Generate with: snipdesk-server gen-jwt-secret"
         );
     }
@@ -164,7 +164,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         });
     } else {
         // Sender forgotten (not dropped) so the receiver pends forever
-        // — the server then runs until Ctrl+C / SIGTERM. Dropping it
+        // - the server then runs until Ctrl+C / SIGTERM. Dropping it
         // would resolve `with_graceful_shutdown` immediately and the
         // server would exit before accepting a connection.
         std::mem::forget(shutdown_tx);
@@ -185,7 +185,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
 ///   - **TTY mode** (developer running the server in a terminal): a
 ///     compact human-readable format, so console interaction reads
 ///     like a normal interactive session. Log lines still interleave
-///     with the user's typing — Minecraft-style — which is acceptable
+///     with the user's typing - Minecraft-style - which is acceptable
 ///     for the low log volume this server produces.
 ///   - **Non-TTY mode** (systemd, docker, CI): JSON, one event per
 ///     line, so log shippers (Vector, Loki, Datadog) can parse fields

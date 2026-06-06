@@ -5,11 +5,11 @@ v1.0.0 ship.
 
 ---
 
-## Phase B — Window-title parser (~1 day)
+## Phase B - Window-title parser (~1 day)
 
 **Goal:** When an agent triggers SnipDesk while focused on a WHMCS ticket,
 pre-fill `{ticket_id}`, `{customer_name}` etc. by parsing the foreground
-browser window title — no extension, no API credentials.
+browser window title - no extension, no API credentials.
 
 **Scope**
 
@@ -30,12 +30,12 @@ for every agent on day one. The existing variable-substitution pipeline
 already takes a `HashMap<String, String>` so integration is two lines.
 
 **Risk:** browser title formats change occasionally. The parser bank is
-data — keep regexes in a `serde_json` config file the user can edit
+data - keep regexes in a `serde_json` config file the user can edit
 without recompiling.
 
 ---
 
-## Phase C — WHMCS Admin API client (~1 week)
+## Phase C - WHMCS Admin API client (~1 week)
 
 **Goal:** When the title parser identifies a ticket / client / invoice ID,
 upgrade the pre-fill from "whatever's in the title" to authoritative
@@ -82,9 +82,9 @@ binaries.
 **Two paths**
 
 1. **Standard Authenticode certificate.** Reduces SmartScreen warnings
-   over time as the binary builds reputation with each install. ~$200–400/yr.
+   over time as the binary builds reputation with each install. ~$200-400/yr.
 2. **EV (Extended Validation) Authenticode.** SmartScreen reputation is
-   granted immediately on first run. ~$300–700/yr, requires hardware
+   granted immediately on first run. ~$300-700/yr, requires hardware
    token or cloud HSM.
 
 **Constraint as of mid-2023:** all code-signing certificates (standard
@@ -94,12 +94,12 @@ Cannot ship a `.pfx` to GitHub Secrets and `signtool` against it.
 **CI implementation options**
 
 - Cloud signing service (SignPath, SSL.com eSigner, DigiCert KeyLocker):
-  CI hits a signing API with credentials in secrets. ~$20–30/mo addon.
+  CI hits a signing API with credentials in secrets. ~$20-30/mo addon.
 - Self-hosted signing runner: GH Actions runs on a machine with the USB
   token plugged in. Cheaper, less convenient.
 
 **Sequencing:** ship v1.0.0 unsigned to a small internal pilot first.
-Procurement of an EV cert takes 1–4 weeks (vetting), so kick that off
+Procurement of an EV cert takes 1-4 weeks (vetting), so kick that off
 in parallel with Phase B development.
 
 ---

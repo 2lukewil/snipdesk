@@ -16,8 +16,8 @@
     7. TrayNotify IconStreams                      (system tray icon blob)
     8. %WINDIR%\Installer\{ProductGUID}\*.ico      (MSI-extracted icons)
 
-  This script handles #1–3, #6, #7, #8 automatically. It also LISTS any #4/#5
-  pinned shortcuts pointing at SnipDesk so you can unpin & re-pin them —
+  This script handles #1-3, #6, #7, #8 automatically. It also LISTS any #4/#5
+  pinned shortcuts pointing at SnipDesk so you can unpin & re-pin them -
   those can't be refreshed any other way without a reboot.
 
 .EXAMPLE
@@ -224,5 +224,5 @@ Write-Host "Cache clear complete ($removed cache file(s) removed)." -ForegroundC
 if ($snipdeskLnks.Count -gt 0 -and -not $RemovePins) {
   Write-Host "Next: unpin + re-pin SnipDesk OR re-run with -RemovePins." -ForegroundColor Yellow
 }
-Write-Host "If the icon is still wrong, sign out and back in — that rebuilds the" -ForegroundColor DarkGray
+Write-Host "If the icon is still wrong, sign out and back in - that rebuilds the" -ForegroundColor DarkGray
 Write-Host "per-user Start Menu/taskbar database from scratch." -ForegroundColor DarkGray

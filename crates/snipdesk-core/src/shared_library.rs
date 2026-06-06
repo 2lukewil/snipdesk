@@ -18,7 +18,7 @@
 //!   ]
 //! }
 //! ```
-//! `id` is optional — if absent we derive from title so usage/variable
+//! `id` is optional - if absent we derive from title so usage/variable
 //! history survives refetches.
 
 use std::time::{Duration, SystemTime};
@@ -58,7 +58,7 @@ pub const FETCH_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Short so a hung DNS or firewall block at startup doesn't stall app launch.
 pub const FETCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Saturating — clock skew into pre-1970 returns 0 instead of panicking.
+/// Saturating - clock skew into pre-1970 returns 0 instead of panicking.
 pub fn system_time_to_unix(t: SystemTime) -> i64 {
     t.duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

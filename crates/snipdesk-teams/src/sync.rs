@@ -10,13 +10,13 @@
 //!
 //! Conflict policy for v1: **last-write-wins, server is the source of
 //! truth.** A push that comes back with `version_conflict` (we tried to
-//! PUT with stale `expected_version`) is silently dropped — the
+//! PUT with stale `expected_version`) is silently dropped - the
 //! subsequent pull will overwrite the local row with the server's
 //! version. This loses the user's concurrent edit. The design doc
 //! upgrades this to "preserve loser as a `(conflict YYYY-MM-DD)`
 //! snippet" in v1.1; the v1 protocol is forward-compatible with that.
 //!
-//! Errors at any individual step are logged and the tick continues —
+//! Errors at any individual step are logged and the tick continues -
 //! we don't want one bad snippet to wedge the whole engine.
 
 use std::sync::Mutex;
@@ -59,7 +59,7 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
     };
 
     // 1. Drain tombstones first. If a user deleted then re-created with
-    //    the same id (impossible — UUIDs — but defensive), processing
+    //    the same id (impossible - UUIDs - but defensive), processing
     //    deletes first means the recreate always wins.
     let tombstones = {
         let db = db
@@ -137,7 +137,7 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
                 max_pushed_version = max_pushed_version.max(resp.version);
                 out.pushed += 1;
             }
-            // Stale push: leave the row dirty=1 for now — step 3's pull
+            // Stale push: leave the row dirty=1 for now - step 3's pull
             // will overwrite it with the server's content and clear
             // dirty as part of upsert_from_remote. The local edit is
             // lost (v1 LWW); v1.1 will preserve it as a conflict copy.
@@ -250,7 +250,7 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
         }
         Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
         Err(e) => {
-            // Library is non-critical for v1 — a transient failure here
+            // Library is non-critical for v1 - a transient failure here
             // shouldn't sink the whole tick. Surface as an error count
             // and keep the personal-sync results.
             eprintln!("library pull failed: {e}");
@@ -271,7 +271,7 @@ pub fn migrate_existing_local(
     token: &str,
 ) -> Result<usize, ApiError> {
     // We just enumerate ALL dirty rows with server_version=NULL. The
-    // post-condition matches one tick() of the engine, so reuse it —
+    // post-condition matches one tick() of the engine, so reuse it -
     // a fresh-install user has every existing row dirty=1 with
     // server_version=NULL, so tick() will POST each one.
     let outcome = tick(db, server_url, token)?;

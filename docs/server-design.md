@@ -1,4 +1,4 @@
-# SnipDesk Teams — Server Design
+# SnipDesk Teams - Server Design
 
 > **Status:** Draft for review. Nothing in this document has been implemented
 > yet. The current Teams build talks to a static JSON URL (`shared_url.rs`)
@@ -19,7 +19,7 @@ A self-hostable backend for the SnipDesk Teams edition that adds:
 3. A **shared team library** of canned snippets, curated by admins, visible
    to all signed-in members.
 4. A **manager dashboard** for user management, library curation, and
-   visibility into team usage — without ever exposing personal snippet
+   visibility into team usage - without ever exposing personal snippet
    bodies.
 5. A **single Docker container** deployment with no external dependencies
    beyond a config file and a TLS cert.
@@ -97,7 +97,7 @@ CREATE TABLE users (
   is_disabled     INTEGER NOT NULL DEFAULT 0,
   created_at      INTEGER NOT NULL,
   last_seen_at    INTEGER,
-  -- Auth — exactly one of these is populated per user
+  -- Auth - exactly one of these is populated per user
   password_hash   TEXT,                       -- Argon2id (local auth)
   oidc_subject    TEXT UNIQUE                 -- OIDC `sub` claim (SSO)
 );
@@ -157,7 +157,7 @@ one whose claims don't hold up to scrutiny.
 The pragmatic posture for v1:
 
 - **Database dumps are safe.** Stolen backup files, lost laptops with the
-  DB cloned, accidental S3 misconfigurations — none of these expose snippet
+  DB cloned, accidental S3 misconfigurations - none of these expose snippet
   content.
 - **Server operators with shell access can decrypt** by reading the master
   key from the server's config. We don't advertise otherwise.
@@ -167,8 +167,8 @@ The pragmatic posture for v1:
   their own personal snippets via the API. Cross-user access is impossible
   without admin shell access.
 
-If this trust model ever changes — e.g. SnipDesk Teams becomes a hosted
-SaaS where customers don't trust the operators — the *Future: end-to-end
+If this trust model ever changes - e.g. SnipDesk Teams becomes a hosted
+SaaS where customers don't trust the operators - the *Future: end-to-end
 encryption* section below outlines the upgrade path. The schema and API
 have been designed so that E2E can be added later without breaking the
 v1 protocol.
@@ -179,7 +179,7 @@ The server holds a 256-bit master key used for AES-GCM encryption of all
 personal snippet payloads. Sources, in priority order:
 
 1. `SNIPDESK_MASTER_KEY` environment variable (base64-encoded). Preferred
-   for container deployments — keeps the secret out of disk-resident
+   for container deployments - keeps the secret out of disk-resident
    config.
 2. `master_key_file = "/path/to/file"` in `config.toml`. The file must be
    readable only by the server's user (mode `0600`).
@@ -187,7 +187,7 @@ personal snippet payloads. Sources, in priority order:
    supported for development.
 
 If no key is configured at startup, the server **refuses to start**. There
-is no auto-generated default — that's a footgun (operators forget to set
+is no auto-generated default - that's a footgun (operators forget to set
 it, then can't decrypt their data after a config wipe).
 
 A one-time bootstrap helper command generates a fresh key:
@@ -211,7 +211,7 @@ version` so server-side swapping of ciphertext between snippets or users
 is detected on decrypt.
 
 Encrypting the payload as one blob rather than per-field keeps the schema
-flat and makes future schema additions (new optional fields) trivial —
+flat and makes future schema additions (new optional fields) trivial -
 they just become new keys in the JSON, no migration of column structure.
 
 ### Key rotation
@@ -229,7 +229,7 @@ zero-downtime rotation is v1.1 work.
 ### What the client sees
 
 The desktop client talks plain JSON over TLS. It does no cryptography
-itself for the snippet payloads — the server is responsible. Local
+itself for the snippet payloads - the server is responsible. Local
 snippets are mirrored in the client's SQLite cache (unencrypted, same as
 the Lite build today; the OS file permissions are the protection).
 
@@ -238,7 +238,7 @@ the Lite build today; the OS file permissions are the protection).
 Server-side: full-text search over personal snippets requires
 on-the-fly decryption (a hot path could maintain an in-memory index, but
 that's v1.1). For v1, the client downloads the user's full snippet
-collection on sync and searches locally — exactly how the launcher already
+collection on sync and searches locally - exactly how the launcher already
 works in Lite. Snippet counts are small (typically <1k per user), so this
 is fast and the privacy posture is consistent.
 
@@ -253,8 +253,8 @@ is fast and the privacy posture is consistent.
 
 ### Future: end-to-end encryption
 
-If the trust model ever changes — a SaaS offering, regulated customer
-deployments, or simply user demand — the schema upgrade path is:
+If the trust model ever changes - a SaaS offering, regulated customer
+deployments, or simply user demand - the schema upgrade path is:
 
 1. Add `user_vault` table (server-stored wrapped keys, never the plain
    key).
@@ -319,7 +319,7 @@ when you want strict Workspace-only access.
 Personal Google Cloud projects can only host "External" OAuth apps:
 anyone with a Google account can grant consent, and the server's
 `required_hd` / `allowed_email_domains` does the policing. Workspace-owned
-projects can host "Internal" apps that are scoped at the OAuth layer too —
+projects can host "Internal" apps that are scoped at the OAuth layer too -
 non-Workspace users can't even reach the consent screen.
 
 The transition between them is **config-only, no code changes**:
@@ -332,7 +332,7 @@ The transition between them is **config-only, no code changes**:
    create a new OAuth client in a GCP project owned by your Workspace,
    mark the app as "Internal" user type, copy the new client_id /
    client_secret into the server config, restart. Already-issued JWTs
-   remain valid until their 24h TTL — users only see the new flow on
+   remain valid until their 24h TTL - users only see the new flow on
    their next sign-in.
 
 Either way, no server code touches Workspace specifics: the difference is
@@ -342,7 +342,7 @@ is set.
 ### Username/password fallback
 
 Standard signup/login with Argon2id-hashed passwords. The login form is
-served by the server's dashboard handler — both the desktop client and the
+served by the server's dashboard handler - both the desktop client and the
 browser dashboard reach it the same way.
 
 ### First admin / bootstrap
@@ -357,29 +357,29 @@ All endpoints under `/api`. JSON request/response unless noted. JWT in the
 `Authorization: Bearer ...` header.
 
 ### Auth
-- `POST /api/auth/signup` (password mode) — `{ email, password, display_name }` → `{ token, user }`
-- `POST /api/auth/login` (password mode) — `{ email, password }` → `{ token, user }`
+- `POST /api/auth/signup` (password mode) - `{ email, password, display_name }` → `{ token, user }`
+- `POST /api/auth/login` (password mode) - `{ email, password }` → `{ token, user }`
 - `GET  /api/auth/oidc/start` → 302 to IdP
 - `GET  /api/auth/oidc/callback` → 302 back to client via custom URL scheme
-- `POST /api/auth/logout` — invalidates server-side refresh token (no-op for stateless JWTs in v1)
+- `POST /api/auth/logout` - invalidates server-side refresh token (no-op for stateless JWTs in v1)
 - `GET  /api/me` → `{ user, has_vault }`
 
 ### Personal snippets (server-encrypted at rest, plaintext JSON over TLS)
-- `GET  /api/snippets?since=VERSION` — incremental sync; returns snippets where `version > since`. Server decrypts before returning.
-- `POST /api/snippets` — create. Body: client-generated UUID + `{ title, body, tags, folder_path }`. Server encrypts before insert.
-- `PUT  /api/snippets/:id` — update. Body: same shape + `expected_version` for optimistic concurrency.
-- `DELETE /api/snippets/:id` — soft delete (sets `is_deleted = 1`).
+- `GET  /api/snippets?since=VERSION` - incremental sync; returns snippets where `version > since`. Server decrypts before returning.
+- `POST /api/snippets` - create. Body: client-generated UUID + `{ title, body, tags, folder_path }`. Server encrypts before insert.
+- `PUT  /api/snippets/:id` - update. Body: same shape + `expected_version` for optimistic concurrency.
+- `DELETE /api/snippets/:id` - soft delete (sets `is_deleted = 1`).
 
 ### Shared library (plaintext, all members can read)
-- `GET  /api/library?since=VERSION` — incremental sync of library snippets
-- `POST /api/library` — create (admin only)
-- `PUT  /api/library/:id` — update (admin only)
-- `DELETE /api/library/:id` — delete (admin only)
+- `GET  /api/library?since=VERSION` - incremental sync of library snippets
+- `POST /api/library` - create (admin only)
+- `PUT  /api/library/:id` - update (admin only)
+- `DELETE /api/library/:id` - delete (admin only)
 
 ### Admin
-- `GET  /api/admin/users` — list users + activity (no snippet content)
-- `PUT  /api/admin/users/:id` — disable/enable, change role
-- `DELETE /api/admin/users/:id` — soft-delete account (cascades to vault + snippets)
+- `GET  /api/admin/users` - list users + activity (no snippet content)
+- `PUT  /api/admin/users/:id` - disable/enable, change role
+- `DELETE /api/admin/users/:id` - soft-delete account (cascades to vault + snippets)
 
 ## Two-way sync algorithm
 
@@ -414,7 +414,7 @@ When a `PUT` returns `409 Conflict`, the client:
    and uploaded. So both edits survive; the user can inspect and merge
    manually.
 
-This is "last-write-wins with preserved loser" — it never silently loses
+This is "last-write-wins with preserved loser" - it never silently loses
 data, which is the entire point of having a sync system at all.
 
 ## Client changes (Teams build)
@@ -426,7 +426,7 @@ JSON) is replaced. New responsibilities for the Teams build:
    login UI (email + password for fallback, "Sign in with Google" button
    for OIDC).
 2. **First-login flow:** sign in, done. No vault passphrase, no recovery
-   code — the server holds the encryption key. Total onboarding is
+   code - the server holds the encryption key. Total onboarding is
    typically two clicks (OIDC) or two fields (password fallback).
 3. **Existing local snippets migration:** on first login, prompt to
    upload the user's existing local snippets to the server. Each is sent
@@ -444,13 +444,13 @@ JSON) is replaced. New responsibilities for the Teams build:
 
 Routes (server-rendered HTML, htmx for interactivity):
 
-- `/` — login form, or redirect to `/dashboard/users` if signed in
-- `/dashboard/users` — table of all users with `last_seen_at`,
+- `/` - login form, or redirect to `/dashboard/users` if signed in
+- `/dashboard/users` - table of all users with `last_seen_at`,
   `snippet_count`, role pill, enabled/disabled status, plus inline
   actions (promote/demote, disable/enable, delete, create new). All
   mutations are htmx PUT/DELETE/POST that re-render the affected row
   in place, no full-page reload.
-- `/dashboard/library` — list of shared snippets as cards, with an
+- `/dashboard/library` - list of shared snippets as cards, with an
   inline create form. Delete via htmx; edit (inline) is deferred to
   phase 8 polish, with delete + recreate as the workaround for now.
 
@@ -458,7 +458,7 @@ Auth is cookie-based: a successful POST to `/dashboard/login` issues
 the same HS256 JWT the JSON API uses, delivered via an `HttpOnly`,
 `SameSite=Lax` cookie named `snipdesk_dashboard`. The
 `DashboardSession` extractor reads the cookie, `DashboardAdmin` further
-gates on `role=admin` — non-admins see a "members can't access the
+gates on `role=admin` - non-admins see a "members can't access the
 dashboard" page rather than a bare 403.
 
 Self-protection guards live in `handlers::admin::update_user` (server
@@ -555,8 +555,8 @@ between any two.
 
 ## Local smoke test
 
-After phase 4 lands, you can exercise the full flow on one machine —
-client + server + sign-in + sync — without any deployment ceremony.
+After phase 4 lands, you can exercise the full flow on one machine -
+client + server + sign-in + sync - without any deployment ceremony.
 
 **1. Spin up the server.**
 
@@ -568,7 +568,7 @@ cargo run -p snipdesk-server -- gen-jwt-secret  # → base64 JWT secret
 
 # Copy example config, fill in the secrets:
 cp snipdesk-server.example.toml snipdesk-server.toml
-# Edit snipdesk-server.toml (NOT the .example.toml — that's a committed
+# Edit snipdesk-server.toml (NOT the .example.toml - that's a committed
 # template; secrets pasted there would land in git history). The file
 # layout matters: master_key goes UNDER `[crypto]`, not at top level.
 #
@@ -602,14 +602,14 @@ npm run tauri:build:teams   # or `npm run tauri:dev` for a hot-reload session
 
 The Server section is at the top. Fill in:
 
-- **Server URL:** `http://127.0.0.1:8080` (NOT `http://0.0.0.0:8080` —
+- **Server URL:** `http://127.0.0.1:8080` (NOT `http://0.0.0.0:8080` -
   `0.0.0.0` is "all interfaces" for binding only; connecting to it on
   Windows fails with `os error 10049`.)
 - **Email / Password:** any (the first signup is auto-promoted to admin)
 - Click **Create account** → enter a display name → if you have local
   snippets, the migration prompt offers to upload them.
 
-You should see "Signed in as &lt;display name&gt; — admin", and your
+You should see "Signed in as &lt;display name&gt; - admin", and your
 snippets should appear in the server's DB:
 
 ```bash
@@ -617,20 +617,20 @@ sqlite3 crates/snipdesk-server/data/snipdesk.db \
   "SELECT id, length(payload_ciphertext), is_deleted FROM personal_snippets;"
 ```
 
-Note `payload_ciphertext` is opaque — no plaintext readable here.
+Note `payload_ciphertext` is opaque - no plaintext readable here.
 
 **4. Simulate a second device.**
 
 Close the app. Move or wipe its data dir (`%APPDATA%\com.snipdesk.teams\`
 on Windows; the dir name follows the `identifier` in tauri.teams.conf.json).
 Relaunch. Open Settings → Team Library, sign in with the same
-credentials at the same server URL. Watch your snippets sync back —
+credentials at the same server URL. Watch your snippets sync back -
 content intact, including folder paths and tags. Edit a snippet on
 "device 1," wait ~60s for the background tick (or click **Sync now**),
 edit returns on "device 2" after its next tick.
 
 **5. Tear-down.** `Ctrl+C` the server (or type `stop` at the in-process
-console — Minecraft-style — for graceful shutdown that drains in-flight
+console - Minecraft-style - for graceful shutdown that drains in-flight
 requests); delete `crates/snipdesk-server/data/` if you want a fresh
 start next time.
 
@@ -643,12 +643,12 @@ short version:
 - `users list / promote / demote / disable / enable <email>`
 - `users delete <email> --yes`  (interactive confirm is disabled in
   console mode because it would race with the console's own stdin)
-- `stop` (or `quit` / `exit`) — graceful shutdown
+- `stop` (or `quit` / `exit`) - graceful shutdown
 
 The console reads from `std::io::stdin()` and dispatches against the
 same SQLite pool the HTTP layer is using, so commands you type are
 immediately reflected by the API (no separate process, no second
-shell). Log output interleaves with your typing — same trade-off
+shell). Log output interleaves with your typing - same trade-off
 Minecraft makes; the alternative is pulling in a line-editor crate.
 
 **Force-on / off:** `snipdesk-server run --console` forces it on,
@@ -663,7 +663,7 @@ console is suppressed by default. The server runs headless until
 can parse them without regex.
 
 `users reset-password` deliberately isn't available inside the
-console — its prompt would race with the console's stdin reader. Run
+console - its prompt would race with the console's stdin reader. Run
 it from a separate shell:
 
 ```
@@ -677,7 +677,7 @@ snipdesk-server -c snipdesk-server.toml users reset-password alice@example.com
 - **OIDC client:** is there an existing Google Workspace OIDC client we
   should reuse, or create a new one for SnipDesk?
 - **Master-key storage:** preferred form for the `SNIPDESK_MASTER_KEY`
-  secret — env var injected by your container orchestrator (e.g. K8s
+  secret - env var injected by your container orchestrator (e.g. K8s
   Secret, Docker secret), a mounted file, or something else?
 - **Logging/observability:** any preferred stack to integrate with?
   Structured JSON to stdout is the default; works with Loki, Vector,
@@ -707,7 +707,7 @@ honest answer for v1:
   authenticated members. Shared canned replies aren't secret content.
 - **In memory (server):** plaintext briefly during encrypt/decrypt around
   each API call. The server is the trusted middleware here.
-- **In memory (client):** plaintext, same as Lite — the local SQLite
+- **In memory (client):** plaintext, same as Lite - the local SQLite
   mirror is a regular file, protected by OS user permissions.
 - **API authorization:** every personal-snippet endpoint enforces
   `snippet.owner_id == authenticated_user.id`. A signed-in user
@@ -719,7 +719,7 @@ honest answer for v1:
   ability for admins to disable users from the dashboard.
 - **Server compromise (shell access):** an attacker with the master key
   and DB can decrypt all personal snippets. This is the explicit
-  v1 limit — operators of the server are inside the trust boundary.
+  v1 limit - operators of the server are inside the trust boundary.
 
 If the trust model needs to change (external SaaS, untrusted operators),
 see *Future: end-to-end encryption* in the Encryption section for the

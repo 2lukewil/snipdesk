@@ -6,7 +6,7 @@
 //! reveals only opaque ciphertext + metadata.
 //!
 //! Sync model:
-//!   - Each user has their own monotonic `version` counter — the highest
+//!   - Each user has their own monotonic `version` counter - the highest
 //!     value across all of *their* personal_snippets rows. Every
 //!     write (create/update/delete) gets `max(version) + 1`.
 //!   - `GET /api/snippets?since=N` returns every row with version > N
@@ -16,7 +16,7 @@
 //!     reconciles via a fresh GET).
 //!   - `DELETE` is a soft delete: bump version, set is_deleted=1, leave
 //!     the ciphertext as-is. The server never re-decrypts tombstones
-//!     (the AD would mismatch the bumped version anyway — by design,
+//!     (the AD would mismatch the bumped version anyway - by design,
 //!     since the client doesn't need the body of a deleted snippet).
 
 use axum::extract::{Path, Query, State};
@@ -115,7 +115,7 @@ pub async fn create(
 
     // Reject id collisions explicitly so the client gets a clear 409
     // instead of a SQLITE_CONSTRAINT 500 from the PRIMARY KEY. Checked
-    // globally — a snippet id collision across users would be a
+    // globally - a snippet id collision across users would be a
     // client-bug too (UUIDv4 collisions are astronomically unlikely),
     // and treating it as a global namespace is simpler.
     let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM personal_snippets WHERE id = ?")
@@ -244,7 +244,7 @@ pub async fn update(
     let (current_version, created_at, is_deleted) =
         current.ok_or_else(|| ApiError::bad_request("not_found", "snippet not found"))?;
 
-    // Updates on a tombstone are a client bug (already deleted) — say
+    // Updates on a tombstone are a client bug (already deleted) - say
     // so explicitly rather than silently resurrecting.
     if is_deleted != 0 {
         return Err(ApiError::bad_request(
@@ -316,7 +316,7 @@ pub async fn delete(
     let new_version = next_version(&mut tx, owner_id).await?;
     let now = Utc::now().timestamp();
     // Tombstone: bump version + flag deleted. We deliberately do NOT
-    // touch payload_ciphertext / payload_nonce — the server never
+    // touch payload_ciphertext / payload_nonce - the server never
     // decrypts a tombstone (AD mismatch would fail anyway), so the
     // stale ciphertext is inert.
     sqlx::query(

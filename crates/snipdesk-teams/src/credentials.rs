@@ -5,7 +5,7 @@
 //!
 //! Why per-URL: the URL is the trust boundary. If a user has a personal
 //! deployment at `https://a/` and a company one at `https://b/`, the
-//! tokens shouldn't share a slot — a logout from one shouldn't drop the
+//! tokens shouldn't share a slot - a logout from one shouldn't drop the
 //! other, and a stolen token from one shouldn't authenticate against
 //! the other.
 
@@ -56,7 +56,7 @@ pub fn load(server_url: &str) -> Result<Option<String>> {
             return Ok(Some(t.clone()));
         }
     }
-    // Cache miss — try keychain (typical after a restart). Populate
+    // Cache miss - try keychain (typical after a restart). Populate
     // the cache on hit so subsequent reads are O(1).
     match entry(server_url)?.get_password() {
         Ok(s) => {
@@ -76,7 +76,7 @@ pub fn delete(server_url: &str) -> Result<()> {
     }
     match entry(server_url)?.delete_credential() {
         Ok(()) => Ok(()),
-        // Already absent — logout-on-not-signed-in is a no-op, not an error.
+        // Already absent - logout-on-not-signed-in is a no-op, not an error.
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.into()),
     }

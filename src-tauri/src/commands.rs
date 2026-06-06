@@ -176,7 +176,7 @@ pub fn use_snippet(
     args: UseSnippetArgs,
 ) -> CmdResult<UseSnippetResult> {
     // Team snippets are read-only and live in a separate table that's
-    // wholly replaced each sync — recording usage there would be lost.
+    // wholly replaced each sync - recording usage there would be lost.
     let (body, settings) = {
         let db = state.db.lock().map_err(e)?;
         let snippet = if let Some(team_id) = args.id.strip_prefix("team:") {
@@ -223,7 +223,7 @@ pub fn use_snippet(
         .unwrap_or_else(|| settings.paste_mode.clone());
     let pasted = if mode == "auto_paste" {
         // Hide first so focus starts returning; the paste worker re-asserts
-        // focus before typing rather than racing Windows' restore — required
+        // focus before typing rather than racing Windows' restore - required
         // for the variable-prompt path where we've held focus long enough
         // that auto-restore can miss the target.
         let target = state.target_hwnd.load(Ordering::SeqCst);
@@ -486,7 +486,7 @@ pub fn check_title_conflict(
 //
 // IPC for the shared-URL fetcher: sync now, status, list. Whole block is
 // gated so the free build's IPC handler doesn't reference these names.
-// Calls in a free build return "command not found" — JS side treats that
+// Calls in a free build return "command not found" - JS side treats that
 // as a no-op.
 
 /// Manual "Sync now". Runs on the command thread so the frontend can await
@@ -582,8 +582,8 @@ fn reveal_in_explorer(path: &std::path::Path) -> std::io::Result<()> {
 fn substitute_variables(body: &str, vars: &HashMap<String, String>) -> String {
     // Replace `{name}` with vars["name"] when present, leave intact otherwise.
     //
-    // Must operate on &str slices, not bytes — the previous byte-loop pushed
-    // each UTF-8 byte as a Latin-1 char, turning `—` (E2 80 94) into `â` plus
+    // Must operate on &str slices, not bytes - the previous byte-loop pushed
+    // each UTF-8 byte as a Latin-1 char, turning `-` (E2 80 94) into `â` plus
     // garbage and producing the em-dash-on-paste mojibake bug.
     let mut out = String::with_capacity(body.len());
     let mut rest = body;
@@ -728,7 +728,7 @@ mod tests {
     }
 
     // Regression guard. The byte-loop implementation pushed individual UTF-8
-    // bytes as Latin-1 chars, turning `—` (E2 80 94) into `â` plus garbage.
+    // bytes as Latin-1 chars, turning `-` (E2 80 94) into `â` plus garbage.
     // This test pins the fix; without it, future refactors of substitute_variables
     // could silently re-introduce the mojibake.
     #[test]

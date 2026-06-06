@@ -47,7 +47,7 @@ jobs:
       # version + components; rustup auto-installs the pinned channel on
       # first use. `rustup show` triggers it as a fail-fast step. (No
       # dtolnay action: pairing it with a toml pin installs a conflicting
-      # second toolchain — see ci.yml for the full rationale.)
+      # second toolchain - see ci.yml for the full rationale.)
       - name: Setup Rust toolchain (from rust-toolchain.toml)
         shell: pwsh
         run: |

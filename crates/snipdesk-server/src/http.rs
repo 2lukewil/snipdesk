@@ -1,4 +1,4 @@
-//! Axum router. Currently exposes only `/api/health` — every other
+//! Axum router. Currently exposes only `/api/health` - every other
 //! endpoint lands in this file as later phases add them (auth, snippet
 //! sync, library, admin).
 
@@ -47,7 +47,7 @@ pub fn router(state: AppState) -> Router {
             "/api/snippets/:id",
             put(handlers::snippets::update).delete(handlers::snippets::delete),
         )
-        // Shared team library — GET is open to any signed-in member; the
+        // Shared team library - GET is open to any signed-in member; the
         // write handlers gate on `auth.require_admin()` internally.
         .route(
             "/api/library",
@@ -57,7 +57,7 @@ pub fn router(state: AppState) -> Router {
             "/api/library/:id",
             put(handlers::library::update).delete(handlers::library::delete),
         )
-        // Admin user management — JSON API; the htmx dashboard uses
+        // Admin user management - JSON API; the htmx dashboard uses
         // these handlers directly (not over HTTP) but mounting them
         // here keeps a single source of truth and exposes the surface
         // for future CLI / external admin tooling.

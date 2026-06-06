@@ -7,7 +7,7 @@
 // Step 2 overrides Tauri's beforeBuildCommand so it doesn't re-run vite in
 // free mode and clobber dist/, and repoints the updater at the Teams manifest.
 // Those overrides live in src-tauri/tauri.teams.conf.json and are passed to
-// `tauri build` by PATH — NOT as an inline JSON string. An inline
+// `tauri build` by PATH - NOT as an inline JSON string. An inline
 // `--config '{...}'` gets its double-quotes stripped by the Windows shell
 // (shell: true), so tauri receives `{build:{...}}` and dies with
 // "key must be a string". A file path has nothing for the shell to mangle.

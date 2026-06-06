@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
       minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
       sourcemap: !!process.env.TAURI_DEBUG,
     },
-    // Substituted as raw source text — must be JSON-stringified so the
+    // Substituted as raw source text - must be JSON-stringified so the
     // resulting code parses as a literal. esbuild then folds the
     // `if (TEAMS_BUILD)` branches and tree-shakes the dead path.
     define: {

@@ -68,8 +68,8 @@
               <input id="editor-title-input" type="text" />
             </label>
             <label>
-              <span>Folder <em>— type a path like "Billing/Refunds" or pick from suggestions</em></span>
-              <!-- Wrapped by attachCombobox() — replaces the native <datalist> dropdown (renders in OS chrome, unthemed) with a themed one. -->
+              <span>Folder <em>- type a path like "Billing/Refunds" or pick from suggestions</em></span>
+              <!-- Wrapped by attachCombobox() - replaces the native <datalist> dropdown (renders in OS chrome, unthemed) with a themed one. -->
               <input
                 id="editor-folder-input"
                 type="text"
@@ -83,7 +83,7 @@
             </label>
             <!-- role="group" instead of <label>: inside a <label>, the first labelable descendant (the Bold button) becomes the associated control and stays highlighted whenever the body region has focus. -->
             <div class="grow field-block" role="group" aria-label="Body">
-              <span>Body <em>— use {variable_name} for placeholders</em></span>
+              <span>Body <em>- use {variable_name} for placeholders</em></span>
               <div id="editor-format-toolbar" class="format-toolbar"></div>
               <textarea
                 id="editor-body-input"
@@ -215,11 +215,11 @@
               </label>
               <label class="row">
                 <input id="set-start-in-tray" type="checkbox" />
-                <span>Start hidden in tray <em>— launches silently instead of opening the window</em></span>
+                <span>Start hidden in tray <em>- launches silently instead of opening the window</em></span>
               </label>
               <label class="row">
                 <input id="set-auto-check-updates" type="checkbox" />
-                <span>Check for updates automatically <em>— on launch, notify when a new version is available</em></span>
+                <span>Check for updates automatically <em>- on launch, notify when a new version is available</em></span>
               </label>
             </div>
 
@@ -234,7 +234,7 @@
                 </select>
               </label>
               <label>
-                <span>Accent color <em>— click the swatch to pick, or type a hex (#4c9aff) or rgb(76, 154, 255) value. Leave blank for the theme default.</em></span>
+                <span>Accent color <em>- click the swatch to pick, or type a hex (#4c9aff) or rgb(76, 154, 255) value. Leave blank for the theme default.</em></span>
                 <div class="accent-row">
                   <input id="set-accent-color" type="color" class="accent-swatch" value="#4c9aff" aria-label="Pick accent color" />
                   <input
@@ -251,19 +251,19 @@
               </label>
               <label class="row">
                 <input id="set-compact" type="checkbox" />
-                <span>Compact list <em>— tighter rows, more snippets visible</em></span>
+                <span>Compact list <em>- tighter rows, more snippets visible</em></span>
               </label>
               <label class="row">
                 <input id="set-show-usage" type="checkbox" />
-                <span>Show usage count <em>— "N usages" badge beside each snippet</em></span>
+                <span>Show usage count <em>- "N usages" badge beside each snippet</em></span>
               </label>
               <label class="row">
                 <input id="set-hide-on-blur" type="checkbox" />
-                <span>Hide to tray when focus is lost <em>— launcher-style click-away dismissal</em></span>
+                <span>Hide to tray when focus is lost <em>- launcher-style click-away dismissal</em></span>
               </label>
               <label class="row">
                 <input id="set-always-on-top" type="checkbox" />
-                <span>Always on top <em>— keep SnipDesk above other windows</em></span>
+                <span>Always on top <em>- keep SnipDesk above other windows</em></span>
               </label>
             </div>
 
@@ -281,7 +281,7 @@
               </label>
               <div class="hint-block">
                 Modifier tokens: <code>Ctrl</code>, <code>Shift</code>, <code>Alt</code>, <code>Cmd</code>, <code>CommandOrControl</code>.<br />
-                Key tokens: letter, digit, <code>F1</code>–<code>F12</code>, <code>Space</code>, <code>Enter</code>, <code>Esc</code>, arrow keys.
+                Key tokens: letter, digit, <code>F1</code>-<code>F12</code>, <code>Space</code>, <code>Enter</code>, <code>Esc</code>, arrow keys.
               </div>
             </div>
 
@@ -298,7 +298,7 @@
 
                 <div id="server-signed-out">
                   <label>
-                    <span>Server URL <em>— e.g. http://127.0.0.1:8080 for a local server, or your company's https://snippets.example.com</em></span>
+                    <span>Server URL <em>- e.g. http://127.0.0.1:8080 for a local server, or your company's https://snippets.example.com</em></span>
                     <input
                       id="set-server-url"
                       type="text"
@@ -361,7 +361,7 @@
                   flow above; will be removed in a future release.
                 </p>
                 <label>
-                  <span>Team library URL <em>— any public JSON file (GitHub raw, S3, shared link, …)</em></span>
+                  <span>Team library URL <em>- any public JSON file (GitHub raw, S3, shared link, …)</em></span>
                   <input
                     id="set-team-url"
                     type="text"
@@ -380,7 +380,7 @@
                 </div>
                 <label class="row">
                   <input id="set-team-startup" type="checkbox" />
-                  <span>Sync once on app startup <em>— otherwise waits for the first interval tick</em></span>
+                  <span>Sync once on app startup <em>- otherwise waits for the first interval tick</em></span>
                 </label>
                 <div class="team-status-block">
                   <div class="team-status-row">
@@ -420,7 +420,7 @@
               <p class="hint-block">
                 Format rules wrap the current selection in the editor when you
                 click a toolbar button. Tune them to your ticket system's
-                markup — WHMCS, Discord, and most Markdown tools use
+                markup - WHMCS, Discord, and most Markdown tools use
                 <code>**bold**</code>, but some helpdesks use <code>[b]bold[/b]</code>.
               </p>
               <table class="rule-table" id="rule-table">
@@ -442,7 +442,7 @@
             <div class="tab-panel" data-tab="savings">
               <label class="row">
                 <input id="set-show-savings" type="checkbox" />
-                <span>Show time &amp; money saved <em>— footer readout based on your typing speed and wage</em></span>
+                <span>Show time &amp; money saved <em>- footer readout based on your typing speed and wage</em></span>
               </label>
               <div class="savings-inputs">
                 <label>
@@ -450,7 +450,7 @@
                   <input id="set-wpm" type="number" min="10" max="200" step="1" />
                 </label>
                 <label>
-                  <span>Hourly wage <em>— 0 to hide money</em></span>
+                  <span>Hourly wage <em>- 0 to hide money</em></span>
                   <input id="set-wage" type="number" min="0" step="0.01" />
                 </label>
                 <label>
@@ -464,7 +464,7 @@
             <div class="tab-panel" data-tab="about">
               <div class="about-block">
                 <p>
-                  <strong id="about-version">SnipDesk</strong> — snippet launcher for
+                  <strong id="about-version">SnipDesk</strong> - snippet launcher for
                   support agents.
                 </p>
                 <div class="update-row">

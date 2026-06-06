@@ -52,7 +52,7 @@ jobs:
       # We deliberately do NOT use dtolnay/rust-toolchain@stable here: paired
       # with a toml pin it installs a second (latest-stable) toolchain and
       # adds clippy/rustfmt to *that*, while cargo actually runs under the
-      # toml-pinned version — so `cargo fmt`/`cargo clippy` failed on the
+      # toml-pinned version - so `cargo fmt`/`cargo clippy` failed on the
       # runner with "component not installed for <pinned>". That mismatch was
       # the CI breakage.
       - name: Setup Rust toolchain (from rust-toolchain.toml)
@@ -82,7 +82,7 @@ jobs:
       - name: Build frontend (offline mode)
         run: npm run build
 
-      # rustfmt before any build — fastest signal for "you forgot to format."
+      # rustfmt before any build - fastest signal for "you forgot to format."
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
@@ -96,7 +96,7 @@ jobs:
       - name: cargo clippy (offline)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # Teams build sanity. Compile-only — full bundling takes 5+ minutes
+      # Teams build sanity. Compile-only - full bundling takes 5+ minutes
       # and the offline build above already exercises the bulk of the code.
       - name: Build frontend (teams mode)
         run: npm run build:teams

@@ -1,6 +1,6 @@
 //! Integration tests for the auth flow. Each test builds a fresh
 //! in-memory SQLite-backed router and exercises endpoints via
-//! `tower::ServiceExt::oneshot` — no TCP listener, no real network.
+//! `tower::ServiceExt::oneshot` - no TCP listener, no real network.
 //!
 //! What this catches that unit tests don't:
 //!   - Wiring (routes pointed at the right handlers).

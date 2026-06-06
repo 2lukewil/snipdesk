@@ -13,7 +13,7 @@ use sqlx::ConnectOptions;
 use std::str::FromStr;
 
 /// Open (or create) the SQLite DB at `<data_dir>/snipdesk.db` and run
-/// pending migrations. WAL keeps reads non-blocking during writes — a
+/// pending migrations. WAL keeps reads non-blocking during writes - a
 /// substantial win even on this small workload.
 pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
     std::fs::create_dir_all(data_dir)
@@ -42,7 +42,7 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
 /// it against an in-memory pool without the data_dir / WAL setup above.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     // Embed migrations at compile time so the binary is fully
-    // self-contained — operators don't need to ship a migrations folder
+    // self-contained - operators don't need to ship a migrations folder
     // alongside the executable.
     sqlx::migrate!("./migrations")
         .run(pool)

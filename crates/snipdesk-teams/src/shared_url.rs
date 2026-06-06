@@ -1,12 +1,12 @@
 //! Pull-only shared snippet library: GET a JSON doc from a user-supplied URL, merge into a read-only folder.
-//! No auth — URL must be reachable unauthenticated (GitHub raw, S3, etc.).
+//! No auth - URL must be reachable unauthenticated (GitHub raw, S3, etc.).
 //! Data shapes live in `snipdesk-core::shared_library` to keep HTTP deps off the DB layer.
 
 use std::time::Duration;
 
 use snipdesk_core::shared_library::{TeamLibrary, FETCH_CONNECT_TIMEOUT, FETCH_READ_TIMEOUT};
 
-/// Blocking fetch — runs on the sync thread or from a "Sync now" command.
+/// Blocking fetch - runs on the sync thread or from a "Sync now" command.
 /// Timeouts are short: this runs at startup and a hung DNS lookup must not stall the app.
 pub fn fetch(url: &str) -> Result<TeamLibrary, String> {
     if url.trim().is_empty() {

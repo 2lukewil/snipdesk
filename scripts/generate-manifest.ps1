@@ -16,7 +16,7 @@
 
 .PARAMETER Version
   The release version string, matching workspace Cargo.toml's [workspace.package].version.
-  e.g. "1.1.0" — without the leading "v".
+  e.g. "1.1.0" - without the leading "v".
 
 .PARAMETER Notes
   Release notes shown to users in the update toast. Keep it short.
@@ -60,10 +60,10 @@ $offlineSig = "$offlineExe.sig"
 $teamsSig   = "$teamsExe.sig"
 
 if (-not (Test-Path $offlineSig)) {
-  throw "Missing $offlineSig — build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
+  throw "Missing $offlineSig - build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
 }
 if (-not (Test-Path $teamsSig)) {
-  throw "Missing $teamsSig — build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
+  throw "Missing $teamsSig - build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
 }
 
 # .sig files are single-line base64. Strip whitespace defensively.

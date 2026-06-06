@@ -144,7 +144,7 @@ async fn cannot_self_disable_or_demote() {
 // branch in the same path as the dashboard hits, and confirms that
 // going from 2 admins → 1 admin is allowed (the last-admin guard is a
 // defence-in-depth check; with self-demote also blocked, the only way
-// to TRIGGER it in practice is unreachable via the API surface —
+// to TRIGGER it in practice is unreachable via the API surface -
 // keeping the guard means a future relaxation of self-demote stays
 // safe).
 #[tokio::test]

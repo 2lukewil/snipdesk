@@ -10,7 +10,7 @@ src-tauri/target/
 src-tauri/gen/
 
 # Stale per-crate Cargo.lock files. Workspace mode resolves a single
-# lock at the workspace root (which IS committed — Tauri/SnipDesk is a
+# lock at the workspace root (which IS committed - Tauri/SnipDesk is a
 # binary, not a library). src-tauri/Cargo.lock is leftover from the
 # pre-workspace tree and Cargo no longer reads it.
 src-tauri/Cargo.lock

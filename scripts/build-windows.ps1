@@ -19,7 +19,7 @@ param(
   [switch]$SkipPrereqs  # Assume Rust, Node, MSVC, WebView2, WiX already installed.
 )
 
-# Do NOT use "Stop" globally — winget and some installers return non-zero for
+# Do NOT use "Stop" globally - winget and some installers return non-zero for
 # benign states ("already installed", "no updates found") and we don't want
 # those to kill the whole build. We'll check return codes explicitly where it
 # matters.
@@ -81,7 +81,7 @@ function Invoke-Winget($id, $extraArgs = @()) {
   #   -1978335215   no package found matching input criteria (some bundles)
   $benign = @(0, -1978335189, -1978335212)
   if ($benign -notcontains $ec) {
-    Write-Host "    winget returned $ec — not fatal, continuing. (Re-run with elevation if needed.)" -ForegroundColor DarkYellow
+    Write-Host "    winget returned $ec - not fatal, continuing. (Re-run with elevation if needed.)" -ForegroundColor DarkYellow
   }
   Refresh-Path
 }
@@ -153,7 +153,7 @@ Write-Host "npm:   $(& npm --version)" -ForegroundColor Green
 Write-Host ""
 Write-Host "--- 3. Microsoft C++ Build Tools ---" -ForegroundColor Cyan
 if (-not $SkipPrereqs -and -not (Test-Command "link.exe")) {
-  Write-Host "Installing VS 2022 Build Tools (large download, ~3 GB — this step can take 10+ min)..." -ForegroundColor Yellow
+  Write-Host "Installing VS 2022 Build Tools (large download, ~3 GB - this step can take 10+ min)..." -ForegroundColor Yellow
   Invoke-Winget "Microsoft.VisualStudio.2022.BuildTools" @(
     "--override",
     "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --includeRecommended"
@@ -175,7 +175,7 @@ if (-not $SkipPrereqs -and -not (Test-Path $webview2Key)) {
   Write-Host "WebView2 runtime present." -ForegroundColor Green
 }
 
-# --- 5. WiX Toolset (optional — Tauri downloads it on demand) -------------
+# --- 5. WiX Toolset (optional - Tauri downloads it on demand) -------------
 Write-Host ""
 Write-Host "--- 5. WiX Toolset ---" -ForegroundColor Cyan
 Write-Host "Tauri downloads WiX automatically on first .msi build. Skipping explicit install." -ForegroundColor DarkGray

@@ -1,4 +1,4 @@
-# Auto-Update — How it works
+# Auto-Update - How it works
 
 > **Status:** Shipping. CI-driven releases via `.github/workflows/release.yml`.
 
@@ -48,8 +48,8 @@ npx @tauri-apps/cli signer generate -w $HOME\.snipdesk-update.key
 
 Pick a passphrase you'll remember. The command emits two files:
 
-- `~\.snipdesk-update.key` — private. Encrypted-at-rest with your passphrase. **Save in your password manager + offline backup.** Losing this means you cannot ship signed updates and have to break the auto-update chain.
-- `~\.snipdesk-update.key.pub` — public. Goes into `tauri.conf.json`.
+- `~\.snipdesk-update.key` - private. Encrypted-at-rest with your passphrase. **Save in your password manager + offline backup.** Losing this means you cannot ship signed updates and have to break the auto-update chain.
+- `~\.snipdesk-update.key.pub` - public. Goes into `tauri.conf.json`.
 
 ### 2. Embed the public key in the build
 
@@ -72,8 +72,8 @@ Commit the change. From this point on, every build embeds the public key so the 
 
 In your GitHub repo settings → Secrets and variables → Actions → New repository secret:
 
-- `TAURI_SIGNING_PRIVATE_KEY` — paste the **contents** of `~\.snipdesk-update.key` (open it in Notepad, copy everything, paste). It's already encrypted by the passphrase, so storing it as-is is fine.
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the passphrase you chose during generation.
+- `TAURI_SIGNING_PRIVATE_KEY` - paste the **contents** of `~\.snipdesk-update.key` (open it in Notepad, copy everything, paste). It's already encrypted by the passphrase, so storing it as-is is fine.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` - the passphrase you chose during generation.
 
 GitHub encrypts both at rest and never logs them.
 
@@ -97,7 +97,7 @@ After setup is done, releases are three commands:
 #      Cargo.toml             → [workspace.package].version
 #      package.json           → version
 #      src-tauri/tauri.conf.json → version
-#    (A small script in scripts/ could automate this — TODO if releases get frequent.)
+#    (A small script in scripts/ could automate this - TODO if releases get frequent.)
 
 # 2. Commit the bump and push:
 git add -A
@@ -158,11 +158,11 @@ Click "Install and restart" → progress shown in the status bar (downloaded byt
 
 If the user clicks Later, the toast clears and they get re-prompted on the next launch. There's no nagging within a session.
 
-If the network is unreachable, the check fails silently — `console.warn` only, no user-facing error. Manual "Check for updates" in Settings → About surfaces errors loudly.
+If the network is unreachable, the check fails silently - `console.warn` only, no user-facing error. Manual "Check for updates" in Settings → About surfaces errors loudly.
 
 ## Windows install path caveats
 
-NSIS is the auto-update target. NSIS installs per-user under `%LOCALAPPDATA%\Programs\` without admin elevation, so the updater can replace files silently. **MSI installs** (under `Program Files`) require admin elevation on every update — not silently installable. We don't ship MSI for auto-update; the offline build's NSIS installer is what end users should grab.
+NSIS is the auto-update target. NSIS installs per-user under `%LOCALAPPDATA%\Programs\` without admin elevation, so the updater can replace files silently. **MSI installs** (under `Program Files`) require admin elevation on every update - not silently installable. We don't ship MSI for auto-update; the offline build's NSIS installer is what end users should grab.
 
 If a user originally installed via an MSI (e.g. some IT departments require it for deployment), they'll need to uninstall and reinstall via the NSIS installer once to get into the auto-update chain. Document this in the README install section if it ever becomes a real friction point.
 
@@ -179,9 +179,9 @@ If a user originally installed via an MSI (e.g. some IT departments require it f
 ## Future improvements (deferred)
 
 - Authenticode code signing for Windows SmartScreen (separate concern, ROADMAP.md).
-- Update channels (stable / beta) — add a `update_channel` setting that swaps the endpoint URL.
+- Update channels (stable / beta) - add a `update_channel` setting that swaps the endpoint URL.
 - Background re-check while running (currently only on launch).
-- Delta updates (only download changed bytes) — Tauri doesn't support this natively yet.
+- Delta updates (only download changed bytes) - Tauri doesn't support this natively yet.
 - A version-bump helper script so the three-file dance becomes one command.
 
 ---

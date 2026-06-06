@@ -3,7 +3,7 @@
 //!
 //! Crypto choices:
 //!   - **Argon2id** for password storage (OWASP's current recommendation).
-//!     Default parameters from the `argon2` crate — they map roughly to
+//!     Default parameters from the `argon2` crate - they map roughly to
 //!     "expensive enough that a single guess takes ~50ms on a modern CPU,"
 //!     which is the right cost for an internal tool.
 //!   - **HS256** JWTs (symmetric HMAC). The server holds the secret;
@@ -21,12 +21,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::ApiError;
 use crate::http::AppState;
 
-/// 24-hour session lifetime — matches docs/server-design.md.
+/// 24-hour session lifetime - matches docs/server-design.md.
 pub const SESSION_TTL_HOURS: i64 = 24;
 
 /// Pre-computed sentinel hash used in `verify_password_constant_time`.
 /// When a login attempt names an unknown user we still run a verify
-/// against this — same wall-clock cost as a real verify — so an attacker
+/// against this - same wall-clock cost as a real verify - so an attacker
 /// can't enumerate registered emails by measuring response time.
 static SENTINEL_HASH: Lazy<String> = Lazy::new(|| {
     let salt = SaltString::generate(&mut OsRng);
@@ -186,7 +186,7 @@ mod tests {
     }
 
     // Right password verifies; wrong rejects; no-such-user rejects.
-    // Sentinel-hash path must not crash — if it did, the
+    // Sentinel-hash path must not crash - if it did, the
     // timing-equalization would itself become a side channel.
     #[test]
     fn password_verify_paths() {

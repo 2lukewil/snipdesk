@@ -7,7 +7,7 @@
 .idea
 .claude
 
-# Cargo build output — never want to ship a pre-built target/ into the
+# Cargo build output - never want to ship a pre-built target/ into the
 # container build context.
 target
 src-tauri/target
@@ -18,7 +18,7 @@ node_modules
 dist
 .npm-cache-tmp
 
-# Local secrets — DEFINITELY don't ship into image build context
+# Local secrets - DEFINITELY don't ship into image build context
 .env
 .env.local
 .env.*.local

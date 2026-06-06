@@ -7,7 +7,7 @@
   that keeps the OLD cached icon. This script runs the full clean path:
 
     1. Kill any running snipdesk.exe
-    2. Pre-install icon-cache scan — detect every place Windows has stashed
+    2. Pre-install icon-cache scan - detect every place Windows has stashed
        the old SnipDesk icon and report findings (before we touch anything)
     3. Uninstall the existing SnipDesk MSI (by ProductName lookup)
     4. Wipe all detected icon caches + remove stale pinned shortcuts
@@ -108,7 +108,7 @@ if ($existing) {
         $guid = $Matches[0]
         Start-Process -FilePath "msiexec.exe" -ArgumentList "/x", $guid, "/qn", "/norestart" -Wait
       } else {
-        # Not an MSI — try running it directly with /S.
+        # Not an MSI - try running it directly with /S.
         cmd /c "$uninstall /S" | Out-Null
       }
     }
@@ -147,7 +147,7 @@ Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$($msi.FullName)`""
 Write-Host "    install complete." -ForegroundColor Green
 
 # --- 6. Clear caches post-install ---------------------------------------
-Write-Host "[6/7] Clearing icon caches (second pass — Explorer has written new shortcuts)..." -ForegroundColor DarkGray
+Write-Host "[6/7] Clearing icon caches (second pass - Explorer has written new shortcuts)..." -ForegroundColor DarkGray
 & (Join-Path $PSScriptRoot "clear-icon-cache.ps1") | Out-Null
 
 # --- 7. Done ------------------------------------------------------------

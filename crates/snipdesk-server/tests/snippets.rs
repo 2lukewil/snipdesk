@@ -82,7 +82,7 @@ async fn request(
 }
 
 // Round-trip: create a snippet, GET it back via sync. The payload must
-// be byte-identical to what we sent — this proves both the wire shape
+// be byte-identical to what we sent - this proves both the wire shape
 // and the encrypt/decrypt loop.
 #[tokio::test]
 async fn create_then_list_round_trips_payload() {
@@ -121,7 +121,7 @@ async fn create_then_list_round_trips_payload() {
     assert_eq!(list["high_water_mark"], 1);
 }
 
-// `since=N` filters strictly — version <= N must be invisible. This is
+// `since=N` filters strictly - version <= N must be invisible. This is
 // the key correctness invariant for the sync loop; a bug here would
 // make clients miss updates or re-process every snippet on every tick.
 #[tokio::test]
@@ -266,7 +266,7 @@ async fn users_cannot_see_each_others_snippets() {
     let (_, list_b) = request(&app, "GET", "/api/snippets", &token_b, None).await;
     assert_eq!(list_b["snippets"].as_array().unwrap().len(), 0);
 
-    // Bob can't update Alice's snippet either — looks not-found from his
+    // Bob can't update Alice's snippet either - looks not-found from his
     // side (don't leak existence).
     let (s, _) = request(
         &app,

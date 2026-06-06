@@ -5,7 +5,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
-// Vite substitutes the literal — esbuild dead-code-eliminates `if (false)` branches. See vite.config.js.
+// Vite substitutes the literal - esbuild dead-code-eliminates `if (false)` branches. See vite.config.js.
 const TEAMS_BUILD = __SNIPDESK_TEAMS_BUILD__;
 
 // ---------- Helpers ----------
@@ -21,12 +21,12 @@ function asPath(v) {
 // Inline ghost-text autosuggest (fish/zsh-style trailing completion).
 //
 // Keymap:
-//   Tab         — commit ghost; subsequent Tabs cycle candidates. Falls through to focus-move when no candidates.
-//   Right Arrow — commit and exit cycle mode.
-//   Escape / arrows / Backspace / mid-line click — dismiss without commit.
+//   Tab         - commit ghost; subsequent Tabs cycle candidates. Falls through to focus-move when no candidates.
+//   Right Arrow - commit and exit cycle mode.
+//   Escape / arrows / Backspace / mid-line click - dismiss without commit.
 //
 // Cycle order is whatever getOptions() returns; callers own ranking.
-// Name is attachCombobox() for legacy call sites — no dropdown anymore.
+// Name is attachCombobox() for legacy call sites - no dropdown anymore.
 function attachCombobox(input, getOptions) {
   // Idempotent (safe across hot-reload).
   if (input.dataset.ghostAutosuggest === "1") return;
@@ -108,7 +108,7 @@ function attachCombobox(input, getOptions) {
       candidate.length <= value.length ||
       !candidate.toLowerCase().startsWith(value.toLowerCase())
     ) {
-      // Stale candidate — prefix invariant broken.
+      // Stale candidate - prefix invariant broken.
       clearGhost();
       return;
     }
@@ -255,7 +255,7 @@ const DEFAULT_FORMAT_RULES = [
 // ---------- State ----------
 const state = {
   snippets: [],
-  // Unfiltered list — used only by the savings estimator so its readout doesn't
+  // Unfiltered list - used only by the savings estimator so its readout doesn't
   // change with the search box.
   allSnippets: [],
   tags: [],
@@ -268,7 +268,7 @@ const state = {
   selectedIds: new Set(),
   // Shift-click anchor. null = fall back to selectedIndex.
   anchorIndex: null,
-  // Folder sidebar multi-selection. Real folders only — pseudo-nodes never
+  // Folder sidebar multi-selection. Real folders only - pseudo-nodes never
   // participate. Independent of `selectedFolder` (which still drives the preview).
   selectedFolderPaths: new Set(),
   folderAnchor: null,
@@ -455,7 +455,7 @@ async function init() {
     openSettings();
   });
 
-  // Payload may be raw string or { text } — handle both in case the emit shape changes.
+  // Payload may be raw string or { text } - handle both in case the emit shape changes.
   await listen("snipdesk://quick-add", async (event) => {
     closeAllModals();
     const p = event?.payload;
@@ -599,7 +599,7 @@ async function installPendingUpdate() {
           break;
       }
     });
-    // Installed — relaunch into the new version.
+    // Installed - relaunch into the new version.
     await relaunch();
   } catch (err) {
     updateState.installing = false;
@@ -642,7 +642,7 @@ function normalizeAccent(raw) {
   const s = String(raw).trim().toLowerCase();
   if (!s) return null;
 
-  // Hex — 3 or 6 digits, with or without leading #.
+  // Hex - 3 or 6 digits, with or without leading #.
   const hexMatch = s.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/);
   if (hexMatch) {
     let h = hexMatch[1];
@@ -829,7 +829,7 @@ function clearDropTargets() {
 // Treat the empty space below the folder list as a "drop to top level"
 // zone. Dropping a nested folder there un-nests it; dropping a snippet
 // there moves it to Unfiled. Events on real folder nodes still fire their
-// own handlers — we only act when the cursor is over the tree container
+// own handlers - we only act when the cursor is over the tree container
 // itself (not over a child node).
 function isEmptyTreeArea(e) {
   return e.target === els.folderTree;
@@ -877,7 +877,7 @@ function canReparent(srcPath, destFolder) {
   const currentParent = srcPath.includes("/")
     ? srcPath.slice(0, srcPath.lastIndexOf("/"))
     : "";
-  if (destFolder === currentParent) return false; // already there — no-op
+  if (destFolder === currentParent) return false; // already there - no-op
   return true;
 }
 
@@ -966,7 +966,7 @@ function renderFolders() {
     els.folderTree.appendChild(rootNode);
   }
 
-  // Team Library pseudo-node — shown only when a URL is configured. Label is
+  // Team Library pseudo-node - shown only when a URL is configured. Label is
   // user-customizable for localization.
   if (TEAMS_BUILD && state.settings?.team_library_url) {
     const teamLabel = state.settings.team_library_folder_name || "Team Library";
@@ -1042,7 +1042,7 @@ function renderFolders() {
       e.preventDefault();
       e.stopPropagation();
       // Right-click within a multi-selection keeps it; otherwise collapse to
-      // the clicked folder. Active filter is preserved either way — users
+      // the clicked folder. Active filter is preserved either way - users
       // often right-click a folder without wanting to navigate to it.
       const isMulti =
         state.selectedFolderPaths.size > 1 &&
@@ -1150,7 +1150,7 @@ function selectOnly(i) {
 }
 
 // Explorer/Finder semantics: plain = single, Ctrl = toggle, Shift = range from anchor.
-// Primary (selectedIndex) always follows the click — drives preview + right-click target.
+// Primary (selectedIndex) always follows the click - drives preview + right-click target.
 function handleSnippetClick(i, ev) {
   const s = state.snippets[i];
   if (!s) return;
@@ -1165,11 +1165,11 @@ function handleSnippetClick(i, ev) {
       if (snip) state.selectedIds.add(snip.id);
     }
     state.selectedIndex = i;
-    // Anchor preserved — shift-click range refinement (A, shift-Z, shift-Y to shrink).
+    // Anchor preserved - shift-click range refinement (A, shift-Z, shift-Y to shrink).
   } else if (ev.ctrlKey || ev.metaKey) {
     if (state.selectedIds.has(s.id) && state.selectedIds.size > 1) {
       state.selectedIds.delete(s.id);
-      // Primary deselected — bump onto another selected row so preview isn't blank.
+      // Primary deselected - bump onto another selected row so preview isn't blank.
       if (i === state.selectedIndex) {
         const fallbackIdx = state.snippets.findIndex((x) =>
           state.selectedIds.has(x.id)
@@ -1275,7 +1275,7 @@ function handleFolderClick(path, ev) {
     const anchorIdx = visible.indexOf(anchor);
     const clickedIdx = visible.indexOf(path);
     if (anchorIdx < 0 || clickedIdx < 0) {
-      // Stale anchor (ancestor collapsed, different kind) — degrade to ctrl-add.
+      // Stale anchor (ancestor collapsed, different kind) - degrade to ctrl-add.
       state.selectedFolderPaths.add(path);
     } else {
       const lo = Math.min(anchorIdx, clickedIdx);
@@ -1339,7 +1339,7 @@ async function bulkDeleteFolders(paths, mode) {
   await refresh();
 }
 
-// Delete-only — rename/new-subfolder don't have multi-folder semantics.
+// Delete-only - rename/new-subfolder don't have multi-folder semantics.
 function showBulkFolderContextMenu(x, y, paths) {
   const items = [
     {
@@ -1455,7 +1455,7 @@ function renderList() {
       showSnippetContextMenu(e.clientX, e.clientY, s);
     });
 
-    // Drag to a folder to move. Team snippets are read-only — not draggable.
+    // Drag to a folder to move. Team snippets are read-only - not draggable.
     const isTeamSnip = typeof s.id === "string" && s.id.startsWith("team:");
     if (!isTeamSnip) {
       li.draggable = true;
@@ -1737,7 +1737,7 @@ function renderFormatToolbar() {
     btn.className = "format-btn";
     btn.textContent = rule.label || "?";
     btn.title = `${rule.prefix}text${rule.suffix}`;
-    // Prevent mousedown stealing focus from the textarea — Chromium keeps the
+    // Prevent mousedown stealing focus from the textarea - Chromium keeps the
     // :focus-visible ring on the button afterwards (the "Bold always highlighted" bug).
     btn.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
@@ -1778,7 +1778,7 @@ function applyFormatRule(rule) {
     const selected = ta.value.slice(start, end);
     ta.setRangeText(prefix + selected + suffix, start, end, "end");
   } else {
-    // No selection — drop caret between prefix/suffix so typing fills the wrap.
+    // No selection - drop caret between prefix/suffix so typing fills the wrap.
     ta.setRangeText(prefix + suffix, start, end, "start");
     const caret = start + prefix.length;
     ta.selectionStart = caret;
@@ -1798,7 +1798,7 @@ function openLinkPrompt(start, end, scrollTop) {
   els.linkUrlInput.value = "https://";
   els.linkPrompt.classList.remove("hidden");
   requestAnimationFrame(() => {
-    // URL first — users almost always paste it before editing the link text.
+    // URL first - users almost always paste it before editing the link text.
     els.linkUrlInput.focus();
     els.linkUrlInput.select();
   });
@@ -1850,7 +1850,7 @@ async function saveEditor() {
   }
   clearEditorError();
 
-  // Backend excludes the editing id from the match — case-sensitive.
+  // Backend excludes the editing id from the match - case-sensitive.
   let conflict = null;
   try {
     conflict = await invoke("check_title_conflict", {
@@ -2041,7 +2041,7 @@ function showBulkContextMenu(x, y, ids) {
 }
 
 // ---------- Bulk operations ----------
-// Hydrates via get_snippet because state.snippets is the filtered view —
+// Hydrates via get_snippet because state.snippets is the filtered view -
 // selected ids may not be present when search/folder filters are active.
 async function forEachBulk(ids, action) {
   let ok = 0;
@@ -2065,7 +2065,7 @@ async function forEachBulk(ids, action) {
 
 async function bulkDelete(ids) {
   if (ids.length === 0) {
-    setStatus("Nothing to delete — all selected snippets are read-only.", "err");
+    setStatus("Nothing to delete - all selected snippets are read-only.", "err");
     return;
   }
   const confirmed = await confirmModal({
@@ -2534,7 +2534,7 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
   });
 
   input.addEventListener("blur", () => {
-    // User tabbed away or clicked elsewhere without pressing a key — put
+    // User tabbed away or clicked elsewhere without pressing a key - put
     // back what was there. The "intentionally clear" path goes through
     // Backspace below (only for inputs where blank means "disabled").
     if (!input.value) input.value = originalValue;
@@ -2557,14 +2557,14 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
       input.blur();
       return;
     }
-    // Modifier-only press — keep waiting for the main key.
+    // Modifier-only press - keep waiting for the main key.
     if (["Control", "Shift", "Alt", "Meta", "OS"].includes(e.key)) return;
 
     e.preventDefault();
     e.stopPropagation();
 
     const keyToken = codeToHotkeyToken(e.code);
-    if (!keyToken) return; // unmappable (numpad, etc.) — ignore
+    if (!keyToken) return; // unmappable (numpad, etc.) - ignore
 
     const mods = [];
     if (e.ctrlKey) mods.push("Ctrl");
@@ -2572,7 +2572,7 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
     if (e.shiftKey) mods.push("Shift");
     if (e.metaKey) mods.push("Cmd");
 
-    // Function keys are fine alone (F1–F12 are common global hotkeys);
+    // Function keys are fine alone (F1-F12 are common global hotkeys);
     // everything else needs at least one modifier to avoid registering
     // bare letters as a global hotkey that swallows normal typing.
     const isFunctionKey = /^F\d+$/.test(keyToken);
@@ -3062,7 +3062,7 @@ function collectSettingsForSave() {
     // Hotkeys
     hotkey: els.setHotkey.value.trim(),
     quick_add_hotkey: els.setQuickAddHotkey.value.trim(),
-    // Free build round-trips state.settings — backend struct still carries the fields.
+    // Free build round-trips state.settings - backend struct still carries the fields.
     team_library_url: TEAMS_BUILD
       ? els.setTeamUrl.value.trim()
       : (state.settings?.team_library_url ?? ""),
@@ -3096,7 +3096,7 @@ function collectSettingsForSave() {
     // About (retention)
     backup_retention_days: clampInt(parseInt(els.setBackupDays.value, 10), 1, 365, 14),
     log_retention_days: clampInt(parseInt(els.setLogDays.value, 10), 1, 365, 7),
-    // Preserved — backend requires the full Settings struct.
+    // Preserved - backend requires the full Settings struct.
     onboarding_completed: state.settings?.onboarding_completed ?? false,
   };
 }
@@ -3117,7 +3117,7 @@ async function saveSettings() {
 }
 
 function closeSettings() {
-  // Cancel revert — accent preview shouldn't linger on the launcher.
+  // Cancel revert - accent preview shouldn't linger on the launcher.
   applyAccentColor(state.settings?.accent_color || "");
   els.settings.classList.add("hidden");
   focusSearch();
@@ -3200,7 +3200,7 @@ async function importSnippets() {
     if (skipped > 0) {
       parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
     }
-    setStatus(parts.join(" — "), skipped > 0 && imported === 0 ? "err" : "ok");
+    setStatus(parts.join(" - "), skipped > 0 && imported === 0 ? "err" : "ok");
     await refresh();
   } catch (err) {
     const message = typeof err === "string" ? err : err?.message || String(err);
@@ -3228,7 +3228,7 @@ function bindEvents() {
   els.btnNewFolder.addEventListener("click", () => createNewFolderPrompt());
 
   // Empty-space context menus. Item handlers stopPropagation, so these only
-  // fire on blank areas — replaces the OS "reload / inspect" menu with a
+  // fire on blank areas - replaces the OS "reload / inspect" menu with a
   // section-appropriate creation shortcut.
   els.folderSidebar.addEventListener("contextmenu", (e) => {
     e.preventDefault();
@@ -3361,7 +3361,7 @@ function bindEvents() {
 
 function anyModalOpen() {
   // .app-modal covers the dynamic dialogs (text input, confirm, folder
-  // picker) that are added to document.body at runtime — they wouldn't show
+  // picker) that are added to document.body at runtime - they wouldn't show
   // up in the static checks below, so a folder-create Enter would otherwise
   // fall through to the global paste handler.
   return (
@@ -3393,7 +3393,7 @@ async function onKeyDown(ev) {
     }
     return;
   }
-  // Link prompt sits on top of the editor — handlers must run before editor's.
+  // Link prompt sits on top of the editor - handlers must run before editor's.
   if (!els.linkPrompt.classList.contains("hidden")) {
     if (ev.key === "Escape") {
       ev.preventDefault();

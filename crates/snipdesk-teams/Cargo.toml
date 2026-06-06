@@ -14,7 +14,7 @@ snipdesk-core = { path = "../snipdesk-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# Blocking client is fine — sync runs on a dedicated background thread at
+# Blocking client is fine - sync runs on a dedicated background thread at
 # a configurable interval, not in a hot loop. ureq+rustls is a fraction of
 # reqwest+tokio's binary footprint.
 ureq = { workspace = true }

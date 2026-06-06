@@ -90,7 +90,7 @@ async fn request(
 }
 
 // Admin can create + members can read it back. The body returned via
-// sync matches what the admin posted — proves the wire shape.
+// sync matches what the admin posted - proves the wire shape.
 #[tokio::test]
 async fn admin_creates_member_reads() {
     let app = make_app().await;
@@ -127,7 +127,7 @@ async fn admin_creates_member_reads() {
 }
 
 // Non-admin writes are rejected with 403, regardless of which write
-// verb. This is the central authorization invariant — the read path is
+// verb. This is the central authorization invariant - the read path is
 // shared, the write path is admin-only, and we want that to be tested
 // directly rather than implied by passing other tests.
 #[tokio::test]
@@ -165,7 +165,7 @@ async fn members_cannot_write() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-// `since` cursor filters strictly — the same invariant we lean on for
+// `since` cursor filters strictly - the same invariant we lean on for
 // personal snippets. Library uses a global counter rather than per-user
 // so two members pulling with `since=2` see the same payload.
 #[tokio::test]

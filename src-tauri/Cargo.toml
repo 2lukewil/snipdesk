@@ -29,7 +29,7 @@ tauri-plugin-dialog = "2.2"
 tauri-plugin-autostart = "2"
 # Auto-update applies to both flavors (the offline NSIS build is what end
 # users grab), so these are non-optional. The updater's HTTP client is
-# `reqwest`, not `ureq` — the offline-guarantee check in ci.yml greps for
+# `reqwest`, not `ureq` - the offline-guarantee check in ci.yml greps for
 # `ureq`/`snipdesk-teams` specifically, so this doesn't trip it.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

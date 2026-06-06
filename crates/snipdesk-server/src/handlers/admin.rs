@@ -1,11 +1,11 @@
-//! Admin endpoints for user management — list, role swap, disable.
+//! Admin endpoints for user management - list, role swap, disable.
 //!
 //! Every handler here is gated on `auth.require_admin()`; the dashboard
 //! also locks its routes behind an admin-only cookie session, so reaching
 //! these by accident from a non-admin client takes both a stolen JWT
 //! AND knowledge of the API shape. Defence in depth.
 //!
-//! Snippet content is deliberately NOT exposed here — even admin views
+//! Snippet content is deliberately NOT exposed here - even admin views
 //! get counts + timestamps + role metadata. The encrypt-at-rest design
 //! relies on personal-snippet bodies never leaving their owner's API
 //! surface; revealing them via /api/admin/users would break that.
@@ -20,7 +20,7 @@ use crate::error::ApiError;
 use crate::http::AppState;
 
 /// One row in the admin users list. `snippet_count` is computed live
-/// against personal_snippets (excluding tombstones) — the user_activity
+/// against personal_snippets (excluding tombstones) - the user_activity
 /// pre-aggregation table was scoped for v1.1 but isn't wired yet; this
 /// query is fine for tens of thousands of users on the SQLite backend.
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -42,7 +42,7 @@ pub async fn list_users(
     auth.require_admin()?;
 
     // LEFT JOIN so users with zero snippets still appear. Tombstones
-    // (is_deleted=1) don't count — they exist solely to propagate
+    // (is_deleted=1) don't count - they exist solely to propagate
     // deletes to client devices and would mislead an admin reading
     // "this user has 12 snippets" when they actually have 3.
     let rows: Vec<AdminUserRow> = sqlx::query_as(
@@ -75,7 +75,7 @@ pub async fn list_users(
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateUserBody {
-    /// Optional role swap. Accepts `"admin"` or `"member"` — any other
+    /// Optional role swap. Accepts `"admin"` or `"member"` - any other
     /// value is rejected with a 400 so we can't accidentally introduce
     /// an unsanctioned role through a typo.
     #[serde(default)]
@@ -214,7 +214,7 @@ pub async fn delete_user(
 
     // Hard delete cascades to personal_snippets via the FK ON DELETE
     // CASCADE in 0001. Tombstones aren't necessary because no client
-    // syncs as this user any more — when they next sign in (they can't)
+    // syncs as this user any more - when they next sign in (they can't)
     // they would get nothing back.
     let res = sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(&id)

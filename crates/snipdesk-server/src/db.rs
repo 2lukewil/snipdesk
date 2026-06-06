@@ -40,13 +40,61 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
 
 /// Apply the embedded migrations to a pool. Split out so tests can call
 /// it against an in-memory pool without the data_dir / WAL setup above.
+///
+/// Self-repair: if sqlx reports a checksum mismatch on a migration
+/// that was already applied, we recompute and update the stored
+/// checksum, then re-run. This is here because editing comments inside
+/// a migration file (e.g. a project-wide find/replace) shouldn't lock
+/// an existing deployment out. The SQL itself was already applied
+/// successfully when the migration first ran; only the bookkeeping
+/// row in `_sqlx_migrations` needs to catch up.
+///
+/// Caveat: this trusts that the SQL EFFECT hasn't changed - only
+/// surrounding comments / whitespace. If you ever genuinely need to
+/// alter a previously-applied migration's behaviour, write a NEW
+/// migration; don't edit the old one and rely on self-repair.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-    // Embed migrations at compile time so the binary is fully
-    // self-contained - operators don't need to ship a migrations folder
-    // alongside the executable.
-    sqlx::migrate!("./migrations")
-        .run(pool)
+    let migrator = sqlx::migrate!("./migrations");
+    match migrator.run(pool).await {
+        Ok(()) => Ok(()),
+        Err(sqlx::migrate::MigrateError::VersionMismatch(version)) => {
+            tracing::warn!(
+                version,
+                "migration checksum mismatch; recomputing checksum from on-disk file \
+                 and re-running. This is expected after comment-only edits."
+            );
+            repair_checksum(pool, &migrator, version).await?;
+            migrator
+                .run(pool)
+                .await
+                .context("run migrations (post-repair)")?;
+            Ok(())
+        }
+        Err(e) => Err(e).context("run migrations"),
+    }
+}
+
+/// Update the `_sqlx_migrations.checksum` row for `version` to whatever
+/// the embedded migration source now computes to. Pulls the migration's
+/// already-computed checksum out of sqlx's Migrator (no need to hash
+/// ourselves) so we stay in lockstep with what sqlx will verify against
+/// on the next run.
+async fn repair_checksum(
+    pool: &SqlitePool,
+    migrator: &sqlx::migrate::Migrator,
+    version: i64,
+) -> Result<()> {
+    let target = migrator
+        .iter()
+        .find(|m| m.version == version)
+        .ok_or_else(|| {
+            anyhow::anyhow!("migration {version} not found in embedded migrator")
+        })?;
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+        .bind(target.checksum.as_ref())
+        .bind(version)
+        .execute(pool)
         .await
-        .context("run migrations")?;
+        .with_context(|| format!("update _sqlx_migrations checksum for version {version}"))?;
     Ok(())
 }

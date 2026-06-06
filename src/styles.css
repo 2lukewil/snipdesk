@@ -43,6 +43,14 @@
   box-sizing: border-box;
 }
 
+/* Generic hide utility. Several specific selectors (.modal.hidden,
+   .savings.hidden, .editor-error.hidden) predate this rule and stay
+   in place; this catches every other element that gets toggled with
+   `classList.add("hidden")` and would otherwise stay visible. */
+.hidden {
+  display: none !important;
+}
+
 html, body {
   margin: 0;
   height: 100%;

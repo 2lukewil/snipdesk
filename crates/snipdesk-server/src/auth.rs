@@ -158,6 +158,22 @@ impl FromRequestParts<AppState> for AuthUser {
             .strip_prefix("Bearer ")
             .ok_or_else(|| ApiError::unauthorized("bad_auth_scheme", "expected Bearer token"))?;
         let claims = verify_token(token.trim(), &state.jwt_secret)?;
+
+        // Refresh last_seen_at on every authenticated request. This is
+        // the only signal we have that a user is alive: the desktop
+        // client makes far more GET /api/snippets calls than it makes
+        // explicit logins, so without this, last_seen would only ever
+        // tick when the user re-enters credentials (a rare event with
+        // 24h JWTs). One UPDATE on a primary-key row is cheap under
+        // WAL; we deliberately don't throttle because adding a read +
+        // compare would cost more than just writing.
+        let now = chrono::Utc::now().timestamp();
+        let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&claims.sub)
+            .execute(&state.pool)
+            .await;
+
         Ok(AuthUser(claims))
     }
 }

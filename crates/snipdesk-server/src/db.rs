@@ -87,9 +87,7 @@ async fn repair_checksum(
     let target = migrator
         .iter()
         .find(|m| m.version == version)
-        .ok_or_else(|| {
-            anyhow::anyhow!("migration {version} not found in embedded migrator")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("migration {version} not found in embedded migrator"))?;
     sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
         .bind(target.checksum.as_ref())
         .bind(version)

@@ -3507,6 +3507,34 @@ async function onKeyDown(ev) {
 // ---------- Status ----------
 let statusTimer = null;
 function setStatus(msg, kind = "") {
+  // If a modal is open, route the status into it instead of the main
+  // footer bar - the modal covers the footer at default window size,
+  // which means messages like "Uploaded 3 snippets to the server"
+  // would otherwise be invisible to the user. We pick the deepest
+  // open modal (latest opened tends to be DOM-ordered later) so a
+  // nested confirm/dup-warn over the settings modal still surfaces
+  // its status in the right place.
+  const openModals = document.querySelectorAll(".modal:not(.hidden)");
+  const targetModal = openModals.length > 0 ? openModals[openModals.length - 1] : null;
+  if (targetModal) {
+    const card = targetModal.querySelector(".modal-card");
+    if (card) {
+      let slot = card.querySelector(":scope > .modal-status");
+      if (!slot) {
+        slot = document.createElement("div");
+        slot.className = "modal-status";
+        card.appendChild(slot);
+      }
+      slot.textContent = msg;
+      slot.className = `modal-status ${kind}`;
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => {
+        slot.textContent = "";
+        slot.className = "modal-status";
+      }, 3500);
+      return;
+    }
+  }
   els.status.textContent = msg;
   els.status.className = `status ${kind}`;
   clearTimeout(statusTimer);

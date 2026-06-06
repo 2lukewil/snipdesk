@@ -43,6 +43,11 @@ pub fn routes() -> Router<AppState> {
             "/dashboard/users",
             get(pages::users_page).post(pages::user_create_row),
         )
+        // Fragment endpoints for the 5-second polling tick on the
+        // users / library pages. Return inner HTML only; the parent
+        // page provides the container.
+        .route("/dashboard/users/rows", get(pages::users_rows))
+        .route("/dashboard/library/cards", get(pages::library_cards))
         .route("/dashboard/users/:id", put(pages::user_update_row))
         .route("/dashboard/users/:id", delete(pages::user_delete_row))
         .route("/dashboard/library", get(pages::library_page))

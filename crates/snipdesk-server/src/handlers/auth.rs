@@ -114,14 +114,18 @@ pub async fn signup(
         "member"
     };
 
+    // last_seen_at is set on signup too - a brand-new account just
+    // signed in, so showing "never" in the dashboard would be wrong
+    // (their account literally exists because they're here right now).
     sqlx::query(
-        "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, password_hash) \
-         VALUES (?, ?, ?, ?, 0, ?, ?)",
+        "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, last_seen_at, password_hash) \
+         VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&email)
     .bind(&display_name)
     .bind(role)
+    .bind(now)
     .bind(now)
     .bind(&password_hash)
     .execute(&state.pool)

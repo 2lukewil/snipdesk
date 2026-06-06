@@ -258,10 +258,19 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     let mut body = String::new();
     body.push_str("<h1>Users</h1>");
     body.push_str(&new_user_form());
+    // The tbody polls itself every 5s so another admin's changes (or
+    // CLI / console mutations) appear without a manual refresh. The
+    // poll fetches /dashboard/users/rows which returns only the rows
+    // (no table chrome) and swaps them into this tbody's innerHTML.
+    // Inline row actions (promote/demote/delete) still work because
+    // htmx re-binds attributes after every swap.
     body.push_str(
         "<table class=\"data\"><thead><tr>\
          <th>Name</th><th>Email</th><th>Role</th><th>Snippets</th><th>Last seen</th><th>Status</th><th class=\"col-actions\"></th>\
-         </tr></thead><tbody id=\"users-tbody\">",
+         </tr></thead><tbody id=\"users-tbody\" \
+            hx-get=\"/dashboard/users/rows\" \
+            hx-trigger=\"every 5s\" \
+            hx-swap=\"innerHTML\">",
     );
     for u in &rows {
         body.push_str(&render_user_row(u, &my_id));
@@ -271,6 +280,28 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     render_page(&state, &session, "Users", true, false, &body)
         .await
         .into_response()
+}
+
+/// Fragment endpoint: just the `<tr>` rows for the users tbody. Used by
+/// the polling tick on `/dashboard/users` so updates from other admins,
+/// CLI / console commands, etc. surface without a manual refresh.
+pub async fn users_rows(State(state): State<AppState>, admin: DashboardAdmin) -> Response {
+    let rows = match load_users(&state).await {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                "<tr><td colspan=\"7\" class=\"banner error\">Failed to load users.</td></tr>",
+            )
+                .into_response();
+        }
+    };
+    let my_id = admin.user_id().to_string();
+    let mut body = String::new();
+    for u in &rows {
+        body.push_str(&render_user_row(u, &my_id));
+    }
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
 }
 
 /// Inline "Create user" form. Lives at the top of the users page so an
@@ -642,19 +673,44 @@ pub async fn library_page(State(state): State<AppState>, admin: DashboardAdmin) 
     body.push_str("<h1>Shared library</h1>");
     body.push_str("<p class=\"muted\">Snippets here appear in every signed-in member's Team Library sidebar. They're plaintext at rest - don't put secrets in.</p>");
     body.push_str(&library_create_form());
-    body.push_str("<div class=\"library-list\" id=\"library-list\">");
-    if rows.is_empty() {
-        body.push_str("<p class=\"muted\">No library snippets yet. Add one above.</p>");
-    } else {
-        for r in &rows {
-            body.push_str(&render_library_card(r));
-        }
-    }
+    // Polls itself every 5s so another admin's adds / edits / deletes
+    // surface without a manual refresh.
+    body.push_str(
+        "<div class=\"library-list\" id=\"library-list\" \
+              hx-get=\"/dashboard/library/cards\" \
+              hx-trigger=\"every 5s\" \
+              hx-swap=\"innerHTML\">",
+    );
+    body.push_str(&render_library_cards_inner(&rows));
     body.push_str("</div>");
 
     render_page(&state, &session, "Library", false, true, &body)
         .await
         .into_response()
+}
+
+/// Fragment endpoint: just the library cards (no outer container).
+/// Hit by the polling tick on `/dashboard/library`.
+pub async fn library_cards(State(state): State<AppState>, _admin: DashboardAdmin) -> Response {
+    let rows = load_library(&state).await.unwrap_or_default();
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        render_library_cards_inner(&rows),
+    )
+        .into_response()
+}
+
+/// Shared body of the cards container; same output whether we're
+/// rendering the initial page or a polling refresh.
+fn render_library_cards_inner(rows: &[LibraryRow]) -> String {
+    if rows.is_empty() {
+        return String::from("<p class=\"muted\">No library snippets yet. Add one above.</p>");
+    }
+    let mut out = String::new();
+    for r in rows {
+        out.push_str(&render_library_card(r));
+    }
+    out
 }
 
 fn library_create_form() -> String {

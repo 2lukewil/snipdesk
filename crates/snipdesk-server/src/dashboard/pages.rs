@@ -744,14 +744,14 @@ fn render_library_card(r: &LibraryRow) -> String {
         format!(" {}", pills.join(" "))
     };
     let folder = match &r.folder_path {
-        Some(f) if !f.is_empty() => format!(" · <span class=\"muted\">{}</span>", escape_html(f)),
+        Some(f) if !f.is_empty() => format!(" | <span class=\"muted\">{}</span>", escape_html(f)),
         _ => String::new(),
     };
     format!(
         "<div class=\"library-card\" id=\"lib-{id_attr}\">\
            <div class=\"card-head\">\
              <span class=\"title\">{title}</span>{folder}{tags}\
-             <span class=\"meta\">v{ver} · updated {when}</span>\
+             <span class=\"meta\">v{ver} | updated {when}</span>\
            </div>\
            <pre class=\"body\">{body}</pre>\
            <div class=\"card-actions\">\

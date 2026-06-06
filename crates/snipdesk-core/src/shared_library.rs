@@ -11,7 +11,7 @@
 //!     {
 //!       "id": "opt-stable-id",
 //!       "title": "Refund policy",
-//!       "body": "…",
+//!       "body": "...",
 //!       "tags": ["billing", "policy"],
 //!       "folder": "Billing/Refunds"
 //!     }

@@ -119,7 +119,7 @@ mod tests {
     fn sample() -> SnippetPayload {
         SnippetPayload {
             title: "Refund follow-up".into(),
-            body: "Hi {customer_name}, your refund…".into(),
+            body: "Hi {customer_name}, your refund...".into(),
             tags: vec!["billing".into(), "refund".into()],
             folder_path: Some("Billing/Refunds".into()),
         }

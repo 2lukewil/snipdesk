@@ -132,7 +132,7 @@ Add `foreground_title.rs` to the Rust side. On the system-hotkey "open" event, r
 ### Phase C - WHMCS API integration (main event)
 
 1. Settings panel gets a new "WHMCS" section: base URL, API identifier, API secret, (optional) accesskey. Secrets stored via the `keyring` crate, never in `settings.json`.
-2. `whmcs.rs` module exposes `fetch_ticket_context(ticket_id)`, `fetch_client_context(client_id)`, `fetch_invoice_context(invoice_id)`. Each returns `HashMap<String, String>` mapping your standard variable names (`customer_name`, `service_type`, `cancellation_date`, `invoice_due_date`, `invoice_amount`, `ticket_subject`, …) to values.
+2. `whmcs.rs` module exposes `fetch_ticket_context(ticket_id)`, `fetch_client_context(client_id)`, `fetch_invoice_context(invoice_id)`. Each returns `HashMap<String, String>` mapping your standard variable names (`customer_name`, `service_type`, `cancellation_date`, `invoice_due_date`, `invoice_amount`, `ticket_subject`, ...) to values.
 3. When SnipDesk opens the variable-prompt modal, it first calls `whmcs::resolve_context(last_known_url_or_title)` to pre-populate. Fields the agent has to type themselves are highlighted; auto-filled ones are shown dimmed but editable.
 
 **Cost:** a week-ish. Needs a list of canonical variable names and a mapping from each name to which WHMCS endpoint provides it.

@@ -1164,7 +1164,7 @@ body.compact .search-bar {
 }
 
 /* Signed-in identity card: name + role on top line (with a small pill
- * badge for the role), then email · server URL on a quieter second line.
+ * badge for the role), then email | server URL on a quieter second line.
  * Frames a confident "you're connected" affordance without screaming
  * it. */
 .server-identity {

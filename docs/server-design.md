@@ -204,7 +204,7 @@ Each snippet's user-provided fields are serialized as a JSON object:
 { "title": "...", "body": "...", "tags": ["..."], "folder_path": "..." }
 ```
 
-…then encrypted as a single blob using **AES-256-GCM** with a fresh
+...then encrypted as a single blob using **AES-256-GCM** with a fresh
 96-bit nonce. The authentication tag is stored inline (the `aes-gcm` crate
 handles this). Associated data (AD) is `snippet_id || owner_id ||
 version` so server-side swapping of ciphertext between snippets or users

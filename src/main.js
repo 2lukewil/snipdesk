@@ -466,9 +466,13 @@ async function init() {
   if (TEAMS_BUILD) {
     await listen("snipdesk://team-library-updated", async () => {
       await loadTeamStatus();
-      if (state.selectedFolder === TEAM_FOLDER) {
-        await refresh();
-      }
+      // refresh() rebuilds the sidebar AND the snippet list, so the
+      // Team Library pseudo-node appears/disappears as the source goes
+      // active/inactive, not just when the user is currently viewing
+      // the team folder. The previous gated version meant a user on
+      // "All snippets" wouldn't see the team node show up when the
+      // server delivered its first library snippet.
+      await refresh();
     });
 
     // Background sync engine emits these. Update the status panel +
@@ -543,7 +547,7 @@ async function checkForUpdates({ silent }) {
   updateState.checking = true;
   if (!silent) {
     els.btnCheckUpdates.disabled = true;
-    els.updateCheckStatus.textContent = "Checking…";
+    els.updateCheckStatus.textContent = "Checking...";
     els.updateCheckStatus.className = "update-check-status";
   }
   try {
@@ -598,16 +602,16 @@ async function installPendingUpdate() {
       switch (event.event) {
         case "Started":
           total = event.data.contentLength ?? 0;
-          els.updateToastMsg.textContent = "Downloading update…";
+          els.updateToastMsg.textContent = "Downloading update...";
           break;
         case "Progress":
           downloaded += event.data.chunkLength ?? 0;
           els.updateToastMsg.textContent = total
-            ? `Downloading… ${formatBytes(downloaded)} / ${formatBytes(total)}`
-            : `Downloading… ${formatBytes(downloaded)}`;
+            ? `Downloading... ${formatBytes(downloaded)} / ${formatBytes(total)}`
+            : `Downloading... ${formatBytes(downloaded)}`;
           break;
         case "Finished":
-          els.updateToastMsg.textContent = "Installing…";
+          els.updateToastMsg.textContent = "Installing...";
           break;
       }
     });
@@ -978,9 +982,18 @@ function renderFolders() {
     els.folderTree.appendChild(rootNode);
   }
 
-  // Team Library pseudo-node - shown only when a URL is configured. Label is
-  // user-customizable for localization.
-  if (TEAMS_BUILD && state.settings?.team_library_url) {
+  // Team Library pseudo-node. Two paths feed team_snippets:
+  //   1. Legacy pull from a public JSON URL (settings.team_library_url)
+  //   2. Server-library sync, populated by the snipdesk-server backend
+  //      whenever the user is signed in (no URL configured)
+  // The node should appear whenever EITHER path is active. Checking
+  // settings.team_library_url alone meant signed-in users never saw
+  // the section even when the server delivered shared snippets.
+  const teamSourceActive =
+    TEAMS_BUILD &&
+    (Boolean(state.settings?.team_library_url) ||
+      Boolean(state.serverStatus?.signed_in));
+  if (teamSourceActive) {
     const teamLabel = state.settings.team_library_folder_name || "Team Library";
     const teamNode = folderNodeEl(
       TEAM_FOLDER,
@@ -1422,7 +1435,7 @@ function renderList() {
 
     const body = document.createElement("div");
     body.className = "snip-body";
-    body.textContent = s.body.replace(/\n/g, " · ").slice(0, 140);
+    body.textContent = s.body.replace(/\n/g, " | ").slice(0, 140);
     li.appendChild(body);
 
     if (s.folder_path) {
@@ -1522,7 +1535,7 @@ function renderPreview() {
   if (typeof s.id === "string" && s.id.startsWith("team:")) {
     pieces.push("Team library (read-only)");
   }
-  meta.textContent = pieces.join(" · ");
+  meta.textContent = pieces.join(" | ");
   els.preview.appendChild(meta);
 
   const body = document.createElement("div");
@@ -2019,8 +2032,8 @@ function showSnippetContextMenu(x, y, snippet) {
   if (isTeam) {
     items.push({ label: "Copy to my library", action: () => duplicateSnippet(snippet.id) });
   } else {
-    items.push({ label: "Edit…", action: () => openEditor(snippet) });
-    items.push({ label: "Move to folder…", action: () => moveSnippetToFolder(snippet) });
+    items.push({ label: "Edit...", action: () => openEditor(snippet) });
+    items.push({ label: "Move to folder...", action: () => moveSnippetToFolder(snippet) });
     items.push({ label: "Duplicate", action: () => duplicateSnippet(snippet.id) });
     items.push({ separator: true });
     items.push({ label: "Delete", danger: true, action: () => deleteCurrent() });
@@ -2172,7 +2185,7 @@ async function bulkEditTags(ids) {
   if (ids.length === 0) return;
   const raw = await textInputModal({
     title: `Edit tags for ${ids.length} snippet${ids.length === 1 ? "" : "s"}`,
-    label: "'+tag' adds · '-tag' removes · no prefix replaces all (comma-separated)",
+    label: "'+tag' adds | '-tag' removes | no prefix replaces all (comma-separated)",
     placeholder: "+urgent, escalation",
     confirmText: "Apply",
   });
@@ -2260,7 +2273,7 @@ async function createNewFolderPrompt() {
 function showFolderContextMenu(x, y, folderPath) {
   const items = [
     {
-      label: "New subfolder…",
+      label: "New subfolder...",
       action: async () => {
         const name = await textInputModal({
           title: "New subfolder",
@@ -2280,7 +2293,7 @@ function showFolderContextMenu(x, y, folderPath) {
       },
     },
     {
-      label: "Rename…",
+      label: "Rename...",
       action: async () => {
         const current = folderPath.split("/").pop();
         const next = await textInputModal({
@@ -2505,14 +2518,14 @@ function folderPickerModal({ title = "Move to folder", currentPath = null } = {}
     card.appendChild(list);
 
     const actions = dlgActions(card, [
-      { label: "New folder…", onClick: () => finish({ create: true }) },
+      { label: "New folder...", onClick: () => finish({ create: true }) },
       { label: "Cancel", onClick: () => finish(null) },
     ]);
     actions.classList.add("between");
   });
 }
 
-// Orchestrates the picker + "New folder…" path. Resolves to the chosen
+// Orchestrates the picker + "New folder..." path. Resolves to the chosen
 // folder_path ("" = Unfiled), or undefined if cancelled at any step.
 async function chooseFolderPath(currentPath = null) {
   const res = await folderPickerModal({ currentPath });
@@ -2542,7 +2555,7 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
   input.addEventListener("focus", () => {
     originalValue = input.value;
     input.value = "";
-    input.placeholder = "Press a key combination…";
+    input.placeholder = "Press a key combination...";
   });
 
   input.addEventListener("blur", () => {
@@ -2838,7 +2851,7 @@ async function syncTeamLibraryNow() {
     return;
   }
   els.btnTeamSync.disabled = true;
-  els.btnTeamSync.textContent = "Syncing…";
+  els.btnTeamSync.textContent = "Syncing...";
   try {
     await invoke("sync_team_library");
     setStatus("Team library synced", "ok");
@@ -2901,8 +2914,8 @@ function renderServerStatus() {
     if (st.last_sync) {
       const ls = st.last_sync;
       els.serverLastResult.textContent =
-        `${ls.pushed} pushed · ${ls.pulled} pulled` +
-        (ls.errors ? ` · ${ls.errors} errors` : "");
+        `${ls.pushed} pushed | ${ls.pulled} pulled` +
+        (ls.errors ? ` | ${ls.errors} errors` : "");
       els.serverSyncDetail.style.display = "";
     } else {
       els.serverSyncDetail.style.display = "none";
@@ -2928,7 +2941,7 @@ async function doServerLogin() {
   }
   clearServerError();
   els.btnServerLogin.disabled = true;
-  els.btnServerLogin.textContent = "Signing in…";
+  els.btnServerLogin.textContent = "Signing in...";
   try {
     await invoke("server_login", {
       args: { server_url, email, password },
@@ -2964,7 +2977,7 @@ async function doServerSignup() {
   if (!display_name) return;
   clearServerError();
   els.btnServerSignup.disabled = true;
-  els.btnServerSignup.textContent = "Creating…";
+  els.btnServerSignup.textContent = "Creating...";
   try {
     await invoke("server_signup", {
       args: { server_url, email, password, display_name },
@@ -3035,7 +3048,7 @@ async function doServerLogout() {
 async function doServerSyncNow() {
   if (!TEAMS_BUILD) return;
   els.btnServerSync.disabled = true;
-  els.btnServerSync.textContent = "Syncing…";
+  els.btnServerSync.textContent = "Syncing...";
   try {
     await invoke("server_sync_now");
     await loadServerStatus();
@@ -3245,7 +3258,7 @@ function bindEvents() {
   els.folderSidebar.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     showContextMenu(e.clientX, e.clientY, [
-      { label: "New folder…", action: () => createNewFolderPrompt() },
+      { label: "New folder...", action: () => createNewFolderPrompt() },
     ]);
   });
   els.list.addEventListener("contextmenu", (e) => {
@@ -3261,7 +3274,7 @@ function bindEvents() {
       return;
     }
     showContextMenu(e.clientX, e.clientY, [
-      { label: "New snippet…", action: () => openEditor() },
+      { label: "New snippet...", action: () => openEditor() },
     ]);
   });
 
@@ -3610,7 +3623,7 @@ function renderSavings() {
     return;
   }
   const timeText = formatDuration(seconds);
-  const moneyText = money > 0 ? ` · ${formatMoney(money, s.wage_currency)}` : "";
+  const moneyText = money > 0 ? ` | ${formatMoney(money, s.wage_currency)}` : "";
   els.savings.textContent = `Saved: ${timeText}${moneyText}`;
   els.savings.classList.remove("hidden");
 }

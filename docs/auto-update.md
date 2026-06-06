@@ -21,9 +21,9 @@ GitHub Releases (release marked Latest by default)
             │
             ▼
 Every running SnipDesk instance, on next launch:
-  • Hits releases/latest/download/snipdesk-update.json (or teams equivalent)
-  • Sees newer version available → toast: "v1.0.1 available · Install / Later"
-  • User clicks Install → download, verify Ed25519 signature, install, relaunch
+  - Hits releases/latest/download/snipdesk-update.json (or teams equivalent)
+  - Sees newer version available → toast: "v1.0.1 available | Install / Later"
+  - User clicks Install → download, verify Ed25519 signature, install, relaunch
 ```
 
 End-to-end: ~3-5 minutes from `git push --tags` to the release being live. Clients pick up within whatever their next launch is.
@@ -152,7 +152,7 @@ Same outputs as the CI path, just produced on your machine.
 
 When `auto_check_updates` is on (default), every launch silently fetches the manifest. If the version is newer than `CARGO_PKG_VERSION`, a non-blocking toast appears in the status bar:
 
-> **SnipDesk 1.0.1 is available.** Install and restart · Later
+> **SnipDesk 1.0.1 is available.** Install and restart | Later
 
 Click "Install and restart" → progress shown in the status bar (downloaded byte count) → silent install → relaunch. About 30 seconds total on a normal connection.
 

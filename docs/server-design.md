@@ -574,7 +574,9 @@ npm run tauri:build:teams   # or `npm run tauri:dev` for a hot-reload session
 
 The Server section is at the top. Fill in:
 
-- **Server URL:** `http://127.0.0.1:8080`
+- **Server URL:** `http://127.0.0.1:8080` (NOT `http://0.0.0.0:8080` —
+  `0.0.0.0` is "all interfaces" for binding only; connecting to it on
+  Windows fails with `os error 10049`.)
 - **Email / Password:** any (the first signup is auto-promoted to admin)
 - Click **Create account** → enter a display name → if you have local
   snippets, the migration prompt offers to upload them.

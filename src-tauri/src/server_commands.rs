@@ -260,11 +260,14 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     let _ = handle.emit("snipdesk://server-sync", outcome);
                 }
                 Err(ApiError::Unauthorized) => {
-                    // Server says our token is no longer valid. Wipe it
-                    // so the UI shows the login form.
-                    let _ = credentials::delete(&server_url);
-                    let _ = clear_signed_in_user(&state);
-                    let _ = handle.emit("snipdesk://server-signed-out", ());
+                    // Earlier we auto-deleted the credential here. That
+                    // was too aggressive — a transient 401 (or any
+                    // misclassification on the server side) would wipe
+                    // the user's session and confuse them. With no
+                    // refresh-token flow yet (v1.1), we just log and
+                    // let the user re-sign-in manually if it persists.
+                    eprintln!("background sync got 401; leaving credential in place");
+                    let _ = handle.emit("snipdesk://server-auth-warning", ());
                 }
                 Err(e) => {
                     eprintln!("background sync error: {e}");

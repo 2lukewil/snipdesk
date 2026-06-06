@@ -60,7 +60,10 @@ pub fn verify_password_constant_time(plaintext: &str, stored_hash: Option<&str>)
 
 /// JWT payload. `sub` is the user id; we include `role` so handlers can
 /// gate admin-only endpoints without an extra DB roundtrip per request.
-#[derive(Debug, Serialize, Deserialize)]
+/// `Clone` so the dashboard layer can hand the same claims to both its
+/// admin extractor and an inline `AuthUser` adapter when delegating to
+/// the underlying JSON handler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub role: String,

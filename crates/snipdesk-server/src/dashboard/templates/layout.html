@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{TITLE}} — SnipDesk admin</title>
+  <link rel="stylesheet" href="/static/dashboard.css" />
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <nav class="nav">
+    <span class="nav-brand">SnipDesk admin</span>
+    <span class="nav-links">
+      <a href="/dashboard/users" class="{{USERS_ACTIVE}}">Users</a>
+      <a href="/dashboard/library" class="{{LIBRARY_ACTIVE}}">Library</a>
+    </span>
+    <span class="nav-right">
+      <span class="nav-user">{{NAV_USER}} <span class="pill role-{{NAV_ROLE}}">{{NAV_ROLE}}</span></span>
+      <form method="post" action="/dashboard/logout" class="nav-form">
+        <button type="submit" class="ghost">Sign out</button>
+      </form>
+    </span>
+  </nav>
+  <main>
+    {{CONTENT}}
+  </main>
+</body>
+</html>

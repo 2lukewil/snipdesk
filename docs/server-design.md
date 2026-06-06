@@ -444,16 +444,33 @@ JSON) is replaced. New responsibilities for the Teams build:
 
 Routes (server-rendered HTML, htmx for interactivity):
 
-- `/` — login or redirect to `/users` if signed in
-- `/users` — table of all users with `last_seen_at`, `snippet_count`, role,
-  enabled/disabled toggle
-- `/users/:id` — user detail (no snippet content), disable/promote actions
-- `/library` — list of shared snippets, create/edit/delete (admin only)
-- `/settings` — server settings (OIDC client ID/secret, allowed-domain
-  list for self-signup gating)
+- `/` — login form, or redirect to `/dashboard/users` if signed in
+- `/dashboard/users` — table of all users with `last_seen_at`,
+  `snippet_count`, role pill, enabled/disabled status, plus inline
+  actions (promote/demote, disable/enable, delete, create new). All
+  mutations are htmx PUT/DELETE/POST that re-render the affected row
+  in place, no full-page reload.
+- `/dashboard/library` — list of shared snippets as cards, with an
+  inline create form. Delete via htmx; edit (inline) is deferred to
+  phase 8 polish, with delete + recreate as the workaround for now.
 
-The dashboard is bundled into the server binary via `include_dir!` and
-served from the same Axum instance. No separate frontend deployment.
+Auth is cookie-based: a successful POST to `/dashboard/login` issues
+the same HS256 JWT the JSON API uses, delivered via an `HttpOnly`,
+`SameSite=Lax` cookie named `snipdesk_dashboard`. The
+`DashboardSession` extractor reads the cookie, `DashboardAdmin` further
+gates on `role=admin` — non-admins see a "members can't access the
+dashboard" page rather than a bare 403.
+
+Self-protection guards live in `handlers::admin::update_user` (server
+side, defence in depth): admins can't disable or demote themselves,
+and the last remaining admin can't be demoted by anyone.
+
+The dashboard is bundled into the server binary via `include_str!` for
+templates + htmx + CSS. No separate frontend deployment, no runtime
+file reads, no external CDN dependency.
+
+`/settings` (OIDC client config, allowed-domain list) lands in
+phase 7 alongside the OIDC flow itself.
 
 ## Deployment (Docker)
 
@@ -523,8 +540,14 @@ between any two.
    the two paths don't fight over the same table. Admin CRUD over the
    dashboard lands in the next phase; for now writes happen via curl /
    admin tooling against `/api/library`.
-6. **Dashboard.** htmx + askama. Users list, library curation, server
-   settings.
+6. **Dashboard.** htmx-driven admin UI mounted on the same Axum
+   listener as the JSON API. Cookie-based session reusing the same JWT
+   the desktop client uses (no separate auth). Pages: `/` (login),
+   `/dashboard/users` (list, create, role toggle, disable/enable,
+   delete), `/dashboard/library` (list + create + delete). Templates
+   are hand-rolled HTML with `{{KEY}}` substitution; htmx vendored at
+   `/static/htmx.min.js`. Inline library edit and per-user detail view
+   defer to phase 8 polish; the admin can delete + recreate for now.
 7. **OIDC.** Google Workspace flow end-to-end. Tauri custom-URL handler
    for the JWT handoff.
 8. **Polish + docs.** Deployment guide, security review of crypto code

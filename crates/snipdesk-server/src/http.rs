@@ -57,6 +57,19 @@ pub fn router(state: AppState) -> Router {
             "/api/library/:id",
             put(handlers::library::update).delete(handlers::library::delete),
         )
+        // Admin user management — JSON API; the htmx dashboard uses
+        // these handlers directly (not over HTTP) but mounting them
+        // here keeps a single source of truth and exposes the surface
+        // for future CLI / external admin tooling.
+        .route("/api/admin/users", get(handlers::admin::list_users))
+        .route(
+            "/api/admin/users/:id",
+            put(handlers::admin::update_user).delete(handlers::admin::delete_user),
+        )
+        // Server-rendered htmx dashboard (phase 6+). Sits on the same
+        // listener so a single binary serves both the JSON API and the
+        // admin UI. Cookie-gated; non-admins see a bounce page.
+        .merge(crate::dashboard::routes())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

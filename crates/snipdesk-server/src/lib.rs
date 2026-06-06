@@ -3,6 +3,7 @@
 //! (`src/main.rs`) still drives the production build via `clap`.
 
 pub mod auth;
+pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod dashboard;

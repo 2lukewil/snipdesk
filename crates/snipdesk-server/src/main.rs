@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use snipdesk_server::{auth, config, db, http};
+use snipdesk_server::{auth, cli as cli_cmds, config, db, http};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -35,6 +35,14 @@ enum Cmd {
     /// Generate a fresh 256-bit HS256 JWT secret (base64). Pipe into your
     /// secret store; rotate to invalidate every active session at once.
     GenJwtSecret,
+    /// User-management commands. Reads `data_dir` from the same config
+    /// file as `run`, so the CLI hits the same SQLite database the
+    /// server uses. Safe to run while the server is up — WAL mode
+    /// handles concurrent reader + writer.
+    Users {
+        #[command(subcommand)]
+        cmd: cli_cmds::UsersCmd,
+    },
 }
 
 #[tokio::main]
@@ -53,6 +61,14 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Run => run(cli.config).await,
+        Cmd::Users { cmd } => {
+            // Reuse the same config so `data_dir` is one source of truth
+            // — the CLI hits whichever DB the server is configured for.
+            let cfg = config::Config::load(&cli.config).with_context(|| {
+                format!("load config {} for users subcommand", cli.config.display())
+            })?;
+            cli_cmds::run(&cfg.data_dir, cmd).await
+        }
     }
 }
 

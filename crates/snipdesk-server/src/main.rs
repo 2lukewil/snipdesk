@@ -7,9 +7,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use std::io::IsTerminal;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use snipdesk_server::{auth, cli as cli_cmds, config, db, http};
+use snipdesk_server::{auth, cli as cli_cmds, config, console, db, http};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -28,7 +30,21 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Boot the server. Default action if no subcommand is supplied.
-    Run,
+    Run {
+        /// Force the interactive console on, regardless of TTY
+        /// detection. Useful in terminals that report `is_terminal()
+        /// == false` despite being interactive — most notably MSYS /
+        /// Git Bash / mintty on Windows, where stdio runs through
+        /// pipes rather than real Win32 console handles.
+        #[arg(long, conflicts_with = "no_console")]
+        console: bool,
+        /// Force the interactive console off, even when stdin looks
+        /// like a TTY. Useful when piping commands at startup is
+        /// undesirable, e.g. running under a supervisor that
+        /// momentarily attaches a TTY.
+        #[arg(long, conflicts_with = "console")]
+        no_console: bool,
+    },
     /// Generate a fresh 256-bit master encryption key (base64). Pipe into
     /// your secret store; never commit the result.
     GenKey,
@@ -50,7 +66,13 @@ async fn main() -> Result<()> {
     init_tracing();
     let cli = Cli::parse();
 
-    match cli.cmd.unwrap_or(Cmd::Run) {
+    // Default action when no subcommand is supplied is `run` with no
+    // console override; explicit `run --console` etc. takes the
+    // matched arm below.
+    match cli.cmd.unwrap_or(Cmd::Run {
+        console: false,
+        no_console: false,
+    }) {
         Cmd::GenKey => {
             let key = config::MasterKey::generate();
             println!("{}", key.to_base64());
@@ -60,7 +82,19 @@ async fn main() -> Result<()> {
             println!("{}", auth::generate_jwt_secret());
             Ok(())
         }
-        Cmd::Run => run(cli.config).await,
+        Cmd::Run {
+            console,
+            no_console,
+        } => {
+            let force = if console {
+                Some(true)
+            } else if no_console {
+                Some(false)
+            } else {
+                None
+            };
+            run(cli.config, force).await
+        }
         Cmd::Users { cmd } => {
             // Reuse the same config so `data_dir` is one source of truth
             // — the CLI hits whichever DB the server is configured for.
@@ -72,7 +106,14 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run(config_path: PathBuf) -> Result<()> {
+/// Boot the HTTP server and (optionally) the interactive console.
+///
+/// `force_console`:
+///   - `Some(true)` — always start the console (caller swore stdin is
+///     interactive; useful for Git Bash / mintty).
+///   - `Some(false)` — never start the console, even on a TTY.
+///   - `None` — auto-detect via `is_terminal()`.
+async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
     let cfg = config::Config::load(&config_path)
         .with_context(|| format!("load config {}", config_path.display()))?;
     let master_key = config::load_master_key(&cfg.crypto)?;
@@ -85,7 +126,10 @@ async fn run(config_path: PathBuf) -> Result<()> {
     let pool = db::open(&cfg.data_dir).await?;
 
     let state = http::AppState {
-        pool,
+        // Clone the pool so the interactive console can borrow it
+        // alongside the HTTP handlers. sqlx pools are Arc-internal, so
+        // clones share the same underlying connections.
+        pool: pool.clone(),
         master_key: Arc::new(master_key),
         jwt_secret: cfg.jwt_secret.clone().unwrap_or_default(),
     };
@@ -101,19 +145,60 @@ async fn run(config_path: PathBuf) -> Result<()> {
         .await
         .with_context(|| format!("bind {}", cfg.bind_addr))?;
     tracing::info!("snipdesk-server listening on {}", cfg.bind_addr);
-    axum::serve(listener, app).await.context("axum serve")?;
+
+    // Optional interactive console. Spawned when stdin is a real
+    // terminal, OR when the operator explicitly forces it via
+    // `--console` (useful for Git Bash / mintty / other pty wrappers
+    // that confuse `is_terminal()`). Suppressed by `--no-console` or
+    // when stdin is clearly non-interactive (systemd, docker without
+    // `-it`, a CI runner, etc.).
+    let want_console = match force_console {
+        Some(v) => v,
+        None => std::io::stdin().is_terminal(),
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    if want_console {
+        let pool_for_console = pool.clone();
+        tokio::spawn(async move {
+            console::run(pool_for_console, shutdown_tx).await;
+        });
+    } else {
+        // Sender forgotten (not dropped) so the receiver pends forever
+        // — the server then runs until Ctrl+C / SIGTERM. Dropping it
+        // would resolve `with_graceful_shutdown` immediately and the
+        // server would exit before accepting a connection.
+        std::mem::forget(shutdown_tx);
+    }
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .context("axum serve")?;
     Ok(())
 }
 
-/// JSON logs to stdout, level filterable via RUST_LOG. JSON output makes
-/// downstream log shippers (Vector, Loki, Datadog) parse fields without
-/// regex; humans tailing locally can use `| jq`.
+/// Logs to stdout, level filterable via RUST_LOG.
+///
+/// Two output formats:
+///   - **TTY mode** (developer running the server in a terminal): a
+///     compact human-readable format, so console interaction reads
+///     like a normal interactive session. Log lines still interleave
+///     with the user's typing — Minecraft-style — which is acceptable
+///     for the low log volume this server produces.
+///   - **Non-TTY mode** (systemd, docker, CI): JSON, one event per
+///     line, so log shippers (Vector, Loki, Datadog) can parse fields
+///     without regex.
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,sqlx=warn,tower_http=info"));
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_target(false)
-        .json()
-        .init();
+        .with_target(false);
+    if std::io::stdout().is_terminal() {
+        builder.compact().init();
+    } else {
+        builder.json().init();
+    }
 }

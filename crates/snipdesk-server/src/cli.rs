@@ -74,18 +74,27 @@ pub enum UsersCmd {
     },
 }
 
-/// Entry point dispatched by main.rs's `Cmd::Users { cmd }` arm.
+/// Entry point dispatched by main.rs's `Cmd::Users { cmd }` arm — opens
+/// its own SQLite pool against `data_dir/snipdesk.db`.
 pub async fn run(data_dir: &Path, cmd: UsersCmd) -> Result<()> {
     let pool = open_pool(data_dir).await?;
+    run_with_pool(&pool, cmd).await
+}
+
+/// Same as `run` but takes an already-open pool. The interactive
+/// console (see `console.rs`) calls this so it can hit the same DB
+/// the running server is already using, without spinning up a second
+/// connection pool just for command dispatch.
+pub async fn run_with_pool(pool: &SqlitePool, cmd: UsersCmd) -> Result<()> {
     match cmd {
-        UsersCmd::List => list(&pool).await,
-        UsersCmd::Promote { email } => set_role(&pool, &email, "admin").await,
-        UsersCmd::Demote { email } => set_role(&pool, &email, "member").await,
-        UsersCmd::Disable { email } => set_disabled(&pool, &email, true).await,
-        UsersCmd::Enable { email } => set_disabled(&pool, &email, false).await,
-        UsersCmd::Delete { email, yes } => delete(&pool, &email, yes).await,
+        UsersCmd::List => list(pool).await,
+        UsersCmd::Promote { email } => set_role(pool, &email, "admin").await,
+        UsersCmd::Demote { email } => set_role(pool, &email, "member").await,
+        UsersCmd::Disable { email } => set_disabled(pool, &email, true).await,
+        UsersCmd::Enable { email } => set_disabled(pool, &email, false).await,
+        UsersCmd::Delete { email, yes } => delete(pool, &email, yes).await,
         UsersCmd::ResetPassword { email, from_stdin } => {
-            reset_password(&pool, &email, from_stdin).await
+            reset_password(pool, &email, from_stdin).await
         }
     }
 }

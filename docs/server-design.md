@@ -629,8 +629,46 @@ content intact, including folder paths and tags. Edit a snippet on
 "device 1," wait ~60s for the background tick (or click **Sync now**),
 edit returns on "device 2" after its next tick.
 
-**5. Tear-down.** `Ctrl+C` the server; delete
-`crates/snipdesk-server/data/` if you want a fresh start next time.
+**5. Tear-down.** `Ctrl+C` the server (or type `stop` at the in-process
+console — Minecraft-style — for graceful shutdown that drains in-flight
+requests); delete `crates/snipdesk-server/data/` if you want a fresh
+start next time.
+
+## Interactive console
+
+When stdin is a TTY, the server boots with an interactive console
+attached to the same process. Type `help` for the command list; the
+short version:
+
+- `users list / promote / demote / disable / enable <email>`
+- `users delete <email> --yes`  (interactive confirm is disabled in
+  console mode because it would race with the console's own stdin)
+- `stop` (or `quit` / `exit`) — graceful shutdown
+
+The console reads from `std::io::stdin()` and dispatches against the
+same SQLite pool the HTTP layer is using, so commands you type are
+immediately reflected by the API (no separate process, no second
+shell). Log output interleaves with your typing — same trade-off
+Minecraft makes; the alternative is pulling in a line-editor crate.
+
+**Force-on / off:** `snipdesk-server run --console` forces it on,
+`--no-console` forces it off. Useful in MSYS / Git Bash / mintty,
+which pipe stdio rather than expose Win32 console handles and so
+report `is_terminal() == false` even when the operator is sitting
+right there.
+
+When stdin isn't a TTY (systemd, `docker run` without `-it`, CI), the
+console is suppressed by default. The server runs headless until
+`Ctrl+C` / `SIGTERM`. Logs switch to JSON in that mode so log shippers
+can parse them without regex.
+
+`users reset-password` deliberately isn't available inside the
+console — its prompt would race with the console's stdin reader. Run
+it from a separate shell:
+
+```
+snipdesk-server -c snipdesk-server.toml users reset-password alice@example.com
+```
 
 ## Open questions for the backend team
 

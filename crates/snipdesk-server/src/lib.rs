@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod cli;
 pub mod config;
+pub mod console;
 pub mod crypto;
 pub mod dashboard;
 pub mod db;

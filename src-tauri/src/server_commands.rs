@@ -219,6 +219,50 @@ pub fn handle_account_inactive(app: &AppHandle, state: &AppState, server_url: &s
     let _ = app.emit("snipdesk://server-signed-out", ());
 }
 
+/// List the server-side trash for the signed-in user. Returns the
+/// `TrashView` shape verbatim from the server: id, version, payload,
+/// created_at, deleted_at. The desktop renders these in a dedicated
+/// trash panel without writing them to the local DB - they're
+/// transient, and the source of truth is the server until restored.
+#[tauri::command]
+pub fn server_trash_list(app: AppHandle) -> CmdResult<Vec<api::TrashView>> {
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Err("no server configured".to_string());
+    }
+    let token = credentials::load(&server_url)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "not signed in".to_string())?;
+    api::list_trash(&server_url, &token).map_err(map_api_err)
+}
+
+/// Restore a snippet from the server-side trash. Server bumps the
+/// version + clears is_deleted; the next sync tick will pull the row
+/// back into the local snippets table via the normal upsert path, so
+/// we just kick off `server_sync_now` after a successful restore.
+#[tauri::command]
+pub fn server_trash_restore(app: AppHandle, id: String) -> CmdResult<()> {
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Err("no server configured".to_string());
+    }
+    let token = credentials::load(&server_url)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "not signed in".to_string())?;
+    api::restore_snippet(&server_url, &token, &id).map_err(map_api_err)?;
+    // Trigger an immediate pull so the restored row appears locally
+    // without waiting for the next background tick.
+    let outcome = sync::tick(&state.db, &server_url, &token).map_err(map_api_err)?;
+    save_last_sync(&state, &outcome)?;
+    if let Some(u) = &outcome.user {
+        let _ = save_signed_in_user(&state, u);
+    }
+    let _ = app.emit("snipdesk://server-sync", outcome);
+    Ok(())
+}
+
 /// Re-read the row count of team_snippets and update the
 /// `team_snippet_count` atomic + emit `snipdesk://team-library-updated`.
 /// Called after every server sync tick (manual or background) because

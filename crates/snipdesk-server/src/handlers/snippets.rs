@@ -142,8 +142,8 @@ pub async fn create(
 
     let result = sqlx::query(
         "INSERT INTO personal_snippets \
-         (id, owner_id, payload_ciphertext, payload_nonce, key_version, version, created_at, updated_at, is_deleted) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+         (id, owner_id, payload_ciphertext, payload_nonce, key_version, version, created_at, updated_at, is_deleted, encrypted_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
     )
     .bind(&body.id)
     .bind(owner_id)
@@ -153,6 +153,7 @@ pub async fn create(
     .bind(version)
     .bind(now)
     .bind(now)
+    .bind(version)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -282,7 +283,7 @@ pub async fn update(
     let now = Utc::now().timestamp();
     sqlx::query(
         "UPDATE personal_snippets \
-         SET payload_ciphertext = ?, payload_nonce = ?, key_version = ?, version = ?, updated_at = ? \
+         SET payload_ciphertext = ?, payload_nonce = ?, key_version = ?, version = ?, updated_at = ?, encrypted_version = ? \
          WHERE id = ? AND owner_id = ?",
     )
     .bind(&blob.ciphertext)
@@ -290,6 +291,7 @@ pub async fn update(
     .bind(CURRENT_KEY_VERSION)
     .bind(new_version)
     .bind(now)
+    .bind(new_version)
     .bind(&id)
     .bind(owner_id)
     .execute(&mut *tx)
@@ -346,6 +348,183 @@ pub async fn delete(
     tx.commit().await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// List soft-deleted snippets for the calling user, with decrypted
+/// payloads, so the desktop client can show a "Trash" view. Distinct
+/// from `GET /api/snippets` because that endpoint deliberately
+/// returns tombstones with `payload: null` for sync purposes - the
+/// trash view needs the actual contents so the user can decide what
+/// to restore. Sorted by `updated_at DESC` (most-recently-deleted
+/// first) which matches how a user thinks about trash.
+pub async fn trash(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<TrashView>>, ApiError> {
+    let owner_id = &auth.0.sub;
+
+    let rows: Vec<TrashRow> = sqlx::query_as(
+        "SELECT id, payload_ciphertext, payload_nonce, version, encrypted_version, \
+                created_at, updated_at \
+         FROM personal_snippets \
+         WHERE owner_id = ? AND is_deleted = 1 \
+         ORDER BY updated_at DESC",
+    )
+    .bind(owner_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        // Tombstoned rows weren't re-encrypted at delete time - the
+        // ciphertext is still bound to whatever version the row was
+        // at just before delete. That value lives in
+        // encrypted_version (added in 0003); fall back to version-1
+        // for rows that predate the column population, which the
+        // migration already corrected but we keep the safety net.
+        let ad_version = row.encrypted_version.unwrap_or(row.version - 1);
+        let blob = EncryptedBlob {
+            ciphertext: row.payload_ciphertext,
+            nonce: row.payload_nonce,
+        };
+        let payload = match decrypt_payload(&state.master_key, &blob, &row.id, owner_id, ad_version)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                // A decrypt failure here is non-fatal - we just skip
+                // that row from the trash list. A user with one
+                // corrupt tombstone shouldn't lose visibility on the
+                // rest of their trash. Log so an operator can spot
+                // it.
+                tracing::warn!(
+                    snippet_id = %row.id,
+                    error = %e,
+                    "trash decrypt failed; skipping"
+                );
+                continue;
+            }
+        };
+        out.push(TrashView {
+            id: row.id,
+            version: row.version,
+            created_at: row.created_at,
+            deleted_at: row.updated_at,
+            payload,
+        });
+    }
+    Ok(Json(out))
+}
+
+/// Un-delete a snippet from the trash. Bumps version (so other
+/// devices learn about the resurrection on their next pull), flips
+/// is_deleted back to 0, and re-encrypts the payload under the new
+/// version so the AD binding stays consistent.
+pub async fn restore(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<String>,
+) -> Result<Json<WriteResponse>, ApiError> {
+    let owner_id = &auth.0.sub;
+
+    let mut tx = state.pool.begin().await?;
+
+    let current: Option<RestoreRow> = sqlx::query_as(
+        "SELECT id, payload_ciphertext, payload_nonce, version, encrypted_version, created_at, is_deleted \
+         FROM personal_snippets WHERE id = ? AND owner_id = ?",
+    )
+    .bind(&id)
+    .bind(owner_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let row = current.ok_or_else(|| ApiError::bad_request("not_found", "snippet not found"))?;
+
+    if row.is_deleted == 0 {
+        // Not in the trash; nothing to restore. Treat as a noop
+        // success so the client can be idempotent.
+        return Ok(Json(WriteResponse {
+            id,
+            version: row.version,
+            created_at: row.created_at,
+            updated_at: Utc::now().timestamp(),
+        }));
+    }
+
+    // Decrypt with the version the ciphertext was bound to.
+    let ad_version = row.encrypted_version.unwrap_or(row.version - 1);
+    let blob = EncryptedBlob {
+        ciphertext: row.payload_ciphertext,
+        nonce: row.payload_nonce,
+    };
+    let payload = decrypt_payload(&state.master_key, &blob, &id, owner_id, ad_version)
+        .map_err(|e| ApiError::internal(format!("decrypt during restore: {e}")))?;
+
+    // Re-encrypt under the new version so the AD binding stays in
+    // lockstep with the row's version.
+    let new_version = next_version(&mut tx, owner_id).await?;
+    let new_blob = encrypt_payload(&state.master_key, &payload, &id, owner_id, new_version)
+        .map_err(|e| ApiError::internal(format!("encrypt during restore: {e}")))?;
+    let now = Utc::now().timestamp();
+
+    sqlx::query(
+        "UPDATE personal_snippets \
+         SET payload_ciphertext = ?, payload_nonce = ?, key_version = ?, \
+             version = ?, updated_at = ?, encrypted_version = ?, is_deleted = 0 \
+         WHERE id = ? AND owner_id = ?",
+    )
+    .bind(&new_blob.ciphertext)
+    .bind(&new_blob.nonce)
+    .bind(CURRENT_KEY_VERSION)
+    .bind(new_version)
+    .bind(now)
+    .bind(new_version)
+    .bind(&id)
+    .bind(owner_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    tracing::info!(snippet_id = %id, owner_id = %owner_id, version = new_version, "personal_snippet restored");
+
+    Ok(Json(WriteResponse {
+        id,
+        version: new_version,
+        created_at: row.created_at,
+        updated_at: now,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrashView {
+    pub id: String,
+    pub version: i64,
+    pub created_at: i64,
+    /// When the user deleted it (== updated_at on the row, since the
+    /// delete handler bumps updated_at at tombstone time).
+    pub deleted_at: i64,
+    pub payload: SnippetPayload,
+}
+
+#[derive(sqlx::FromRow)]
+struct TrashRow {
+    id: String,
+    payload_ciphertext: Vec<u8>,
+    payload_nonce: Vec<u8>,
+    version: i64,
+    encrypted_version: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct RestoreRow {
+    #[allow(dead_code)] // id is in the URL path; this is just the row's mirror
+    id: String,
+    payload_ciphertext: Vec<u8>,
+    payload_nonce: Vec<u8>,
+    version: i64,
+    encrypted_version: Option<i64>,
+    created_at: i64,
+    is_deleted: i64,
 }
 
 #[derive(sqlx::FromRow)]

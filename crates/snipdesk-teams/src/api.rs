@@ -276,6 +276,40 @@ pub fn delete_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> 
     handle_unit(res)
 }
 
+/// One tombstoned snippet as returned by GET /api/snippets/trash.
+/// Distinct shape from SnippetView because the trash endpoint always
+/// returns the decrypted payload (the user is looking at it to decide
+/// whether to restore) and reports `deleted_at` as a top-level field
+/// for sorting / display.
+///
+/// `Serialize` so the Tauri IPC layer can ship it back to the JS
+/// frontend; `Deserialize` so the api client itself can parse it from
+/// the server response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrashView {
+    pub id: String,
+    pub version: i64,
+    pub created_at: i64,
+    pub deleted_at: i64,
+    pub payload: SnippetPayload,
+}
+
+pub fn list_trash(server_url: &str, token: &str) -> ApiResult<Vec<TrashView>> {
+    let res = ureq::get(&url(server_url, "/api/snippets/trash"))
+        .set("authorization", &format!("Bearer {token}"))
+        .call();
+    handle_response(res)
+}
+
+pub fn restore_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<WriteResponse> {
+    let path = format!("/api/snippets/{id}/restore");
+    // POST with empty body - the id in the URL is the only input.
+    let res = ureq::post(&url(server_url, &path))
+        .set("authorization", &format!("Bearer {token}"))
+        .send_string("");
+    handle_response(res)
+}
+
 // ---- Library (shared team snippets) ----
 //
 // Wire-shape mirrors of `snipdesk-server::handlers::library` - kept

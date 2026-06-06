@@ -337,6 +337,71 @@ html, body {
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
+
+/* Cloud glyph next to team-library snippets and folders. Small,
+   muted, just enough to distinguish at a glance. */
+.snip-cloud,
+.folder-cloud {
+  color: var(--accent);
+  font-size: 12px;
+  flex-shrink: 0;
+  margin-right: 4px;
+  opacity: 0.85;
+}
+.folder-cloud {
+  margin-left: 4px;
+  margin-right: 0;
+}
+
+/* Trash modal: list of soft-deleted snippets fetched from the server.
+   Each row carries title, body preview, deleted-at timestamp, and a
+   Restore button. Layout intentionally distinct from .snippet-list so
+   the user reads "this is a recovery view" instead of "browsing my
+   snippets". */
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.trash-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--bg-3);
+}
+.trash-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.trash-row-head strong {
+  color: var(--text);
+}
+.trash-row-body {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.trash-row-folder {
+  margin-top: 4px;
+}
+.trash-row-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+.muted.small {
+  font-size: 11px;
+}
+.btn-primary.small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
 /* Hide the badge in narrow columns. Container queries: Chromium 105+ (WebView2 OK). */
 .snippet-list {
   container-type: inline-size;

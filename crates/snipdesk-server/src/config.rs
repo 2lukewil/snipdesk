@@ -38,6 +38,21 @@ pub struct Config {
 
     #[serde(default)]
     pub crypto: CryptoConfig,
+
+    /// How many days a soft-deleted snippet (personal or library)
+    /// stays in the database before the background purge job drops
+    /// it. The window has to be comfortably longer than the longest
+    /// plausible offline period for any client, otherwise a device
+    /// that comes back online after the purge would never learn
+    /// about the deletion (the tombstone it would have synced is
+    /// gone). 90 days is the v1 default. Set to 0 to disable purge
+    /// entirely.
+    #[serde(default = "default_tombstone_retention_days")]
+    pub tombstone_retention_days: u32,
+}
+
+fn default_tombstone_retention_days() -> u32 {
+    90
 }
 
 #[derive(Debug, Deserialize, Default)]

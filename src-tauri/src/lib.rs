@@ -398,6 +398,10 @@ pub fn run() {
             server_commands::server_sync_now,
             #[cfg(feature = "teams")]
             server_commands::server_migrate_local_snippets,
+            #[cfg(feature = "teams")]
+            server_commands::server_trash_list,
+            #[cfg(feature = "teams")]
+            server_commands::server_trash_restore,
             commands::capture_selection_for_snippet,
             commands::open_logs_folder,
             commands::open_backups_folder,

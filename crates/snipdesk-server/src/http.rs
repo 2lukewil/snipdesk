@@ -47,6 +47,17 @@ pub fn router(state: AppState) -> Router {
             "/api/snippets/:id",
             put(handlers::snippets::update).delete(handlers::snippets::delete),
         )
+        // Trash view + restore: the dashboard / desktop client read
+        // these to show soft-deleted snippets and bring them back.
+        // `trash` and the `restore` POST are kept off the
+        // /api/snippets/:id namespace because the URL `/restore`
+        // collides with a hypothetical snippet id of "restore"; the
+        // dedicated path is clearer.
+        .route("/api/snippets/trash", get(handlers::snippets::trash))
+        .route(
+            "/api/snippets/:id/restore",
+            post(handlers::snippets::restore),
+        )
         // Shared team library - GET is open to any signed-in member; the
         // write handlers gate on `auth.require_admin()` internally.
         .route(

@@ -11,7 +11,7 @@ use std::io::IsTerminal;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use snipdesk_server::{auth, cli as cli_cmds, config, console, db, http};
+use snipdesk_server::{auth, cli as cli_cmds, config, console, db, http, purge};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -145,6 +145,10 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         .await
         .with_context(|| format!("bind {}", cfg.bind_addr))?;
     tracing::info!("snipdesk-server listening on {}", cfg.bind_addr);
+
+    // Spawn the tombstone-purge sweep. Self-disabling when retention
+    // is set to 0; otherwise hourly while the process lives.
+    purge::spawn(pool.clone(), cfg.tombstone_retention_days);
 
     // Optional interactive console. Spawned when stdin is a real
     // terminal, OR when the operator explicitly forces it via

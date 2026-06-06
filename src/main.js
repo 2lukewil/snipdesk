@@ -381,6 +381,10 @@ const els = {
   serverLastSync: document.getElementById("server-last-sync"),
   serverSyncDetail: document.getElementById("server-sync-detail"),
   serverLastResult: document.getElementById("server-last-result"),
+  // Trash modal (Teams only)
+  trashModal: document.getElementById("trash-modal"),
+  trashList: document.getElementById("trash-list"),
+  trashClose: document.getElementById("trash-close"),
   // Editor tab
   ruleRows: document.getElementById("rule-rows"),
   btnAddRule: document.getElementById("btn-add-rule"),
@@ -756,6 +760,101 @@ function focusSearch() {
 }
 
 // ---------- Data ----------
+
+/// Filter team snippets the same way the backend filters personal ones.
+/// Mirrors db::list's folder semantics so a search for "Billing" matches
+/// both `Billing` and `Billing/Refunds`.
+function filterTeamSnippetsLocal(teamSnippets, folder, search, tagFilter) {
+  const q = (search || "").trim().toLowerCase();
+  const wantsRoot = folder === ROOT_FOLDER;
+  const folderPrefix = folder && folder !== ALL_FOLDERS && !wantsRoot ? folder : null;
+  return (teamSnippets || []).filter((s) => {
+    // Folder gate
+    if (wantsRoot) {
+      if (s.folder_path && s.folder_path !== "") return false;
+    } else if (folderPrefix) {
+      const fp = s.folder_path || "";
+      if (fp !== folderPrefix && !fp.startsWith(folderPrefix + "/")) return false;
+    }
+    // Tag gate
+    if (tagFilter && !((s.tags || []).map((t) => String(t).toLowerCase()).includes(String(tagFilter).toLowerCase()))) {
+      return false;
+    }
+    // Search gate
+    if (q) {
+      const hay =
+        (s.title || "").toLowerCase() + " " +
+        (s.body || "").toLowerCase() + " " +
+        (s.tags || []).join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+/// Combine two already-sorted lists into one re-sorted list under the
+/// same sort mode. Each list came back from the backend in `sort`
+/// order; merging without re-sort would clump team snippets at the
+/// end, which reads as "team snippets are second-class". Re-sorting
+/// in JS is cheap at the volumes involved (hundreds of rows max).
+function mergeSorted(personal, team, sort) {
+  const all = personal.concat(team);
+  if (sort === "alphabetical" || sort === "Alphabetical") {
+    all.sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+  } else {
+    // Usage sort: most-used first. Team snippets carry usage_count = 0
+    // (we don't track use counts on shared content), so they end up
+    // after a user's actively-used personal snippets - which is the
+    // right ordering.
+    all.sort((a, b) => {
+      const u = (b.usage_count || 0) - (a.usage_count || 0);
+      if (u !== 0) return u;
+      return (b.updated_at || 0) - (a.updated_at || 0);
+    });
+  }
+  return all;
+}
+
+/// Merge team folder paths into the folder tree. A team snippet's
+/// `folder_path` either matches an existing user folder (which then
+/// gets a `has_team` marker for the cloud-glyph badge) or creates a
+/// brand-new folder node. Ancestors of a team folder also gain the
+/// marker so the cloud propagates up the tree the way snippet counts
+/// do. The folder rows we synthesize here carry `count = 0` because
+/// the existing count field is "personal snippets in this folder"
+/// only - mixing the team count in would mislead the rename / delete
+/// folder dialogs that quote it.
+function mergeTeamFoldersIntoTree(personalFolders, teamSnippets) {
+  if (!TEAMS_BUILD || (teamSnippets || []).length === 0) {
+    return personalFolders;
+  }
+  const byPath = new Map();
+  for (const f of personalFolders) {
+    byPath.set(f.path, { ...f, has_team: false });
+  }
+  for (const s of teamSnippets) {
+    const path = s.folder_path;
+    if (!path || path === "") continue;
+    const segments = path.split("/").filter(Boolean);
+    let acc = "";
+    for (const seg of segments) {
+      acc = acc ? `${acc}/${seg}` : seg;
+      const existing = byPath.get(acc);
+      if (existing) {
+        existing.has_team = true;
+      } else {
+        byPath.set(acc, {
+          path: acc,
+          has_snippets: false,
+          count: 0,
+          has_team: true,
+        });
+      }
+    }
+  }
+  return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
+}
+
 async function refresh() {
   try {
     const sort = sortModeFromSettings();
@@ -784,10 +883,21 @@ async function refresh() {
         : teamSnippets || [];
       state.snippets = filtered;
       state.tags = tags || [];
-      state.folders = folders || [];
+      state.folders = mergeTeamFoldersIntoTree(folders || [], teamSnippets || []);
       state.allSnippets = allSnippets || [];
     } else {
-      const [snippets, tags, folders, allSnippets] = await Promise.all([
+      // Non-team views: personal + team snippets co-exist. Team rows
+      // come from a separate backend command (list_team_snippets has
+      // no folder/tag/search arg), so we filter them client-side to
+      // match the same selector as personal. Identical folder names
+      // collide naturally - both sources land in the same bucket -
+      // which is the desired UX: a team "Billing" folder merges with
+      // a user's "Billing" folder rather than appearing twice.
+      const teamPromise =
+        TEAMS_BUILD
+          ? invoke("list_team_snippets").catch(() => [])
+          : Promise.resolve([]);
+      const [snippets, tags, folders, allSnippets, teamSnippets] = await Promise.all([
         invoke("list_snippets", {
           query: els.search.value || null,
           tag: state.activeTag,
@@ -797,10 +907,17 @@ async function refresh() {
         invoke("list_tags"),
         invoke("list_folders"),
         invoke("list_snippets", { query: null, tag: null, folder: null, sort }),
+        teamPromise,
       ]);
-      state.snippets = snippets || [];
+      const teamFiltered = filterTeamSnippetsLocal(
+        teamSnippets || [],
+        state.selectedFolder,
+        els.search.value || "",
+        state.activeTag,
+      );
+      state.snippets = mergeSorted(snippets || [], teamFiltered, sort);
       state.tags = tags || [];
-      state.folders = folders || [];
+      state.folders = mergeTeamFoldersIntoTree(folders || [], teamSnippets || []);
       state.allSnippets = allSnippets || [];
     }
 
@@ -1010,6 +1127,27 @@ function renderFolders() {
     els.folderTree.appendChild(teamNode);
   }
 
+  // Trash pseudo-folder. Only meaningful when signed in - server-side
+  // trash lives on the snipdesk-server, and Lite builds have no
+  // tombstone concept beyond "delete locally and that's it".
+  // Clicking opens a modal (not selectFolder) because trash content
+  // is fetched fresh from the network each time, doesn't live in
+  // state.snippets, and the rendering needs its own action buttons.
+  if (TEAMS_BUILD && state.serverStatus?.signed_in) {
+    const trashNode = folderNodeEl(
+      "__trash__",
+      "Trash",
+      false,
+      0,
+      false,
+      false
+    );
+    const iconSpan = trashNode.querySelector("span:nth-child(2)");
+    if (iconSpan) iconSpan.textContent = "🗑 ";
+    trashNode.addEventListener("click", () => openTrashModal());
+    els.folderTree.appendChild(trashNode);
+  }
+
   const hasChildren = new Set();
   for (const f of state.folders) {
     const parts = f.path.split("/");
@@ -1034,6 +1172,20 @@ function renderFolders() {
       state.expandedFolders.has(f.path),
       f.count
     );
+    // Folders that contain team snippets get a small cloud glyph
+    // right of the label. Subtle - same visual weight as the snippet-
+    // count badge already there.
+    if (f.has_team) {
+      const cloud = document.createElement("span");
+      cloud.className = "folder-cloud";
+      cloud.textContent = "☁";
+      cloud.title = "Contains shared team snippets";
+      // Insert after the folder-label span so it sits between the
+      // label and the count badge.
+      const labelEl = node.querySelector(".folder-label");
+      if (labelEl) labelEl.after(cloud);
+      else node.appendChild(cloud);
+    }
     // Drag to reparent; drop snippets/folders onto it.
     node.draggable = true;
     node.addEventListener("dragstart", (e) => {
@@ -1419,8 +1571,24 @@ function renderList() {
       li.classList.add("multi-selected");
     }
 
+    const isTeam = typeof s.id === "string" && s.id.startsWith("team:");
+    if (isTeam) {
+      li.classList.add("team-snippet");
+    }
+
     const title = document.createElement("div");
     title.className = "snip-title";
+    if (isTeam) {
+      // Cloud glyph before the title - immediately readable as
+      // "this row is shared from the team library" even when the
+      // snippet is mixed in with the user's personal snippets in
+      // the All / folder views.
+      const cloud = document.createElement("span");
+      cloud.className = "snip-cloud";
+      cloud.textContent = "☁";
+      cloud.title = "Shared team snippet";
+      title.appendChild(cloud);
+    }
     const titleText = document.createElement("span");
     titleText.textContent = s.title;
     title.appendChild(titleText);
@@ -2887,6 +3055,117 @@ function formatSyncTimestamp(unixSecs) {
   return d.toLocaleString();
 }
 
+// ---------- Trash ----------
+
+/// Open the trash modal and fetch the user's server-side tombstones.
+/// Content is never cached locally; we always go to the server when
+/// the modal opens so a snippet deleted on another device shows up
+/// without a separate sync.
+async function openTrashModal() {
+  if (!TEAMS_BUILD || !els.trashModal) return;
+  els.trashList.innerHTML = '<p class="muted">Loading...</p>';
+  els.trashModal.classList.remove("hidden");
+  try {
+    const items = await invoke("server_trash_list");
+    renderTrashList(items || []);
+  } catch (err) {
+    els.trashList.innerHTML = `<p class="muted">Couldn't load trash: ${escapeHtmlBasic(String(err))}</p>`;
+  }
+}
+
+function closeTrashModal() {
+  if (els.trashModal) els.trashModal.classList.add("hidden");
+}
+
+function renderTrashList(items) {
+  if (!items || items.length === 0) {
+    els.trashList.innerHTML = '<p class="muted">Trash is empty.</p>';
+    return;
+  }
+  els.trashList.innerHTML = "";
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "trash-row";
+    row.dataset.snippetId = item.id;
+
+    const header = document.createElement("div");
+    header.className = "trash-row-head";
+    const title = document.createElement("strong");
+    title.textContent = item.payload?.title || "(untitled)";
+    header.appendChild(title);
+    const when = document.createElement("span");
+    when.className = "muted small";
+    when.textContent = `deleted ${formatRelativeTime(item.deleted_at)}`;
+    header.appendChild(when);
+    row.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "trash-row-body";
+    const bodyText = (item.payload?.body || "").replace(/\n/g, " | ");
+    body.textContent = bodyText.length > 200 ? bodyText.slice(0, 200) + "..." : bodyText;
+    row.appendChild(body);
+
+    if (item.payload?.folder_path) {
+      const folder = document.createElement("div");
+      folder.className = "trash-row-folder muted small";
+      folder.textContent = `📁 ${item.payload.folder_path}`;
+      row.appendChild(folder);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "trash-row-actions";
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "btn-primary small";
+    restoreBtn.textContent = "Restore";
+    restoreBtn.addEventListener("click", async () => {
+      restoreBtn.disabled = true;
+      restoreBtn.textContent = "Restoring...";
+      try {
+        await invoke("server_trash_restore", { id: item.id });
+        // Remove the row from the modal optimistically.
+        row.remove();
+        if (els.trashList.children.length === 0) {
+          els.trashList.innerHTML = '<p class="muted">Trash is empty.</p>';
+        }
+        setStatus(`Restored "${item.payload?.title || "snippet"}".`, "ok");
+        // Refresh main list so the restored snippet appears.
+        await refresh();
+      } catch (err) {
+        restoreBtn.disabled = false;
+        restoreBtn.textContent = "Restore";
+        setStatus(`Restore failed: ${err}`, "err");
+      }
+    });
+    actions.appendChild(restoreBtn);
+    row.appendChild(actions);
+
+    els.trashList.appendChild(row);
+  }
+}
+
+/// Quick relative-time formatter for "deleted X ago" labels. Cheap,
+/// no Intl.RelativeTimeFormat dep.
+function formatRelativeTime(unixSec) {
+  if (!unixSec) return "";
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - unixSec;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}d ago`;
+  return new Date(unixSec * 1000).toLocaleDateString();
+}
+
+/// Minimal HTML escape for status / error strings that we inject as
+/// innerHTML. Avoids depending on the textContent path for these tiny
+/// status messages.
+function escapeHtmlBasic(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function loadServerStatus() {
   if (!TEAMS_BUILD) return;
   try {
@@ -3354,6 +3633,14 @@ function bindEvents() {
     els.btnServerSignup.addEventListener("click", doServerSignup);
     els.btnServerLogout.addEventListener("click", doServerLogout);
     els.btnServerSync.addEventListener("click", doServerSyncNow);
+    if (els.trashClose) els.trashClose.addEventListener("click", closeTrashModal);
+    if (els.trashModal) {
+      // Click outside the card closes the modal, same UX as other
+      // modals.
+      els.trashModal.addEventListener("click", (e) => {
+        if (e.target === els.trashModal) closeTrashModal();
+      });
+    }
   }
 
   els.btnOpenBackups.addEventListener("click", openBackupsFolder);

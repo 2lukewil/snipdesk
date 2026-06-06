@@ -150,6 +150,23 @@
         </div>
       </section>
 
+      <!-- Trash modal (Teams only). Lists server-side tombstones with
+           per-row Restore. Content is transient; we always refetch
+           from the server when opened rather than caching locally. -->
+      <section id="trash-modal" class="modal hidden">
+        <div class="modal-card wide">
+          <h2>Trash</h2>
+          <p class="hint-block" id="trash-hint">
+            Deleted snippets stay here for a while before they're purged.
+            Restore one to bring it back across all your devices.
+          </p>
+          <div id="trash-list" class="modal-body trash-list"></div>
+          <div class="modal-actions">
+            <button id="trash-close" class="btn-secondary">Close</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Variable prompt modal -->
       <section id="var-prompt" class="modal hidden">
         <div class="modal-card">

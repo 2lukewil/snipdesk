@@ -1,5 +1,7 @@
 // IPC surface — local to this crate because every fn is `#[tauri::command]`.
 mod commands;
+#[cfg(feature = "teams")]
+mod server_commands;
 
 // Re-export shared modules under short names so call sites stay stable as
 // crates get reshuffled. Add new re-exports here when modules move.
@@ -105,7 +107,13 @@ pub fn run() {
 
             // Teams-only — the free build has no network-touching threads.
             #[cfg(feature = "teams")]
-            start_team_sync_thread(app.handle().clone());
+            {
+                start_team_sync_thread(app.handle().clone());
+                // Server-backed personal-snippet sync. Independent loop
+                // from the legacy team-library polling because the
+                // cadences and auth model are different.
+                server_commands::start_server_sync_thread(app.handle().clone());
+            }
 
             // --- System tray ---
             let open_accelerator = friendly_shortcut(&settings.hotkey);
@@ -377,6 +385,19 @@ pub fn run() {
             commands::team_library_status,
             #[cfg(feature = "teams")]
             commands::list_team_snippets,
+            // Server-backed personal-snippet sync (phase 4+).
+            #[cfg(feature = "teams")]
+            server_commands::server_signup,
+            #[cfg(feature = "teams")]
+            server_commands::server_login,
+            #[cfg(feature = "teams")]
+            server_commands::server_logout,
+            #[cfg(feature = "teams")]
+            server_commands::server_status,
+            #[cfg(feature = "teams")]
+            server_commands::server_sync_now,
+            #[cfg(feature = "teams")]
+            server_commands::server_migrate_local_snippets,
             commands::capture_selection_for_snippet,
             commands::open_logs_folder,
             commands::open_backups_folder,

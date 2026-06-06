@@ -363,6 +363,24 @@ const els = {
   teamErrorRow: document.getElementById("team-error-row"),
   teamLastError: document.getElementById("team-last-error"),
   btnTeamSync: document.getElementById("btn-team-sync"),
+  // Teams: server sync section
+  serverSignedOut: document.getElementById("server-signed-out"),
+  serverSignedIn: document.getElementById("server-signed-in"),
+  setServerUrl: document.getElementById("set-server-url"),
+  setServerEmail: document.getElementById("set-server-email"),
+  setServerPassword: document.getElementById("set-server-password"),
+  btnServerLogin: document.getElementById("btn-server-login"),
+  btnServerSignup: document.getElementById("btn-server-signup"),
+  btnServerLogout: document.getElementById("btn-server-logout"),
+  btnServerSync: document.getElementById("btn-server-sync"),
+  serverError: document.getElementById("server-error"),
+  serverUserName: document.getElementById("server-user-name"),
+  serverUserEmail: document.getElementById("server-user-email"),
+  serverUserRole: document.getElementById("server-user-role"),
+  serverUrlDisplay: document.getElementById("server-url-display"),
+  serverLastSync: document.getElementById("server-last-sync"),
+  serverSyncDetail: document.getElementById("server-sync-detail"),
+  serverLastResult: document.getElementById("server-last-result"),
   // Editor tab
   ruleRows: document.getElementById("rule-rows"),
   btnAddRule: document.getElementById("btn-add-rule"),
@@ -452,6 +470,25 @@ async function init() {
         await refresh();
       }
     });
+
+    // Background sync engine emits these. Update the status panel +
+    // re-render the snippet list because new rows may have arrived.
+    await listen("snipdesk://server-sync", async () => {
+      await loadServerStatus();
+      await refresh();
+    });
+
+    // The background loop emits this when the server returns 401 and
+    // it wipes the stored token. Refresh the UI so the user sees the
+    // login form again instead of a stale "signed in as" line.
+    await listen("snipdesk://server-signed-out", async () => {
+      await loadServerStatus();
+      setStatus("Signed out: server rejected your session. Please sign in again.", "err");
+    });
+
+    // Initial paint when settings opens; load once at boot too so the
+    // signed-in state is ready by the time Settings is opened.
+    await loadServerStatus();
   }
 
   await listen("snipdesk://first-run", async () => {
@@ -2663,6 +2700,9 @@ function openSettings() {
   loadLogPath();
   renderTeamStatus();
   loadTeamStatus();
+  // Server panel re-load every time settings opens; the background
+  // sync may have changed `last_sync` since the last paint.
+  loadServerStatus();
   // Always open on the General tab.
   activateTab("general");
   els.settings.classList.remove("hidden");
@@ -2801,6 +2841,202 @@ async function syncTeamLibraryNow() {
   }
 }
 
+// ---------- Server (Teams personal-snippet sync) ----------
+// State machine: load status → render either signed-out or signed-in
+// view → handlers flip between them via login / signup / logout / sync.
+//
+// All commands are Teams-build-only; callers guard with TEAMS_BUILD.
+
+function showServerError(msg) {
+  els.serverError.textContent = msg;
+  els.serverError.classList.remove("hidden");
+}
+function clearServerError() {
+  els.serverError.textContent = "";
+  els.serverError.classList.add("hidden");
+}
+
+function formatSyncTimestamp(unixSecs) {
+  if (!unixSecs) return "Never";
+  const d = new Date(unixSecs * 1000);
+  return d.toLocaleString();
+}
+
+async function loadServerStatus() {
+  if (!TEAMS_BUILD) return;
+  try {
+    const st = await invoke("server_status");
+    state.serverStatus = st;
+    renderServerStatus();
+  } catch (err) {
+    console.warn("server_status failed", err);
+  }
+}
+
+function renderServerStatus() {
+  const st = state.serverStatus;
+  if (!st) return;
+  if (st.signed_in && st.user) {
+    els.serverSignedOut.classList.add("hidden");
+    els.serverSignedIn.classList.remove("hidden");
+    els.serverUserName.textContent = st.user.display_name;
+    els.serverUserEmail.textContent = st.user.email;
+    els.serverUserRole.textContent = st.user.role;
+    els.serverUrlDisplay.textContent = st.server_url;
+    els.serverLastSync.textContent = st.last_sync
+      ? formatSyncTimestamp(st.last_sync.at)
+      : "Never";
+    if (st.last_sync) {
+      const ls = st.last_sync;
+      els.serverLastResult.textContent =
+        `${ls.pushed} pushed · ${ls.pulled} pulled` +
+        (ls.errors ? ` · ${ls.errors} errors` : "");
+      els.serverSyncDetail.style.display = "";
+    } else {
+      els.serverSyncDetail.style.display = "none";
+    }
+  } else {
+    els.serverSignedIn.classList.add("hidden");
+    els.serverSignedOut.classList.remove("hidden");
+    // Pre-fill server URL from settings (last successful sign-in).
+    if (st.server_url && !els.setServerUrl.value) {
+      els.setServerUrl.value = st.server_url;
+    }
+  }
+}
+
+async function doServerLogin() {
+  if (!TEAMS_BUILD) return;
+  const server_url = els.setServerUrl.value.trim();
+  const email = els.setServerEmail.value.trim();
+  const password = els.setServerPassword.value;
+  if (!server_url || !email || !password) {
+    showServerError("Fill in server URL, email, and password.");
+    return;
+  }
+  clearServerError();
+  els.btnServerLogin.disabled = true;
+  els.btnServerLogin.textContent = "Signing in…";
+  try {
+    await invoke("server_login", {
+      args: { server_url, email, password },
+    });
+    els.setServerPassword.value = "";
+    await afterSignedIn();
+  } catch (err) {
+    showServerError(String(err));
+  } finally {
+    els.btnServerLogin.disabled = false;
+    els.btnServerLogin.textContent = "Sign in";
+  }
+}
+
+async function doServerSignup() {
+  if (!TEAMS_BUILD) return;
+  const server_url = els.setServerUrl.value.trim();
+  const email = els.setServerEmail.value.trim();
+  const password = els.setServerPassword.value;
+  if (!server_url || !email || !password) {
+    showServerError("Fill in server URL, email, and password.");
+    return;
+  }
+  // The signup flow needs a display name; reuse the local part of the
+  // email as the seed and let the user edit later via account settings
+  // (when we add them). Keeps onboarding to one form.
+  const display_name = await textInputModal({
+    title: "Display name",
+    label: "What should other team members see?",
+    value: email.split("@")[0],
+    confirmText: "Create account",
+  });
+  if (!display_name) return;
+  clearServerError();
+  els.btnServerSignup.disabled = true;
+  els.btnServerSignup.textContent = "Creating…";
+  try {
+    await invoke("server_signup", {
+      args: { server_url, email, password, display_name },
+    });
+    els.setServerPassword.value = "";
+    await afterSignedIn();
+    // First-login offer: upload existing local snippets if there are any.
+    const totalLocal = state.allSnippets?.length ?? 0;
+    if (totalLocal > 0) {
+      const ok = await confirmModal({
+        title: "Upload existing snippets?",
+        message: `Upload your ${totalLocal} existing local snippet${totalLocal === 1 ? "" : "s"} to the server? They'll sync across devices going forward.`,
+        confirmText: "Upload",
+      });
+      if (ok) {
+        try {
+          const pushed = await invoke("server_migrate_local_snippets");
+          setStatus(`Uploaded ${pushed} snippet${pushed === 1 ? "" : "s"} to the server.`, "ok");
+        } catch (err) {
+          setStatus(`Migration failed: ${err}`, "err");
+        }
+      }
+    }
+  } catch (err) {
+    showServerError(String(err));
+  } finally {
+    els.btnServerSignup.disabled = false;
+    els.btnServerSignup.textContent = "Create account";
+  }
+}
+
+async function afterSignedIn() {
+  await loadServerStatus();
+  // Refresh local settings cache so the new server_url shows in the form.
+  try {
+    state.settings = await invoke("get_settings");
+  } catch (err) {
+    console.warn("get_settings after login failed", err);
+  }
+  // Trigger an immediate sync so the user sees changes right away.
+  try {
+    await invoke("server_sync_now");
+    await loadServerStatus();
+    await refresh();
+  } catch (err) {
+    console.warn("initial sync after sign-in failed", err);
+  }
+}
+
+async function doServerLogout() {
+  if (!TEAMS_BUILD) return;
+  const ok = await confirmModal({
+    title: "Sign out",
+    message:
+      "Sign out of the snippet server? Your local snippets stay; sync stops until you sign in again.",
+    confirmText: "Sign out",
+  });
+  if (!ok) return;
+  try {
+    await invoke("server_logout");
+    await loadServerStatus();
+    await refresh();
+  } catch (err) {
+    setStatus(`Sign-out failed: ${err}`, "err");
+  }
+}
+
+async function doServerSyncNow() {
+  if (!TEAMS_BUILD) return;
+  els.btnServerSync.disabled = true;
+  els.btnServerSync.textContent = "Syncing…";
+  try {
+    await invoke("server_sync_now");
+    await loadServerStatus();
+    await refresh();
+    setStatus("Synced.", "ok");
+  } catch (err) {
+    setStatus(`Sync failed: ${err}`, "err");
+  } finally {
+    els.btnServerSync.disabled = false;
+    els.btnServerSync.textContent = "Sync now";
+  }
+}
+
 // ---------- Settings save ----------
 // Shared with "Sync now" so the parsing isn't duplicated.
 function collectSettingsForSave() {
@@ -2839,6 +3075,10 @@ function collectSettingsForSave() {
     team_library_sync_on_startup: TEAMS_BUILD
       ? els.setTeamStartup.checked
       : (state.settings?.team_library_sync_on_startup ?? true),
+    // Server URL is managed by login/logout flows (not directly editable
+    // from the form), but we round-trip the current value so update_settings
+    // doesn't reset it to the default "".
+    server_url: state.settings?.server_url ?? "",
     // Editor rules
     format_rules: state.editingRules
       .map((r) => ({
@@ -3085,6 +3325,10 @@ function bindEvents() {
 
   if (TEAMS_BUILD) {
     els.btnTeamSync.addEventListener("click", syncTeamLibraryNow);
+    els.btnServerLogin.addEventListener("click", doServerLogin);
+    els.btnServerSignup.addEventListener("click", doServerSignup);
+    els.btnServerLogout.addEventListener("click", doServerLogout);
+    els.btnServerSync.addEventListener("click", doServerSyncNow);
   }
 
   els.btnOpenBackups.addEventListener("click", openBackupsFolder);

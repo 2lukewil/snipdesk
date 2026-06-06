@@ -22,7 +22,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 once_cell = "1"
 dirs = "5"
 rusqlite = { version = "0.32", features = ["bundled"] }
-ureq = { version = "2", features = ["tls"] }
+ureq = { version = "2", features = ["tls", "json"] }
 
 # LTO + single codegen-unit shave another ~10% off the Windows binary at
 # the cost of build time. `panic = "abort"` drops unwinding tables we don't

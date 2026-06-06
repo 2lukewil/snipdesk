@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
@@ -63,6 +63,19 @@ pub struct ImportResult {
     pub skipped_duplicates: usize,
 }
 
+/// A locally-edited snippet awaiting push to the server. `server_version`
+/// is `None` for rows that have never been synced (the sync engine sends
+/// these via POST); `Some(v)` rows go via PUT with `expected_version = v`.
+#[derive(Debug, Clone)]
+pub struct DirtySnippet {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub folder_path: Option<String>,
+    pub server_version: Option<i64>,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -113,7 +126,29 @@ impl Db {
                 fetched_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_team_snippets_title ON team_snippets(title);
-            CREATE INDEX IF NOT EXISTS idx_team_snippets_folder ON team_snippets(folder_path);",
+            CREATE INDEX IF NOT EXISTS idx_team_snippets_folder ON team_snippets(folder_path);
+
+            -- Tombstones for snippets the user has deleted locally but
+            -- which haven't yet been pushed to the server. The Teams
+            -- sync engine drains this table on each tick by issuing
+            -- DELETE /api/snippets/:id, then deletes the row here.
+            -- Without it we'd lose deletions if the user is offline
+            -- when they delete; just removing the row locally leaves
+            -- nothing to tell the server about.
+            CREATE TABLE IF NOT EXISTS pending_deletes (
+                snippet_id  TEXT PRIMARY KEY,
+                deleted_at  INTEGER NOT NULL
+            );
+
+            -- Generic small-state KV used by the sync engine for the
+            -- high-water-mark, the signed-in user descriptor, and the
+            -- last error message. Avoids spreading half a dozen one-row
+            -- tables across the schema; the values are JSON-encoded when
+            -- they're more than a scalar.
+            CREATE TABLE IF NOT EXISTS sync_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         )?;
 
         // Migration: add `folder_path` to snippets if missing.
@@ -134,6 +169,33 @@ impl Db {
         }
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_snippets_folder ON snippets(folder_path);",
+        )?;
+
+        // Migration: server-sync columns. server_version is the version
+        // the server has acknowledged for this row (NULL = never pushed).
+        // `dirty` is set whenever the row is created or updated locally;
+        // the sync engine resets it after a successful push. Existing
+        // rows default to dirty=1 so the first sync after upgrading to
+        // Teams uploads everything the user already has.
+        let existing_cols: std::collections::HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(snippets)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if !existing_cols.contains("server_version") {
+            conn.execute("ALTER TABLE snippets ADD COLUMN server_version INTEGER", [])?;
+        }
+        if !existing_cols.contains("dirty") {
+            // Default 1 covers both pre-Teams rows (need uploading) and
+            // any future inserts (caller can override but most don't).
+            conn.execute(
+                "ALTER TABLE snippets ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
+        // Index makes "find dirty rows" cheap on every sync tick.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_snippets_dirty ON snippets(dirty) WHERE dirty = 1;",
         )?;
 
         Ok(Db { conn })
@@ -237,8 +299,14 @@ impl Db {
         if let Some(f) = folder.as_deref() {
             self.ensure_folder(f)?;
         }
+        // Mark dirty so the next sync tick pushes the edit. Synced
+        // fields are exactly the ones that go into the encrypted payload
+        // (title/body/tags/folder_path); usage_count/last_used stay
+        // local-only and don't trigger a re-push.
         let n = self.conn.execute(
-            "UPDATE snippets SET title = ?1, body = ?2, tags = ?3, folder_path = ?4, updated_at = ?5 WHERE id = ?6",
+            "UPDATE snippets \
+             SET title = ?1, body = ?2, tags = ?3, folder_path = ?4, updated_at = ?5, dirty = 1 \
+             WHERE id = ?6",
             params![input.title, input.body, tags, folder, now, id],
         )?;
         if n == 0 {
@@ -249,6 +317,18 @@ impl Db {
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
+        // Pull the row's server_version (if any) before we drop it, so we
+        // know whether the server has heard of this snippet. Rows that
+        // were never pushed (server_version IS NULL) can disappear
+        // without leaving a tombstone — the server has nothing to delete.
+        let server_version: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT server_version FROM snippets WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
         // Cascade variable_history — no FK enforcement.
         self.conn
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
@@ -257,6 +337,16 @@ impl Db {
             .execute("DELETE FROM snippets WHERE id = ?1", [id])?;
         if n == 0 {
             anyhow::bail!("snippet not found: {id}");
+        }
+        // Queue a tombstone only if the server knows about this row.
+        // The Teams sync engine drains pending_deletes by issuing
+        // DELETE /api/snippets/:id and removing the row here on success.
+        if server_version.is_some() {
+            let now = Utc::now().timestamp();
+            self.conn.execute(
+                "INSERT OR REPLACE INTO pending_deletes (snippet_id, deleted_at) VALUES (?1, ?2)",
+                params![id, now],
+            )?;
         }
         Ok(())
     }
@@ -383,8 +473,11 @@ impl Db {
                 format!("{}/%", old_path),
             ],
         )?;
+        // Snippets touched by the rename get dirty=1 too — folder_path is
+        // part of the encrypted payload, so the server needs to be told.
         tx.execute(
-            "UPDATE snippets SET folder_path = ?1 || SUBSTR(folder_path, ?2) \
+            "UPDATE snippets \
+             SET folder_path = ?1 || SUBSTR(folder_path, ?2), dirty = 1 \
              WHERE folder_path = ?3 OR folder_path LIKE ?4",
             params![
                 new_path,
@@ -414,21 +507,34 @@ impl Db {
             anyhow::bail!("folder path cannot be empty");
         }
         let tx = self.conn.unchecked_transaction()?;
+        let like = format!("{path}/%");
         if delete_snippets {
+            // Queue tombstones for any deleted snippet the server knows
+            // about, BEFORE we drop the rows. Without this, sync would
+            // never tell the server about these deletions.
+            let now = Utc::now().timestamp();
+            tx.execute(
+                "INSERT OR REPLACE INTO pending_deletes (snippet_id, deleted_at) \
+                 SELECT id, ?3 FROM snippets \
+                 WHERE (folder_path = ?1 OR folder_path LIKE ?2) \
+                   AND server_version IS NOT NULL",
+                params![path, like, now],
+            )?;
             tx.execute(
                 "DELETE FROM variable_history WHERE snippet_id IN \
                   (SELECT id FROM snippets WHERE folder_path = ?1 OR folder_path LIKE ?2)",
-                params![path, format!("{}/%", path)],
+                params![path, like],
             )?;
             tx.execute(
                 "DELETE FROM snippets WHERE folder_path = ?1 OR folder_path LIKE ?2",
-                params![path, format!("{}/%", path)],
+                params![path, like],
             )?;
         } else {
+            // Promote-to-root: folder_path → NULL. Sync-relevant too.
             tx.execute(
-                "UPDATE snippets SET folder_path = NULL \
+                "UPDATE snippets SET folder_path = NULL, dirty = 1 \
                  WHERE folder_path = ?1 OR folder_path LIKE ?2",
-                params![path, format!("{}/%", path)],
+                params![path, like],
             )?;
         }
         tx.execute(
@@ -564,6 +670,168 @@ impl Db {
             imported,
             skipped_duplicates,
         })
+    }
+
+    // ---- Server sync primitives ----
+    //
+    // These methods are the local-DB surface the Teams sync engine
+    // (snipdesk-teams::sync) uses to push local edits up and apply
+    // remote changes down. The Lite build never calls them but the
+    // columns + tables exist regardless, so a user upgrading from Lite
+    // to Teams doesn't trigger a schema migration mid-flight.
+
+    /// Rows the user has edited locally that the server hasn't seen yet.
+    /// Each tick pushes these and resets `dirty` on success.
+    pub fn dirty_snippets(&self) -> Result<Vec<DirtySnippet>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, body, tags, folder_path, server_version \
+             FROM snippets WHERE dirty = 1 ORDER BY updated_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let tags: String = row.get(3)?;
+                let folder: Option<String> = row.get(4)?;
+                Ok(DirtySnippet {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    body: row.get(2)?,
+                    tags: decode_tags(&tags),
+                    folder_path: folder.filter(|s| !s.is_empty()),
+                    server_version: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Server acknowledged the push at this version. Clears `dirty` so
+    /// the next tick doesn't re-push the same row.
+    pub fn mark_synced(&self, id: &str, server_version: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE snippets SET dirty = 0, server_version = ?1 WHERE id = ?2",
+            params![server_version, id],
+        )?;
+        Ok(())
+    }
+
+    /// Snippet IDs the user deleted locally that the server still
+    /// believes exist (server_version was non-NULL at delete time).
+    pub fn pending_deletes(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT snippet_id FROM pending_deletes ORDER BY deleted_at ASC")?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(rows)
+    }
+
+    /// Server acknowledged the delete; remove the local tombstone.
+    pub fn clear_pending_delete(&self, snippet_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM pending_deletes WHERE snippet_id = ?1",
+            [snippet_id],
+        )?;
+        Ok(())
+    }
+
+    /// Remote tells us a snippet is gone. Drop the local row without
+    /// re-queueing a tombstone (the server has nothing more to learn
+    /// about this id).
+    pub fn apply_remote_delete(&self, id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM snippets WHERE id = ?1", [id])?;
+        // Idempotent — also clear any local tombstone for the same id,
+        // since the server's already deleted it.
+        self.conn
+            .execute("DELETE FROM pending_deletes WHERE snippet_id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Apply a snippet returned by `GET /api/snippets`. Inserts when
+    /// new locally, overwrites when present (last-write-wins per the
+    /// design doc; conflict preservation is a v1.1 add). Always clears
+    /// `dirty` because the local row now matches what the server has.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_from_remote(
+        &self,
+        id: &str,
+        title: &str,
+        body: &str,
+        tags: &[String],
+        folder_path: Option<&str>,
+        server_version: i64,
+        created_at: i64,
+        updated_at: i64,
+    ) -> Result<()> {
+        let tags_str = encode_tags(tags);
+        let folder = normalize_folder(folder_path);
+        if let Some(f) = folder.as_deref() {
+            self.ensure_folder(f)?;
+        }
+        // ON CONFLICT DO UPDATE avoids INSERT OR REPLACE's cascade,
+        // which would clobber variable_history. usage_count and
+        // last_used stay local-only — we don't overwrite them with
+        // server values (which don't have them anyway).
+        self.conn.execute(
+            "INSERT INTO snippets \
+             (id, title, body, tags, folder_path, usage_count, last_used, created_at, updated_at, server_version, dirty) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, ?6, ?7, ?8, 0) \
+             ON CONFLICT(id) DO UPDATE SET \
+               title = excluded.title, \
+               body = excluded.body, \
+               tags = excluded.tags, \
+               folder_path = excluded.folder_path, \
+               updated_at = excluded.updated_at, \
+               server_version = excluded.server_version, \
+               dirty = 0",
+            params![id, title, body, tags_str, folder, created_at, updated_at, server_version],
+        )?;
+        Ok(())
+    }
+
+    /// Small KV used by the sync engine (e.g. `high_water_mark`,
+    /// `signed_in_user_json`). Returns None when the key isn't set.
+    pub fn load_sync_state(&self, key: &str) -> Result<Option<String>> {
+        let row = self
+            .conn
+            .query_row("SELECT value FROM sync_state WHERE key = ?1", [key], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn save_sync_state(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sync_state (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_sync_state(&self, key: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM sync_state WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
+    /// Logout housekeeping: drop the high-water-mark and any signed-in
+    /// user record, AND reset every snippet's server_version + dirty
+    /// state so the next sign-in starts as if from a fresh device.
+    /// Local snippet content is preserved — only the sync metadata is
+    /// wiped. Pending deletes are also cleared (the new server may not
+    /// know about those rows).
+    pub fn reset_sync_metadata(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("UPDATE snippets SET server_version = NULL, dirty = 1", [])?;
+        tx.execute("DELETE FROM pending_deletes", [])?;
+        tx.execute("DELETE FROM sync_state", [])?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Case-insensitive title match. `exclude_id` skips self when checking

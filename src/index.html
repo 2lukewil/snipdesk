@@ -287,46 +287,117 @@
 
             <!-- Team Library -->
             <div class="tab-panel" data-tab="team">
-              <label>
-                <span>Team library URL <em>— any public JSON file (GitHub raw, S3, shared link, …)</em></span>
-                <input
-                  id="set-team-url"
-                  type="text"
-                  placeholder="https://example.com/snippets.json"
-                />
-              </label>
-              <div class="two-col">
-                <label>
-                  <span>Sync interval (minutes)</span>
-                  <input id="set-team-interval" type="number" min="1" max="1440" step="1" />
-                </label>
-                <label>
-                  <span>Folder name in launcher</span>
-                  <input id="set-team-folder-name" type="text" placeholder="Team Library" />
-                </label>
+              <!-- Server-backed sync (phase 4+). Signed-in users see their
+                   status; signed-out users see the login form. -->
+              <div class="server-section">
+                <p class="hint-block">
+                  Sync your personal snippets across devices via a
+                  SnipDesk Teams server. Snippets are encrypted at rest;
+                  administrators never see your snippet content.
+                </p>
+
+                <div id="server-signed-out">
+                  <label>
+                    <span>Server URL</span>
+                    <input
+                      id="set-server-url"
+                      type="text"
+                      placeholder="https://snippets.example.com"
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                  </label>
+                  <label>
+                    <span>Email</span>
+                    <input id="set-server-email" type="email" autocomplete="email" />
+                  </label>
+                  <label>
+                    <span>Password</span>
+                    <input id="set-server-password" type="password" autocomplete="current-password" />
+                  </label>
+                  <div id="server-error" class="editor-error hidden"></div>
+                  <div class="server-auth-actions">
+                    <button id="btn-server-login" class="btn-primary" type="button">Sign in</button>
+                    <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
+                  </div>
+                </div>
+
+                <div id="server-signed-in" class="hidden">
+                  <p class="server-signed-in-line">
+                    Signed in as
+                    <strong id="server-user-name"></strong>
+                    (<span id="server-user-email"></span>)
+                    — <span id="server-user-role"></span>
+                  </p>
+                  <p class="hint-block">
+                    Server: <code id="server-url-display"></code>
+                  </p>
+                  <div class="team-status-block">
+                    <div class="team-status-row">
+                      <span class="team-status-label">Last sync:</span>
+                      <span id="server-last-sync">Never</span>
+                    </div>
+                    <div class="team-status-row" id="server-sync-detail" style="display:none">
+                      <span class="team-status-label">Result:</span>
+                      <span id="server-last-result"></span>
+                    </div>
+                  </div>
+                  <div class="server-auth-actions">
+                    <button id="btn-server-sync" class="btn-secondary" type="button">Sync now</button>
+                    <button id="btn-server-logout" class="btn-secondary" type="button">Sign out</button>
+                  </div>
+                </div>
               </div>
-              <label class="row">
-                <input id="set-team-startup" type="checkbox" />
-                <span>Sync once on app startup <em>— otherwise waits for the first interval tick</em></span>
-              </label>
-              <div class="team-status-block">
-                <div class="team-status-row">
-                  <span class="team-status-label">Last synced:</span>
-                  <span id="team-last-synced">Never</span>
+
+              <hr class="settings-divider" />
+
+              <details class="legacy-section">
+                <summary>Legacy: read-only library URL (deprecated)</summary>
+                <p class="hint-block">
+                  Pre-server sync option: point at a public JSON file to
+                  receive read-only snippets. Superseded by the server
+                  flow above; will be removed in a future release.
+                </p>
+                <label>
+                  <span>Team library URL <em>— any public JSON file (GitHub raw, S3, shared link, …)</em></span>
+                  <input
+                    id="set-team-url"
+                    type="text"
+                    placeholder="https://example.com/snippets.json"
+                  />
+                </label>
+                <div class="two-col">
+                  <label>
+                    <span>Sync interval (minutes)</span>
+                    <input id="set-team-interval" type="number" min="1" max="1440" step="1" />
+                  </label>
+                  <label>
+                    <span>Folder name in launcher</span>
+                    <input id="set-team-folder-name" type="text" placeholder="Team Library" />
+                  </label>
                 </div>
-                <div class="team-status-row">
-                  <span class="team-status-label">Snippets loaded:</span>
-                  <span id="team-snippet-count">0</span>
+                <label class="row">
+                  <input id="set-team-startup" type="checkbox" />
+                  <span>Sync once on app startup <em>— otherwise waits for the first interval tick</em></span>
+                </label>
+                <div class="team-status-block">
+                  <div class="team-status-row">
+                    <span class="team-status-label">Last synced:</span>
+                    <span id="team-last-synced">Never</span>
+                  </div>
+                  <div class="team-status-row">
+                    <span class="team-status-label">Snippets loaded:</span>
+                    <span id="team-snippet-count">0</span>
+                  </div>
+                  <div class="team-status-row" id="team-error-row" style="display:none">
+                    <span class="team-status-label">Last error:</span>
+                    <span id="team-last-error" class="team-error-text"></span>
+                  </div>
+                  <button id="btn-team-sync" class="btn-secondary" type="button">Sync now</button>
                 </div>
-                <div class="team-status-row" id="team-error-row" style="display:none">
-                  <span class="team-status-label">Last error:</span>
-                  <span id="team-last-error" class="team-error-text"></span>
-                </div>
-                <button id="btn-team-sync" class="btn-secondary" type="button">Sync now</button>
-              </div>
-              <details class="format-help">
-                <summary>Expected JSON format</summary>
-                <pre><code>{
+                <details class="format-help">
+                  <summary>Expected JSON format</summary>
+                  <pre><code>{
   "version": 1,
   "snippets": [
     {
@@ -338,6 +409,7 @@
     }
   ]
 }</code></pre>
+                </details>
               </details>
             </div>
 

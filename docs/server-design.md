@@ -525,6 +525,74 @@ between any two.
 8. **Polish + docs.** Deployment guide, security review of crypto code
    (ideally by someone outside the project), public release notes.
 
+## Local smoke test
+
+After phase 4 lands, you can exercise the full flow on one machine —
+client + server + sign-in + sync — without any deployment ceremony.
+
+**1. Spin up the server.**
+
+```bash
+cd crates/snipdesk-server
+# Generate two one-off secrets:
+cargo run -p snipdesk-server -- gen-key         # → base64 master key
+cargo run -p snipdesk-server -- gen-jwt-secret  # → base64 JWT secret
+
+# Copy example config, fill in the secrets:
+cp snipdesk-server.example.toml snipdesk-server.toml
+# Edit snipdesk-server.toml: paste master_key in [crypto], jwt_secret at top.
+
+cargo run -p snipdesk-server -- --config snipdesk-server.toml
+# → "snipdesk-server listening on 127.0.0.1:8080"
+```
+
+The server's data lives at `./data/snipdesk.db` (under the crate dir
+when running from there). Curl-check it's alive:
+
+```bash
+curl http://127.0.0.1:8080/api/health
+# → {"status":"ok","version":"0.1.0","db":true}
+```
+
+**2. Build + launch the Teams desktop client.**
+
+```bash
+npm run tauri:build:teams   # or `npm run tauri:dev` for a hot-reload session
+.\target\release\snipdesk.exe   # produced by tauri:build
+```
+
+**3. In the app, open Settings → Team Library tab.**
+
+The Server section is at the top. Fill in:
+
+- **Server URL:** `http://127.0.0.1:8080`
+- **Email / Password:** any (the first signup is auto-promoted to admin)
+- Click **Create account** → enter a display name → if you have local
+  snippets, the migration prompt offers to upload them.
+
+You should see "Signed in as &lt;display name&gt; — admin", and your
+snippets should appear in the server's DB:
+
+```bash
+sqlite3 crates/snipdesk-server/data/snipdesk.db \
+  "SELECT id, length(payload_ciphertext), is_deleted FROM personal_snippets;"
+```
+
+Note `payload_ciphertext` is opaque — no plaintext readable here.
+
+**4. Simulate a second device.**
+
+Close the app. Move or wipe its data dir (`%APPDATA%\com.snipdesk.teams\`
+on Windows; the dir name follows the `identifier` in tauri.teams.conf.json).
+Relaunch. Open Settings → Team Library, sign in with the same
+credentials at the same server URL. Watch your snippets sync back —
+content intact, including folder paths and tags. Edit a snippet on
+"device 1," wait ~60s for the background tick (or click **Sync now**),
+edit returns on "device 2" after its next tick.
+
+**5. Tear-down.** `Ctrl+C` the server; delete
+`crates/snipdesk-server/data/` if you want a fresh start next time.
+
 ## Open questions for the backend team
 
 - **Reverse proxy / TLS:** is there a preferred convention in your

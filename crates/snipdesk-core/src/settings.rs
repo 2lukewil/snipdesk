@@ -64,7 +64,10 @@ pub struct Settings {
     pub quick_add_hotkey: String,
 
     // ---- Team library (pull-only URL sync) ----
-    /// JSON document URL. Empty = disabled (default).
+    /// JSON document URL. Empty = disabled (default). Deprecated by the
+    /// snipdesk-server flow (`server_url` below); kept so existing
+    /// Teams installs using the static-JSON path keep working until
+    /// phase 5 retires this path.
     #[serde(default)]
     pub team_library_url: String,
     #[serde(default = "default_team_sync_interval")]
@@ -74,6 +77,14 @@ pub struct Settings {
     /// Localizable for non-English UIs.
     #[serde(default = "default_team_folder_name")]
     pub team_library_folder_name: String,
+
+    // ---- snipdesk-server (personal snippet sync) ----
+    /// Base URL of the snipdesk-server instance the Teams build syncs
+    /// against (e.g. "https://snippets.example.com"). Empty = no
+    /// server configured; the build behaves like Lite. The auth token
+    /// itself lives in the OS keychain, not here.
+    #[serde(default)]
+    pub server_url: String,
 
     // ---- Editor formatting toolbar ----
     /// User-customizable; teams ship different markup (Markdown, BBCode, etc).
@@ -187,6 +198,7 @@ impl Default for Settings {
             team_library_sync_interval_mins: default_team_sync_interval(),
             team_library_sync_on_startup: true,
             team_library_folder_name: default_team_folder_name(),
+            server_url: String::new(),
             format_rules: default_format_rules(),
             backup_retention_days: default_backup_retention_days(),
             log_retention_days: default_log_retention_days(),

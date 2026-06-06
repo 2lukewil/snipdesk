@@ -18,3 +18,13 @@ serde_json = { workspace = true }
 # a configurable interval, not in a hot loop. ureq+rustls is a fraction of
 # reqwest+tokio's binary footprint.
 ureq = { workspace = true }
+
+# JWT stored in the OS credential vault (Windows Credential Manager,
+# macOS Keychain, libsecret on Linux). Scoped per server URL so swapping
+# servers logs you out automatically.
+keyring = "3"
+
+# Lightweight error type for the sync layer.
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }

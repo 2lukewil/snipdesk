@@ -35,3 +35,10 @@ desktop.ini
 .env
 .env.local
 .env.*.local
+
+# snipdesk-server local state and active config. The committed file is
+# snipdesk-server.example.toml; the live config + the SQLite data
+# directory stay out of git.
+snipdesk-server.toml
+crates/snipdesk-server/snipdesk-server.toml
+crates/snipdesk-server/data/

@@ -1,0 +1,37 @@
+# Excludes from the Docker build context. Reduces image-build time and
+# avoids leaking local secrets into the build cache.
+
+.git
+.github
+.vscode
+.idea
+.claude
+
+# Cargo build output — never want to ship a pre-built target/ into the
+# container build context.
+target
+src-tauri/target
+src-tauri/gen
+
+# JS toolchain output
+node_modules
+dist
+.npm-cache-tmp
+
+# Local secrets — DEFINITELY don't ship into image build context
+.env
+.env.local
+.env.*.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor-local
+*.log
+*.pdb
+
+# The desktop client + frontend aren't needed by the server image, but
+# we copy them via `COPY . .` to keep the workspace cargo build coherent.
+# Cargo only compiles the server bin, so they cost almost nothing.

@@ -1,0 +1,27 @@
+# Example config for snipdesk-server. Copy to a real location
+# (e.g. /etc/snipdesk/config.toml in Docker, or alongside the binary
+# locally) and edit the values. Never commit a config with a real
+# master_key or jwt_secret.
+
+# Address the HTTP server binds to. 0.0.0.0 listens on all interfaces.
+bind_addr = "0.0.0.0:8080"
+
+# Directory where the SQLite DB and any future state files live. Created
+# on first run if missing.
+data_dir = "./data"
+
+# (Reserved for the auth phase) JWT signing secret. Generate with:
+#   openssl rand -hex 32
+# Leave blank until auth lands.
+jwt_secret = ""
+
+[crypto]
+# Master encryption key for personal-snippet payloads. In priority order:
+#   1. SNIPDESK_MASTER_KEY env var (preferred for containers).
+#   2. master_key_file = "/path/to/file" (file content is the base64 key).
+#   3. master_key = "<base64>" (dev convenience only).
+#
+# Generate a fresh key with:
+#   snipdesk-server gen-key
+master_key = ""
+# master_key_file = "/run/secrets/snipdesk-master-key"

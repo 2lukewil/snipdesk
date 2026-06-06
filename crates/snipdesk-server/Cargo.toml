@@ -1,0 +1,49 @@
+[package]
+name = "snipdesk-server"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Self-hostable backend for SnipDesk Teams"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "snipdesk-server"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP + async runtime
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
+
+# Storage
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+    "macros",
+    "migrate",
+    "chrono",
+] }
+
+# Crypto for snippet-payload encryption at rest
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+
+# Config + CLI
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Workspace-shared utility crates
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }

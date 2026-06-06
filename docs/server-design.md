@@ -286,6 +286,59 @@ Standard OAuth 2.0 authorization code flow with PKCE:
 For desktop clients without the custom-scheme handler ready, fallback is
 to show the JWT on a one-page form and have the client paste it in.
 
+### Locking down to a Workspace domain
+
+The server enforces "Workspace-only" sign-in entirely server-side. Two
+config knobs control it:
+
+```toml
+[oidc.google]
+client_id     = "..."
+client_secret = "..."
+redirect_uri  = "..."
+required_hd           = "yourcompany.com"           # strict: reject if hd ≠ this
+allowed_email_domains = ["yourcompany.com"]         # softer: email pattern match
+```
+
+- **`required_hd`** is the rigorous check. Google's OIDC ID tokens include
+  an `hd` (hosted domain) claim that Google sets *itself* based on actual
+  Workspace membership. Personal `@gmail.com` accounts and accounts from
+  other workspaces lack the claim or carry a different value. If
+  `required_hd` is set, the server rejects any token whose `hd` doesn't
+  match. Can't be spoofed by changing your display name; it's a claim in
+  the signed token.
+- **`allowed_email_domains`** is the softer fallback for orgs that want to
+  let in non-Workspace email accounts whose addresses happen to be under
+  their domain (e.g. contractors with custom-domain Gmail).
+
+Either or both can be set. `required_hd` set alone is the right answer
+when you want strict Workspace-only access.
+
+#### Migration paths between Google Cloud project types
+
+Personal Google Cloud projects can only host "External" OAuth apps:
+anyone with a Google account can grant consent, and the server's
+`required_hd` / `allowed_email_domains` does the policing. Workspace-owned
+projects can host "Internal" apps that are scoped at the OAuth layer too —
+non-Workspace users can't even reach the consent screen.
+
+The transition between them is **config-only, no code changes**:
+
+1. **Tighten an existing personal-GCP setup:** keep the same client_id /
+   client_secret; add `required_hd = "yourcompany.com"` to the server
+   config; restart. The server now rejects anyone outside the Workspace.
+   Zero infrastructure change.
+2. **Move to a Workspace-owned project for a cleaner consent screen:**
+   create a new OAuth client in a GCP project owned by your Workspace,
+   mark the app as "Internal" user type, copy the new client_id /
+   client_secret into the server config, restart. Already-issued JWTs
+   remain valid until their 24h TTL — users only see the new flow on
+   their next sign-in.
+
+Either way, no server code touches Workspace specifics: the difference is
+which OAuth client the server is configured with and whether `required_hd`
+is set.
+
 ### Username/password fallback
 
 Standard signup/login with Argon2id-hashed passwords. The login form is

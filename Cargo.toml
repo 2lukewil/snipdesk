@@ -5,6 +5,7 @@
 resolver = "2"
 members = [
     "crates/snipdesk-core",
+    "crates/snipdesk-server",
     "crates/snipdesk-teams",
     "src-tauri",
 ]

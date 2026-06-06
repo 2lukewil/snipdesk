@@ -548,6 +548,9 @@ body.compact .search-bar {
 }
 .modal-card input[type="text"],
 .modal-card input[type="number"],
+.modal-card input[type="email"],
+.modal-card input[type="password"],
+.modal-card input[type="url"],
 .modal-card select,
 .modal-card textarea {
   background: var(--bg-3);
@@ -558,6 +561,8 @@ body.compact .search-bar {
   font-size: 13px;
   font-family: inherit;
   outline: none;
+  /* Browsers paint password dots in a weird system font otherwise. */
+  font-variant: tabular-nums;
 }
 .modal-card textarea {
   flex: 1;
@@ -1117,16 +1122,58 @@ body.compact .search-bar {
   gap: 8px;
   margin-top: 6px;
 }
-.server-signed-in-line {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text);
-}
 #server-signed-in,
 #server-signed-out {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+/* Signed-in identity card: name + role on top line (with a small pill
+ * badge for the role), then email · server URL on a quieter second line.
+ * Frames a confident "you're connected" affordance without screaming
+ * it. */
+.server-identity {
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.server-identity-line {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.server-identity-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.server-identity-sub code {
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.server-identity-sep {
+  opacity: 0.5;
+}
+.server-role-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--accent-2);
+  color: white;
 }
 .legacy-section > summary {
   cursor: pointer;

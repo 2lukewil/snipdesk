@@ -323,15 +323,17 @@
                 </div>
 
                 <div id="server-signed-in" class="hidden">
-                  <p class="server-signed-in-line">
-                    Signed in as
-                    <strong id="server-user-name"></strong>
-                    (<span id="server-user-email"></span>)
-                    — <span id="server-user-role"></span>
-                  </p>
-                  <p class="hint-block">
-                    Server: <code id="server-url-display"></code>
-                  </p>
+                  <div class="server-identity">
+                    <div class="server-identity-line">
+                      <strong id="server-user-name"></strong>
+                      <span id="server-user-role" class="server-role-badge"></span>
+                    </div>
+                    <div class="server-identity-sub">
+                      <span id="server-user-email"></span>
+                      <span class="server-identity-sep">·</span>
+                      <code id="server-url-display"></code>
+                    </div>
+                  </div>
                   <div class="team-status-block">
                     <div class="team-status-row">
                       <span class="team-status-label">Last sync:</span>

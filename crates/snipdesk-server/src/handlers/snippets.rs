@@ -140,7 +140,7 @@ pub async fn create(
     .map_err(|e| ApiError::internal(format!("encrypt: {e}")))?;
     let now = Utc::now().timestamp();
 
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO personal_snippets \
          (id, owner_id, payload_ciphertext, payload_nonce, key_version, version, created_at, updated_at, is_deleted) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
@@ -156,6 +156,19 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    // Diagnostic log: prove the INSERT actually committed before we
+    // return CREATED. If the client claims "N uploaded" but the admin
+    // panel shows 0, this line in the server log tells us whether the
+    // problem is on the write side (no log lines) or the read side
+    // (log lines present but query disagrees).
+    tracing::info!(
+        snippet_id = %body.id,
+        owner_id = %owner_id,
+        version,
+        rows_affected = result.rows_affected(),
+        "personal_snippet created"
+    );
 
     Ok((
         StatusCode::CREATED,

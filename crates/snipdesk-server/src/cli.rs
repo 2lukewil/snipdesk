@@ -72,6 +72,11 @@ pub enum UsersCmd {
         #[arg(long)]
         from_stdin: bool,
     },
+    /// Diagnostic dump for one user: id, role, raw snippet count (live
+    /// + tombstoned), and the first few snippet IDs. Used to confirm
+    ///   rows landed in the right `owner_id` when the dashboard count
+    ///   disagrees with what a client said it uploaded.
+    Info { email: String },
 }
 
 /// Entry point dispatched by main.rs's `Cmd::Users { cmd }` arm - opens
@@ -96,6 +101,7 @@ pub async fn run_with_pool(pool: &SqlitePool, cmd: UsersCmd) -> Result<()> {
         UsersCmd::ResetPassword { email, from_stdin } => {
             reset_password(pool, &email, from_stdin).await
         }
+        UsersCmd::Info { email } => info(pool, &email).await,
     }
 }
 
@@ -392,6 +398,100 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
          until expiry (24h) - rotate the server's jwt_secret if you need \
          immediate invalidation."
     );
+    Ok(())
+}
+
+/// Dump everything we know about one user, from the rawest possible
+/// angle. The dashboard / `users list` both compute counts via a
+/// LEFT JOIN + SUM, which is *almost* always right but can be confusing
+/// if a row's `owner_id` somehow doesn't match what you expect. This
+/// command runs three independent counts (live, tombstoned, total) and
+/// shows the first ten snippet IDs so you can cross-check by hand.
+async fn info(pool: &SqlitePool, email: &str) -> Result<()> {
+    let user = find_by_email(pool, email).await?;
+    println!("user");
+    println!("  id:           {}", user.id);
+    println!("  email:        {}", user.email);
+    println!("  display_name: {}", user.display_name);
+    println!("  role:         {}", user.role);
+    println!(
+        "  is_disabled:  {}",
+        if user.is_disabled != 0 { "yes" } else { "no" }
+    );
+    println!(
+        "  last_seen_at: {}",
+        match user.last_seen_at {
+            None => "never".to_string(),
+            Some(ts) => Utc
+                .timestamp_opt(ts, 0)
+                .single()
+                .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "?".to_string()),
+        }
+    );
+
+    // Three independent counts, no JOIN: read straight off
+    // personal_snippets to rule out a JOIN-pred bug or a stale GROUP BY.
+    let (live,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM personal_snippets WHERE owner_id = ? AND is_deleted = 0",
+    )
+    .bind(&user.id)
+    .fetch_one(pool)
+    .await?;
+    let (tombstoned,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM personal_snippets WHERE owner_id = ? AND is_deleted = 1",
+    )
+    .bind(&user.id)
+    .fetch_one(pool)
+    .await?;
+    let (total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM personal_snippets WHERE owner_id = ?")
+            .bind(&user.id)
+            .fetch_one(pool)
+            .await?;
+
+    println!();
+    println!("personal_snippets (raw)");
+    println!("  live:       {live}");
+    println!("  tombstoned: {tombstoned}");
+    println!("  total:      {total}");
+
+    // First ten ids, oldest first. Useful for spot-checking that the
+    // ids match what the desktop client thinks it pushed.
+    let ids: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT id, version, is_deleted FROM personal_snippets \
+         WHERE owner_id = ? ORDER BY created_at ASC LIMIT 10",
+    )
+    .bind(&user.id)
+    .fetch_all(pool)
+    .await?;
+    if !ids.is_empty() {
+        println!("  first ten ids (oldest first):");
+        for (id, version, is_deleted) in ids {
+            let tomb = if is_deleted != 0 { " [tombstone]" } else { "" };
+            println!("    v{version:3}  {id}{tomb}");
+        }
+    }
+
+    // Also check: are there any snippets where owner_id LOOKS LIKE
+    // this user's id but isn't an exact match? A whitespace bug or a
+    // case mismatch in UUIDs would show up here.
+    let (fuzzy,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM personal_snippets \
+         WHERE owner_id LIKE ? AND owner_id <> ?",
+    )
+    .bind(format!("%{}%", user.id))
+    .bind(&user.id)
+    .fetch_one(pool)
+    .await?;
+    if fuzzy > 0 {
+        println!();
+        println!(
+            "WARNING: {fuzzy} snippet(s) have an owner_id that *contains* but doesn't \
+             *equal* this user's id. JOIN-mismatch bug; investigate."
+        );
+    }
+
     Ok(())
 }
 

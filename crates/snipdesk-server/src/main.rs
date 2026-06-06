@@ -4,15 +4,12 @@
 //! migrations + an Axum `/api/health` endpoint. Auth, snippet sync, and
 //! the dashboard come in subsequent phases (see docs/server-design.md).
 
-mod config;
-mod db;
-mod http;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use snipdesk_server::{auth, config, db, http};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -35,6 +32,9 @@ enum Cmd {
     /// Generate a fresh 256-bit master encryption key (base64). Pipe into
     /// your secret store; never commit the result.
     GenKey,
+    /// Generate a fresh 256-bit HS256 JWT secret (base64). Pipe into your
+    /// secret store; rotate to invalidate every active session at once.
+    GenJwtSecret,
 }
 
 #[tokio::main]
@@ -46,6 +46,10 @@ async fn main() -> Result<()> {
         Cmd::GenKey => {
             let key = config::MasterKey::generate();
             println!("{}", key.to_base64());
+            Ok(())
+        }
+        Cmd::GenJwtSecret => {
+            println!("{}", auth::generate_jwt_secret());
             Ok(())
         }
         Cmd::Run => run(cli.config).await,
@@ -67,7 +71,14 @@ async fn run(config_path: PathBuf) -> Result<()> {
     let state = http::AppState {
         pool,
         master_key: Arc::new(master_key),
+        jwt_secret: cfg.jwt_secret.clone().unwrap_or_default(),
     };
+    if state.jwt_secret.is_empty() {
+        tracing::warn!(
+            "jwt_secret not set in config — /api/auth/* and /api/me will 500 \
+             until you set one. Generate with: snipdesk-server gen-jwt-secret"
+        );
+    }
     let app = http::router(state);
 
     let listener = TcpListener::bind(&cfg.bind_addr)

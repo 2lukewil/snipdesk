@@ -32,6 +32,10 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 
+# Auth: Argon2id password hashing + HS256 JWTs
+argon2 = "0.5"
+jsonwebtoken = "9"
+
 # Config + CLI
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
@@ -47,3 +51,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

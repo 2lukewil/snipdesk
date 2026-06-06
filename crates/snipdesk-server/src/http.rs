@@ -4,12 +4,19 @@
 
 use std::sync::Arc;
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::trace::TraceLayer;
 
 use crate::config::MasterKey;
+use crate::handlers;
 
 /// Shared application state. Cloned per handler invocation; `pool` and
 /// `master_key` are wrapped in Arc so the clones are cheap.
@@ -19,11 +26,19 @@ pub struct AppState {
     /// Loaded at startup, used by the snippet-encryption layer in phase 3.
     #[allow(dead_code)]
     pub master_key: Arc<MasterKey>,
+    /// HS256 secret for signing/verifying JWTs. Loaded from config at
+    /// startup; empty when no auth is configured (handlers will reject
+    /// then, but having the field always present keeps state lean).
+    pub jwt_secret: String,
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/auth/signup", post(handlers::auth::signup))
+        .route("/api/auth/login", post(handlers::auth::login))
+        .route("/api/auth/logout", post(handlers::auth::logout))
+        .route("/api/me", get(handlers::auth::me))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

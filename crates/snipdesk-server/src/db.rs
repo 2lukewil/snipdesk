@@ -34,13 +34,19 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
         .await
         .with_context(|| format!("connect to {url}"))?;
 
+    run_migrations(&pool).await?;
+    Ok(pool)
+}
+
+/// Apply the embedded migrations to a pool. Split out so tests can call
+/// it against an in-memory pool without the data_dir / WAL setup above.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     // Embed migrations at compile time so the binary is fully
     // self-contained — operators don't need to ship a migrations folder
     // alongside the executable.
     sqlx::migrate!("./migrations")
-        .run(&pool)
+        .run(pool)
         .await
         .context("run migrations")?;
-
-    Ok(pool)
+    Ok(())
 }

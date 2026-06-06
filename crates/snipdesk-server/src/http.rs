@@ -8,7 +8,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::Serialize;
@@ -23,8 +23,8 @@ use crate::handlers;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
-    /// Loaded at startup, used by the snippet-encryption layer in phase 3.
-    #[allow(dead_code)]
+    /// Server-side master key used by `crypto` to encrypt/decrypt
+    /// personal-snippet payloads on insert/read.
     pub master_key: Arc<MasterKey>,
     /// HS256 secret for signing/verifying JWTs. Loaded from config at
     /// startup; empty when no auth is configured (handlers will reject
@@ -39,6 +39,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/logout", post(handlers::auth::logout))
         .route("/api/me", get(handlers::auth::me))
+        .route(
+            "/api/snippets",
+            post(handlers::snippets::create).get(handlers::snippets::list),
+        )
+        .route(
+            "/api/snippets/:id",
+            put(handlers::snippets::update).delete(handlers::snippets::delete),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

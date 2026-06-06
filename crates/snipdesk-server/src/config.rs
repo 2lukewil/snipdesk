@@ -73,7 +73,6 @@ impl std::fmt::Debug for MasterKey {
 }
 
 impl MasterKey {
-    #[allow(dead_code)] // used by the crypto layer landing in phase 3
     pub fn as_bytes(&self) -> &[u8; MASTER_KEY_LEN] {
         &self.0
     }

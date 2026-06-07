@@ -25,6 +25,29 @@ after.
   limits, health endpoint with 503 on DB down, sync version unique
   constraints, JWT algorithm pinning + iss/aud, OIDC state-store
   bounds.
+- **Paste telemetry (server + client)**: `POST /api/usage/report`
+  with batched deltas; migration 0005 adds `users.chars_pasted /
+  snippets_pasted`, per-user `wpm / hourly_wage / currency`
+  overrides (via `PATCH /api/me`), `personal_snippets.usage_count`
+  + `last_used`, and a `library_usage(user_id, snippet_id, ...)`
+  junction table. Client tracks deltas in a `pending_telemetry`
+  table and flushes via a snapshot/commit pattern so bumps during
+  the network round-trip survive.
+- **Dashboard money/time saved estimate**: computed per-user from
+  real chars_pasted using each user's own wpm/wage/currency (server
+  defaults as fallback). Live FX module (opt-in `[fx]` config,
+  daily refresh from open.er-api.com, static AUD table as fallback)
+  overlays a static rate table; currency dropdown on the stats
+  page reweights the displayed value client-side, default picked
+  from `navigator.language`.
+- **Dashboard polish**: stat-card picker flipped to default-off
+  with `+ Add card` menu (default set: Users, Admins, Hours, Money,
+  Adoption); library page uses a responsive multi-column grid;
+  per-snippet usage pill on library cards; per-user detail page
+  shows pastes / hours / money / top library; HX-Trigger
+  `libraryChanged` makes sidebar + cards refresh immediately on
+  every mutation; currency symbols served as JS unicode escapes
+  to dodge any layer that might re-encode the response.
 
 ---
 
@@ -105,6 +128,100 @@ parallel with the polish items below.
 
 ---
 
+## Phase D - First-run onboarding (~half day)
+
+**Goal:** A new user opens the app and lands on a guided modal that
+sets them up in under a minute. Replaces today's silent first-launch
+where `Settings.onboarding_completed` is set without the user
+seeing anything.
+
+**Scope (6 panels):**
+
+1. **Welcome** - one sentence + app icon.
+2. **Sign in** - prominent "Sign in with Google" button; email /
+   password collapsed behind an "Other sign-in options" disclosure.
+   Hidden entirely on SSO-only white-label builds (`window.__BRAND.ssoOnly`).
+3. **Try the hotkey** - one-shot keypress listener confirms the
+   user can fire their launcher hotkey.
+4. **Typing speed test** - fixed ~25-word phrase; timer runs from
+   first keystroke; `wpm = (words * 60) / seconds`. "Use this number"
+   posts to `server_update_profile({ wpm })`.
+5. **Wage + currency** - hourly wage + currency dropdown (locale
+   default ported from the stats-page map). Skip retains server
+   defaults. Save posts to `server_update_profile`.
+6. **Done** - flips `settings.onboarding_completed = true` via
+   `update_settings`.
+
+**Reuse**: existing `<section class="modal hidden">` pattern,
+`closeAllModals()`, the `onboarding_completed` settings flag,
+`server_update_profile` IPC. Settings UI gains a "Replay
+onboarding" button at the bottom of General that clears the flag
+and re-opens the modal.
+
+**No backend changes.** Roughly 150 lines HTML + 250 lines JS + 80
+lines CSS.
+
+---
+
+## Phase E - White-label platform (~1.5 days)
+
+**Goal:** Per-customer builds with custom name, icon, baked-in
+server URL, and SSO-only sign-in flow, while the main github repo
+stays brand-neutral. No customer config tracked in the tree.
+
+**Hard invariant:** customer name / icons / URLs live entirely
+outside this repo. Build picks them up via `$WHITELABEL_CONFIG`
+pointing at a toml file. A stock `npm run tauri build` with no env
+var continues to produce a "SnipDesk" branded binary.
+
+**Scope:**
+
+- `scripts/whitelabel.mjs` (new): prebuild step that reads
+  `$WHITELABEL_CONFIG`, generates `src-tauri/src/whitelabel.rs`
+  + `src/whitelabel.js` constants, patches `tauri.conf.json`
+  (productName, identifier, icons, updater endpoint) from a
+  checked-in `tauri.conf.json.template`, copies icons from the
+  customer's `source_dir`. Idempotent; runs on every build.
+- `scripts/whitelabel.example.toml` (new): documented sample
+  showing the shape (brand, server.baked_url, server.sso_only,
+  icons.source_dir, updater.endpoint).
+- `src-tauri/tauri.conf.json.template` (new): the canonical
+  pre-patch tauri config; the build script restores from it
+  before patching so customer builds don't drift.
+- One-time refactor: ~15-25 client-visible `"SnipDesk"` literals
+  (window title, tray menu, About panel, settings copy,
+  notification source) lifted to `whitelabel::BRAND_NAME` or
+  `window.__BRAND.name`.
+- `src/index.html` + `src/main.js`: `data-sso-only` wrapper on the
+  server-section hides email/password when set; `set-server-url`
+  pre-filled + readonly when a baked URL is configured; the boot
+  flow auto-uses the baked URL without prompting.
+- Server-side brand (just the dashboard nav header) via a new
+  `[brand].dashboard_name` config field; default `"Admin"` so the
+  server binary stays brand-neutral.
+
+**Build flow:**
+
+```sh
+# Stock - "SnipDesk" everywhere
+npm run tauri build
+
+# Customer
+WHITELABEL_CONFIG=/path/to/acme/whitelabel.toml npm run tauri build
+```
+
+**Out of scope (call out in docs):**
+
+- Code-signing certs are per-publisher; SmartScreen still shows
+  the cert owner, not the brand. Customer needs their own EV cert
+  for full SmartScreen branding.
+- Microsoft Store / Mac App Store listings are per-publisher;
+  this is side-loaded MSI/DMG only.
+- Auto-update server is baked per-build via the toml; customers
+  needing their own release stream supply their own endpoint.
+
+---
+
 ## Conflict-loser preservation (v1.1, ~half day)
 
 Today's sync is last-write-wins on concurrent edits to the same
@@ -176,9 +293,6 @@ needs a break.
   `WAYLAND_DISPLAY` at runtime and force `paste_mode = "clipboard"`
   so the agent at least gets a copy-only flow instead of silent
   failure.
-- **First-run onboarding.** `Settings.onboarding_completed` exists
-  but the flow that flips it is minimal. A 3-screen welcome (hotkey,
-  sample snippet, optional Teams sign-in) would help adoption.
 - **Crash uplink for Teams flavor.** Local crash logs already work.
   An opt-in "send anonymized crash report" toggle would dramatically
   shorten the debug loop on rare bugs.

@@ -147,6 +147,28 @@ pub async fn start(
     };
 
     if let Ok(mut store) = pending_store().lock() {
+        // Bound the store so an attacker hammering /api/auth/oidc/start
+        // without ever finishing the flow can't exhaust memory. 1024
+        // pending entries is well above any plausible legitimate burst
+        // (an org of 10k users with everyone simultaneously signing in
+        // would still average <0.1s in this state given the TTL). If
+        // we're already at the cap, drop the oldest entry to make room
+        // - the rare legitimate user whose pending state expires this
+        // way just has to click "Sign in" again.
+        const PENDING_CAP: usize = 1024;
+        if store.len() >= PENDING_CAP {
+            if let Some(oldest_key) = store
+                .iter()
+                .min_by_key(|(_, p)| p.created_at)
+                .map(|(k, _)| k.clone())
+            {
+                store.remove(&oldest_key);
+                tracing::warn!(
+                    "oidc pending_store hit cap ({}); dropped oldest entry",
+                    PENDING_CAP
+                );
+            }
+        }
         store.insert(
             csrf_state.secret().to_string(),
             PendingAuth {

@@ -246,7 +246,7 @@ pub async fn login_submit(
         .await;
 
     let next = safe_next(body.redirect_to.as_deref());
-    let jar = jar.add(build_cookie(token));
+    let jar = jar.add(build_cookie(token, state.secure_cookies));
     (jar, Redirect::to(&next)).into_response()
 }
 
@@ -539,16 +539,17 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     // matters more than the rows scanned at this scale. Window for
     // "active" is 30 days, mirroring the typical "MAU" intuition.
     let cutoff_30d = chrono::Utc::now().timestamp() - 30 * 86_400;
-    let counts: StatsCounts = sqlx::query_as(&format!(
+    let counts: StatsCounts = sqlx::query_as(
         "SELECT \
             (SELECT COUNT(*) FROM users) AS total_users, \
-            (SELECT COUNT(*) FROM users WHERE last_seen_at IS NOT NULL AND last_seen_at >= {cutoff_30d}) AS active_users, \
+            (SELECT COUNT(*) FROM users WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?) AS active_users, \
             (SELECT COUNT(*) FROM users WHERE role = 'admin') AS admin_users, \
             (SELECT COUNT(*) FROM users WHERE is_disabled = 1) AS disabled_users, \
             (SELECT COUNT(*) FROM personal_snippets WHERE is_deleted = 0) AS total_snippets, \
             (SELECT COUNT(*) FROM personal_snippets WHERE is_deleted = 1) AS tombstoned_snippets, \
             (SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0) AS library_snippets",
-    ))
+    )
+    .bind(cutoff_30d)
     .fetch_one(&state.pool)
     .await
     .unwrap_or(StatsCounts {

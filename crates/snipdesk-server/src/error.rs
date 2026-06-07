@@ -36,6 +36,14 @@ impl ApiError {
         }
     }
 
+    pub fn not_found(code: &'static str, msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code,
+            message: msg.into(),
+        }
+    }
+
     pub fn unauthorized(code: &'static str, msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,

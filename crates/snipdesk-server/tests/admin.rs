@@ -31,6 +31,7 @@ async fn make_app() -> axum::Router {
         master_key: Arc::new(MasterKey::generate()),
         jwt_secret: "test-jwt-secret".into(),
         oidc_google: None,
+        secure_cookies: false,
     };
     router(state)
 }

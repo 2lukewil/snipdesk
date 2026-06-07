@@ -134,7 +134,7 @@ pub async fn update_user(
         .fetch_optional(&mut *tx)
         .await?;
     if exists.is_none() {
-        return Err(ApiError::bad_request("not_found", "user not found"));
+        return Err(ApiError::not_found("not_found", "user not found"));
     }
 
     if let Some(role) = &body.role {
@@ -221,7 +221,7 @@ pub async fn delete_user(
         .execute(&state.pool)
         .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad_request("not_found", "user not found"));
+        return Err(ApiError::not_found("not_found", "user not found"));
     }
     Ok(StatusCode::NO_CONTENT)
 }

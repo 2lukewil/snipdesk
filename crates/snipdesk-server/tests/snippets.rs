@@ -25,6 +25,7 @@ async fn make_app() -> axum::Router {
         master_key: Arc::new(MasterKey::generate()),
         jwt_secret: "test-jwt-secret".into(),
         oidc_google: None,
+        secure_cookies: false,
     };
     router(state)
 }
@@ -268,7 +269,8 @@ async fn users_cannot_see_each_others_snippets() {
     assert_eq!(list_b["snippets"].as_array().unwrap().len(), 0);
 
     // Bob can't update Alice's snippet either - looks not-found from his
-    // side (don't leak existence).
+    // side (don't leak existence). 404 is the standard semantics now;
+    // older versions returned 400 for the same case.
     let (s, _) = request(
         &app,
         "PUT",
@@ -280,11 +282,11 @@ async fn users_cannot_see_each_others_snippets() {
         })),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::NOT_FOUND);
 
     // Bob can't delete it either.
     let (s, _) = request(&app, "DELETE", "/api/snippets/alice-1", &token_b, None).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(s, StatusCode::NOT_FOUND);
 
     // Alice's snippet still intact for her.
     let (_, list_a) = request(&app, "GET", "/api/snippets", &token_a, None).await;

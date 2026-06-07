@@ -133,6 +133,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         master_key: Arc::new(master_key),
         jwt_secret: cfg.jwt_secret.clone().unwrap_or_default(),
         oidc_google: cfg.oidc.google.clone(),
+        secure_cookies: cfg.secure_cookies,
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(

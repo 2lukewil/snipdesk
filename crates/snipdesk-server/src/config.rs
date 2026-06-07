@@ -56,6 +56,14 @@ pub struct Config {
     /// enable "Sign in with Google" from the desktop client.
     #[serde(default)]
     pub oidc: OidcConfig,
+
+    /// Set the `Secure` attribute on the dashboard session cookie.
+    /// Default `false` so localhost smoke tests work over plain HTTP;
+    /// production deployments MUST set this to `true` (or terminate
+    /// HTTPS at the reverse proxy and trust the proxy to drop
+    /// plaintext requests).
+    #[serde(default)]
+    pub secure_cookies: bool,
 }
 
 fn default_tombstone_retention_days() -> u32 {

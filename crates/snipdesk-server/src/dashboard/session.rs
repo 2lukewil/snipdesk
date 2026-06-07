@@ -31,10 +31,14 @@ use crate::http::AppState;
 pub const COOKIE_NAME: &str = "snipdesk_dashboard";
 
 /// Build a Set-Cookie carrying the JWT, used after a successful login.
-pub fn build_cookie(token: String) -> Cookie<'static> {
+/// `secure` controls the `Secure` attribute - true in production
+/// (config `secure_cookies = true`), false for localhost dev so HTTP
+/// testing still works.
+pub fn build_cookie(token: String, secure: bool) -> Cookie<'static> {
     Cookie::build((COOKIE_NAME, token))
         .http_only(true)
         .same_site(SameSite::Lax)
+        .secure(secure)
         .path("/")
         // No max-age: the cookie expires with the browser session. The
         // JWT inside has its own 24h TTL; we honor whichever expires

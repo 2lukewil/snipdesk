@@ -256,7 +256,7 @@ pub async fn update(
     .fetch_optional(&mut *tx)
     .await?;
     let (current_version, created_at, is_deleted) =
-        current.ok_or_else(|| ApiError::bad_request("not_found", "snippet not found"))?;
+        current.ok_or_else(|| ApiError::not_found("not_found", "snippet not found"))?;
 
     // Updates on a tombstone are a client bug (already deleted) - say
     // so explicitly rather than silently resurrecting.
@@ -321,7 +321,7 @@ pub async fn delete(
             .fetch_optional(&mut *tx)
             .await?;
     let (is_deleted,) =
-        current.ok_or_else(|| ApiError::bad_request("not_found", "snippet not found"))?;
+        current.ok_or_else(|| ApiError::not_found("not_found", "snippet not found"))?;
     if is_deleted != 0 {
         // Idempotent: deleting an already-deleted snippet is a no-op
         // success. Lets clients retry safely without surfacing errors.
@@ -436,7 +436,7 @@ pub async fn restore(
     .bind(owner_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let row = current.ok_or_else(|| ApiError::bad_request("not_found", "snippet not found"))?;
+    let row = current.ok_or_else(|| ApiError::not_found("not_found", "snippet not found"))?;
 
     if row.is_deleted == 0 {
         // Not in the trash; nothing to restore. Treat as a noop

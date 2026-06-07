@@ -75,12 +75,32 @@ pub fn verify_password_constant_time(plaintext: &str, stored_hash: Option<&str>)
 /// `Clone` so the dashboard layer can hand the same claims to both its
 /// admin extractor and an inline `AuthUser` adapter when delegating to
 /// the underlying JSON handler.
+///
+/// `iss` and `aud` aren't strictly necessary with a single deployment
+/// but they're cheap insurance: if two SnipDesk servers ever ended up
+/// sharing a `jwt_secret` (e.g. a misconfigured `.env` copied from a
+/// neighbour), the issuer check would catch the mistake at validation
+/// time instead of silently letting cross-instance tokens authenticate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub role: String,
     pub exp: usize,
     pub iat: usize,
+    #[serde(default = "default_iss")]
+    pub iss: String,
+    #[serde(default = "default_aud")]
+    pub aud: String,
+}
+
+const JWT_ISS: &str = "snipdesk-server";
+const JWT_AUD: &str = "snipdesk";
+
+fn default_iss() -> String {
+    JWT_ISS.to_string()
+}
+fn default_aud() -> String {
+    JWT_AUD.to_string()
 }
 
 pub fn issue_token(user_id: &str, role: &str, secret: &str) -> Result<String, ApiError> {
@@ -96,9 +116,14 @@ pub fn issue_token(user_id: &str, role: &str, secret: &str) -> Result<String, Ap
         role: role.to_string(),
         iat: now.timestamp() as usize,
         exp: exp.timestamp() as usize,
+        iss: JWT_ISS.to_string(),
+        aud: JWT_AUD.to_string(),
     };
+    // Header::new(HS256) is more explicit than ::default() (which
+    // happens to also pick HS256). Algorithm pinning gets enforced at
+    // verify time below.
     let token = encode(
-        &Header::default(),
+        &Header::new(jsonwebtoken::Algorithm::HS256),
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )?;
@@ -109,7 +134,13 @@ pub fn verify_token(token: &str, secret: &str) -> Result<Claims, ApiError> {
     if secret.is_empty() {
         return Err(ApiError::internal("JWT secret not configured"));
     }
-    let validation = Validation::default();
+    // Pin the algorithm so a token signed with `alg: none` (or `alg:
+    // RS256` against a public-key-derived secret) can't sneak past the
+    // verifier. The jsonwebtoken default would accept whatever the
+    // token's header declared.
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.set_issuer(&[JWT_ISS]);
+    validation.set_audience(&[JWT_AUD]);
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),

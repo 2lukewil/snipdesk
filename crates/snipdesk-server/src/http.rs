@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, put},
@@ -34,6 +34,9 @@ pub struct AppState {
     /// server is in password-only mode; the OIDC endpoints return a
     /// "not configured" error instead of 500ing.
     pub oidc_google: Option<GoogleOidcConfig>,
+    /// Dashboard session cookie gets the `Secure` attribute when this
+    /// is `true`. Forwarded from `secure_cookies` in the TOML config.
+    pub secure_cookies: bool,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -93,6 +96,11 @@ pub fn router(state: AppState) -> Router {
         // admin UI. Cookie-gated; non-admins see a bounce page.
         .merge(crate::dashboard::routes())
         .layer(TraceLayer::new_for_http())
+        // 2 MiB body cap. Snippet bodies in practice run to a few KB;
+        // anything past this is either a misuse (someone POSTing a
+        // large file body) or an attempted DoS. Set at the router
+        // level so it covers JSON API + dashboard form posts alike.
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -107,19 +115,26 @@ struct HealthResponse {
     db: bool,
 }
 
-/// Probe endpoint for load balancers / docker healthchecks. Confirms the
-/// HTTP layer is up AND the DB is reachable. Returns 200 either way so
-/// the response is parseable; flip to 503 if you want hard fail-stops.
+/// Probe endpoint for load balancers / docker healthchecks. Returns
+/// 200 OK when the DB ping succeeds, 503 Service Unavailable when it
+/// doesn't, so an orchestrator sees a dead server as unhealthy and
+/// stops routing traffic. Body is JSON either way so a curl-based
+/// check can inspect details.
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1")
         .fetch_one(&state.pool)
         .await
         .map(|n| n == 1)
         .unwrap_or(false);
+    let status = if db_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
     (
-        StatusCode::OK,
+        status,
         Json(HealthResponse {
-            status: "ok",
+            status: if db_ok { "ok" } else { "degraded" },
             version: env!("CARGO_PKG_VERSION"),
             db: db_ok,
         }),

@@ -264,7 +264,7 @@ pub async fn update(
             .fetch_optional(&mut *tx)
             .await?;
     let (current_version, created_at, is_deleted) =
-        current.ok_or_else(|| ApiError::bad_request("not_found", "library snippet not found"))?;
+        current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
 
     if is_deleted != 0 {
         return Err(ApiError::bad_request(
@@ -325,7 +325,7 @@ pub async fn delete(
             .fetch_optional(&mut *tx)
             .await?;
     let (is_deleted,) =
-        current.ok_or_else(|| ApiError::bad_request("not_found", "library snippet not found"))?;
+        current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
     if is_deleted != 0 {
         // Idempotent: deleting an already-deleted library snippet is a
         // no-op success. Lets admin tools retry safely.

@@ -771,14 +771,19 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     body.push_str("<h1>Server stats</h1>");
     body.push_str(
         "<p class=\"muted\">Activity snapshot. Click the &times; on any card to hide it; \
-         hidden cards remember per browser. <a href=\"#\" id=\"stats-reset\">Reset</a> \
-         brings them all back.</p>",
+         use <strong>+ Add card</strong> to show ones you've hidden. Choices remember per browser; \
+         <a href=\"#\" id=\"stats-reset\">Reset to defaults</a>.</p>",
     );
-    // Currency picker. Default from navigator.language via the JS
-    // below; persisted in localStorage so the admin's choice
-    // survives reloads. Anchored at top-right of the stats grid so
-    // it's discoverable next to the money cards.
+    // Toolbar: + Add picker on the left + currency dropdown on the
+    // right. The Add menu is populated by JS from cards currently
+    // hidden so it reflects whichever ones the admin can bring back.
     body.push_str("<div class=\"stats-toolbar\">");
+    body.push_str(
+        "<details class=\"stats-add\" id=\"stats-add\">\
+           <summary>+ Add card</summary>\
+           <div class=\"stats-add-menu\" id=\"stats-add-menu\"></div>\
+         </details>",
+    );
     body.push_str("<label class=\"stats-currency\"><span>Display currency:</span>");
     body.push_str("<select id=\"stats-currency-select\">");
     for c in &codes {
@@ -858,7 +863,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     ));
     body.push_str(&stat_card(
         "chars",
-        "Chars typed for them",
+        "Characters pasted",
         &format_thousands(total_chars_pasted),
         "characters users didn't have to type",
     ));
@@ -1052,39 +1057,101 @@ fn format_thousands(n: i64) -> String {
 /// which is overkill for v1.
 const STATS_PAGE_JS: &str = r#"<script>
 (function () {
-  var KEY = "snipdesk-hidden-stat-cards";
-  function loadHidden() {
-    try { return JSON.parse(localStorage.getItem(KEY) || "[]"); }
-    catch (_e) { return []; }
+  // Switched the storage model from "hidden set" to "shown set".
+  // Default visibility is a curated five (users, admins, hours,
+  // money, adoption); anything else has to be added via the
+  // + Add menu. A first-time admin sees a clean dashboard; power
+  // users can grow it. The shown list lives in localStorage as
+  // a JSON array of card-ids.
+  var KEY = "snipdesk-shown-stat-cards-v2";
+  var DEFAULT_SHOWN = ["users", "admins", "hours", "money", "adoption"];
+
+  function loadShown() {
+    try {
+      var v = localStorage.getItem(KEY);
+      if (v === null) return DEFAULT_SHOWN.slice();
+      var parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : DEFAULT_SHOWN.slice();
+    } catch (_e) { return DEFAULT_SHOWN.slice(); }
   }
-  function saveHidden(list) {
+  function saveShown(list) {
     try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (_e) {}
   }
-  function applyHidden() {
-    var hidden = loadHidden();
+
+  // Scan every rendered card once so we know all available ids
+  // and their human labels. The Add menu uses these.
+  var ALL_CARDS = [];
+  document.querySelectorAll(".stat-card[data-card-id]").forEach(function (el) {
+    var id = el.getAttribute("data-card-id");
+    var labelEl = el.querySelector(".stat-label");
+    ALL_CARDS.push({ id: id, label: labelEl ? labelEl.textContent : id });
+  });
+
+  function applyShown() {
+    var shown = loadShown();
+    var shownSet = {};
+    shown.forEach(function (id) { shownSet[id] = true; });
     document.querySelectorAll(".stat-card[data-card-id]").forEach(function (el) {
-      el.classList.toggle("hidden", hidden.indexOf(el.getAttribute("data-card-id")) !== -1);
+      el.classList.toggle("hidden", !shownSet[el.getAttribute("data-card-id")]);
     });
+    rebuildAddMenu(shownSet);
   }
-  applyHidden();
+
+  function rebuildAddMenu(shownSet) {
+    var menu = document.getElementById("stats-add-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    var any = false;
+    ALL_CARDS.forEach(function (card) {
+      if (shownSet[card.id]) return;
+      any = true;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "stats-add-item";
+      btn.setAttribute("data-add-id", card.id);
+      btn.textContent = "+ " + card.label;
+      menu.appendChild(btn);
+    });
+    if (!any) {
+      var empty = document.createElement("div");
+      empty.className = "stats-add-empty";
+      empty.textContent = "All cards are already showing.";
+      menu.appendChild(empty);
+    }
+  }
+
+  applyShown();
+
   document.body.addEventListener("click", function (e) {
     var closeBtn = e.target.closest && e.target.closest(".stat-close");
     if (closeBtn) {
       var card = closeBtn.closest(".stat-card[data-card-id]");
       if (card) {
         var id = card.getAttribute("data-card-id");
-        var hidden = loadHidden();
-        if (hidden.indexOf(id) === -1) hidden.push(id);
-        saveHidden(hidden);
-        card.classList.add("hidden");
+        var shown = loadShown().filter(function (x) { return x !== id; });
+        saveShown(shown);
+        applyShown();
       }
+      e.preventDefault();
+      return;
+    }
+    var addBtn = e.target.closest && e.target.closest(".stats-add-item");
+    if (addBtn) {
+      var addId = addBtn.getAttribute("data-add-id");
+      var shown = loadShown();
+      if (shown.indexOf(addId) === -1) shown.push(addId);
+      saveShown(shown);
+      // Close the details panel so the menu collapses after a pick.
+      var details = document.getElementById("stats-add");
+      if (details) details.open = false;
+      applyShown();
       e.preventDefault();
       return;
     }
     if (e.target && e.target.id === "stats-reset") {
       e.preventDefault();
-      saveHidden([]);
-      applyHidden();
+      saveShown(DEFAULT_SHOWN.slice());
+      applyShown();
     }
   });
 
@@ -1141,7 +1208,12 @@ const STATS_PAGE_JS: &str = r#"<script>
     // ISO-style "USD 1,234" for everything except the few codes
     // where a leading symbol is the norm. Keeps the column tidy
     // for any code we add later without a new entry per currency.
-    var symbol = ({"USD":"US$","AUD":"A$","CAD":"C$","NZD":"NZ$","HKD":"HK$","SGD":"S$","GBP":"£","EUR":"€","JPY":"¥","CNY":"¥","INR":"₹"})[code];
+    // Symbols expressed as JS unicode escapes so the literal is pure
+    // ASCII in the served HTML. Belt-and-braces against any layer
+    // that might re-encode the response (proxies, browser legacy-
+    // detection); the inline-script byte stream stays ASCII even
+    // though the runtime string content is the right glyph.
+    var symbol = ({"USD":"US$","AUD":"A$","CAD":"C$","NZD":"NZ$","HKD":"HK$","SGD":"S$","GBP":"\u00a3","EUR":"\u20ac","JPY":"\u00a5","CNY":"\u00a5","INR":"\u20b9"})[code];
     moneyEl.textContent = symbol
       ? symbol + formatThousands(converted)
       : code + " " + formatThousands(converted);
@@ -1540,7 +1612,7 @@ pub async fn library_page(
     body.push_str(
         "<aside class=\"library-sidebar\" id=\"library-sidebar\" \
         hx-get=\"/dashboard/library/folders\" \
-        hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null]\" \
+        hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body\" \
         hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">",
     );
     body.push_str(&render_library_folder_tree(&rows, &selected));
@@ -1563,7 +1635,7 @@ pub async fn library_page(
     body.push_str(
         "<div class=\"library-list\" id=\"library-list\" \
               hx-get=\"/dashboard/library/cards\" \
-              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null]\" \
+              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body\" \
               hx-include=\"#library-folder-input\" \
               hx-swap=\"innerHTML\">",
     );
@@ -2103,7 +2175,16 @@ pub async fn library_create(
     .await;
     match res {
         Ok((_, Json(write))) => (
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            // HX-Trigger fires libraryChanged so the folder sidebar
+            // and any other listeners refresh immediately rather
+            // than waiting for the next 10s poll.
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (
+                    header::HeaderName::from_static("hx-trigger"),
+                    "libraryChanged",
+                ),
+            ],
             render_library_card(&LibraryRow {
                 id: write.id,
                 title: title.to_string(),
@@ -2233,7 +2314,13 @@ pub async fn library_update(
                 last_used,
             };
             (
-                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                [
+                    (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                    (
+                        header::HeaderName::from_static("hx-trigger"),
+                        "libraryChanged",
+                    ),
+                ],
                 render_library_card(&row),
             )
                 .into_response()
@@ -2368,7 +2455,18 @@ pub async fn library_move(
     )
     .await
     {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        // Fire libraryChanged so the sidebar's folder list reflects
+        // the move (the source folder's count drops, destination
+        // climbs). 204 with no body is the right shape for the
+        // drag-drop response; the trigger header rides along.
+        Ok(_) => (
+            StatusCode::NO_CONTENT,
+            [(
+                header::HeaderName::from_static("hx-trigger"),
+                "libraryChanged",
+            )],
+        )
+            .into_response(),
         Err(err) => (err.status, err.message).into_response(),
     }
 }
@@ -2380,7 +2478,22 @@ pub async fn library_delete(
 ) -> Response {
     let auth = crate::auth::AuthUser(admin.claims.clone());
     match crate::handlers::library::delete(State(state.clone()), auth, Path(id)).await {
-        Ok(_) => ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], "").into_response(),
+        // HX-Trigger fires a custom event on document.body once the
+        // delete settles. The library sidebar's hx-trigger listens
+        // for it ("libraryChanged from:body"), so the folder list
+        // refreshes immediately instead of waiting for the 10s
+        // poll tick.
+        Ok(_) => (
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (
+                    header::HeaderName::from_static("hx-trigger"),
+                    "libraryChanged",
+                ),
+            ],
+            "",
+        )
+            .into_response(),
         Err(err) => (
             err.status,
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

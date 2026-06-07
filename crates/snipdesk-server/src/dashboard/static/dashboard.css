@@ -210,12 +210,21 @@ textarea {
 
 /* --- Library cards --- */
 
-.library-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
+/* Responsive multi-column grid. 320px min keeps a card readable
+   even when 3+ columns fit on a wide monitor; narrower screens
+   collapse to 1 column automatically. Lets admins see roughly 3x
+   the snippets at once without losing card legibility. */
+.library-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
 .library-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 .library-card .card-head {
   display: flex;
@@ -233,6 +242,11 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12.5px;
+  /* Cap body height so a 200-line snippet doesn't push the rest
+     of the page off-screen. Vertical scroll inside the card keeps
+     the multi-column grid uniform. */
+  max-height: 9.5em;
+  overflow: auto;
 }
 .library-card .card-actions { margin-top: 10px; display: flex; gap: 8px; }
 
@@ -392,13 +406,14 @@ textarea {
 
 /* --- Stats page --- */
 
-/* Top-of-stats-page toolbar holding the currency dropdown. Sits
-   above the grid so the picker is the first thing an admin sees
-   when scanning the money cards. */
+/* Top-of-stats-page toolbar holding the + Add picker and the
+   currency dropdown. Add on the left, currency on the right. */
 .stats-toolbar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   margin: 6px 0 10px;
+  gap: 12px;
 }
 .stats-currency {
   display: inline-flex;
@@ -409,6 +424,58 @@ textarea {
 }
 .stats-currency select {
   font: inherit;
+}
+
+/* + Add card picker. <details>-based so the menu is keyboard
+   accessible without a click handler on the summary. The menu
+   itself absolutely positions so opening it doesn't shove the
+   stats grid down. */
+.stats-add {
+  position: relative;
+}
+.stats-add > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--fg);
+  user-select: none;
+}
+.stats-add > summary::-webkit-details-marker { display: none; }
+.stats-add > summary:hover { border-color: var(--fg-dim); }
+.stats-add-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 220px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+}
+.stats-add-item {
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stats-add-item:hover { background: var(--bg); }
+.stats-add-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 .stats-grid {
   display: grid;

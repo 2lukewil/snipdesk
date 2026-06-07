@@ -438,12 +438,12 @@ fn render_callback_success(client_redirect: &str, snipdesk_token: &str, email: &
   </style>
 </head>
 <body>
-  <div class="card">
+  <div class="card" id="card">
     <h1>Signed in as {email_safe}</h1>
-    <p class="muted">Returning to SnipDesk...</p>
+    <p class="muted" id="status">Returning to SnipDesk...</p>
     <div class="actions">
-      <a class="btn" href="{redirect_safe}">Open SnipDesk</a>
-      <button class="btn secondary" onclick="window.close()">Close this tab</button>
+      <button class="btn" id="openBtn" type="button">Open SnipDesk</button>
+      <button class="btn secondary" id="closeBtn" type="button">Close this tab</button>
     </div>
     <div class="fallback">
       <p class="muted">If SnipDesk didn't open automatically, copy this token and paste it into the desktop app's "Paste sign-in token" field:</p>
@@ -455,9 +455,45 @@ fn render_callback_success(client_redirect: &str, snipdesk_token: &str, email: &
     </div>
   </div>
   <script>
-    // Trigger the deep link immediately. If the OS picks it up,
-    // SnipDesk takes focus and this tab can be closed manually.
-    window.location = "{redirect_safe}";
+    var deepLink = "{redirect_safe}";
+    function fireDeepLink() {{
+      // Setting window.location instead of clicking an anchor: when
+      // the OS picks up the URL scheme, browsers don't navigate the
+      // tab elsewhere, which keeps the close-tab attempt below
+      // operating on the same window context.
+      window.location = deepLink;
+    }}
+    function attemptClose() {{
+      // window.close() only succeeds on tabs the script itself opened
+      // (window.open). For tabs the user navigated to - including
+      // OAuth callbacks - most browsers silently ignore it. We try
+      // anyway, then fall back to blanking the page so the visible
+      // result is "tab can clearly be closed" instead of "tab still
+      // shows my token".
+      try {{ window.close(); }} catch (_e) {{}}
+      setTimeout(function () {{
+        if (!document.hidden && document.body) {{
+          document.getElementById("status").textContent =
+            "All set - you can close this tab.";
+          document.getElementById("openBtn").style.display = "none";
+          document.getElementById("closeBtn").textContent = "Close tab";
+          // Strip the token from the page so it isn't sitting around
+          // in browser history / paste buffer if the user wandered
+          // off and the tab survived.
+          var tknEl = document.getElementById("tkn");
+          if (tknEl) tknEl.value = "(used)";
+        }}
+      }}, 500);
+    }}
+    document.getElementById("openBtn").addEventListener("click", fireDeepLink);
+    document.getElementById("closeBtn").addEventListener("click", attemptClose);
+    // Auto-fire the deep link and try to close shortly after. The OS
+    // handoff lands SnipDesk in the foreground; the close attempt
+    // here at least clears the auth tab in the browsers that allow
+    // it (Chrome since v110 for URL-scheme-triggered windows), and
+    // shows a clear "you can close this" message otherwise.
+    fireDeepLink();
+    setTimeout(attemptClose, 1500);
   </script>
 </body>
 </html>"#,

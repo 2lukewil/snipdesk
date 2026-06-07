@@ -358,6 +358,7 @@ const els = {
   setTeamInterval: document.getElementById("set-team-interval"),
   setTeamFolderName: document.getElementById("set-team-folder-name"),
   setTeamStartup: document.getElementById("set-team-startup"),
+  setShowTeamInline: document.getElementById("set-show-team-inline"),
   teamLastSynced: document.getElementById("team-last-synced"),
   teamSnippetCount: document.getElementById("team-snippet-count"),
   teamErrorRow: document.getElementById("team-error-row"),
@@ -828,12 +829,15 @@ function mergeSorted(personal, team, sort) {
 /// only - mixing the team count in would mislead the rename / delete
 /// folder dialogs that quote it.
 function mergeTeamFoldersIntoTree(personalFolders, teamSnippets) {
-  // Same gate as refresh()'s teamPromise: ignore the cached team
-  // table when the user is signed out, so the folder tree doesn't
-  // surface ghost team folders from a previous session.
+  // Same gates as refresh()'s teamPromise: ignore the cached team
+  // table when the user is signed out OR has the show-inline toggle
+  // off, so the folder tree doesn't surface ghost team folders from
+  // a previous session or shared folders they explicitly hid.
+  const inlineToggle = state.settings?.show_team_snippets_inline !== false;
   if (
     !TEAMS_BUILD ||
     !state.serverStatus?.signed_in ||
+    !inlineToggle ||
     (teamSnippets || []).length === 0
   ) {
     return personalFolders;
@@ -897,7 +901,8 @@ async function refresh() {
       state.allSnippets = allSnippets || [];
     } else {
       // Non-team views: personal + team snippets co-exist when the
-      // user is signed in to a server. Team rows come from a separate
+      // user is signed in to a server AND the show_team_snippets_inline
+      // setting is on (default true). Team rows come from a separate
       // backend command (list_team_snippets has no folder/tag/search
       // arg), so we filter them client-side to match the same selector
       // as personal. Identical folder names collide naturally - both
@@ -909,7 +914,9 @@ async function refresh() {
       // a previous session shouldn't leak into the list of a now-
       // signed-out user. Logout already wipes team_snippets via
       // reset_sync_metadata, but the gate is the belt-and-suspenders.
-      const includeTeam = TEAMS_BUILD && Boolean(state.serverStatus?.signed_in);
+      const inlineToggle = state.settings?.show_team_snippets_inline !== false;
+      const includeTeam =
+        TEAMS_BUILD && Boolean(state.serverStatus?.signed_in) && inlineToggle;
       const teamPromise = includeTeam
         ? invoke("list_team_snippets").catch(() => [])
         : Promise.resolve([]);
@@ -2900,6 +2907,9 @@ function openSettings() {
     els.setTeamInterval.value = s.team_library_sync_interval_mins ?? 60;
     els.setTeamFolderName.value = s.team_library_folder_name ?? "Team Library";
     els.setTeamStartup.checked = s.team_library_sync_on_startup ?? true;
+    if (els.setShowTeamInline) {
+      els.setShowTeamInline.checked = s.show_team_snippets_inline !== false;
+    }
   }
   // Working copy so Cancel actually cancels.
   state.editingRules = deepCloneRules(s.format_rules || DEFAULT_FORMAT_RULES);
@@ -3479,6 +3489,10 @@ function collectSettingsForSave() {
     team_library_sync_on_startup: TEAMS_BUILD
       ? els.setTeamStartup.checked
       : (state.settings?.team_library_sync_on_startup ?? true),
+    show_team_snippets_inline:
+      TEAMS_BUILD && els.setShowTeamInline
+        ? els.setShowTeamInline.checked
+        : (state.settings?.show_team_snippets_inline ?? true),
     // Server URL is managed by login/logout flows (not directly editable
     // from the form), but we round-trip the current value so update_settings
     // doesn't reset it to the default "".

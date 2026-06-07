@@ -77,6 +77,15 @@ pub struct Settings {
     /// Localizable for non-English UIs.
     #[serde(default = "default_team_folder_name")]
     pub team_library_folder_name: String,
+    /// When true, team-library snippets are mixed into the All /
+    /// folder views alongside the user's personal snippets (with a
+    /// cloud glyph). When false, they only appear under the dedicated
+    /// Team Library pseudo-folder. The folder tree still surfaces
+    /// shared folders either way - this knob only controls whether
+    /// the rows appear inline in the regular list. Default on; some
+    /// users prefer their "All snippets" view to stay purely personal.
+    #[serde(default = "default_true")]
+    pub show_team_snippets_inline: bool,
 
     // ---- snipdesk-server (personal snippet sync) ----
     /// Base URL of the snipdesk-server instance the Teams build syncs
@@ -198,6 +207,7 @@ impl Default for Settings {
             team_library_sync_interval_mins: default_team_sync_interval(),
             team_library_sync_on_startup: true,
             team_library_folder_name: default_team_folder_name(),
+            show_team_snippets_inline: true,
             server_url: String::new(),
             format_rules: default_format_rules(),
             backup_retention_days: default_backup_retention_days(),

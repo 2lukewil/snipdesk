@@ -338,14 +338,26 @@ impl Db {
         // know whether the server has heard of this snippet. Rows that
         // were never pushed (server_version IS NULL) can disappear
         // without leaving a tombstone - the server has nothing to delete.
+        //
+        // Two layers of "no value" here, both real:
+        //   - The row doesn't exist at all (delete called twice, race);
+        //     rusqlite signals this via `query_row -> NotFound`, which
+        //     `.optional()` converts to `Ok(None)`.
+        //   - The row exists but server_version is NULL (snippet was
+        //     created locally and never reached the server). rusqlite
+        //     surfaces this via row.get returning a typed-conversion
+        //     error if we ask for `i64`; reading as `Option<i64>`
+        //     gives us `Some(None)` cleanly. `.flatten()` collapses
+        //     the two layers into the single Option the caller wants.
         let server_version: Option<i64> = self
             .conn
             .query_row(
                 "SELECT server_version FROM snippets WHERE id = ?1",
                 [id],
-                |row| row.get(0),
+                |row| row.get::<_, Option<i64>>(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten();
         // Cascade variable_history - no FK enforcement.
         self.conn
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;

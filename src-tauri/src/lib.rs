@@ -55,7 +55,22 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Single-instance MUST be registered before any other plugin per
+    // tauri-plugin-deep-link's docs. With the `deep-link` feature flag
+    // enabled, the plugin's spawn-detection automatically forwards
+    // snipdesk://... args from the second exe launch into the running
+    // instance, so the deep-link plugin's on_open_url fires on the
+    // signed-in session instead of a fresh process. The closure body
+    // is a no-op for that reason - the forwarding happens before we
+    // ever get here. Teams-only because the URL scheme is teams-only.
+    #[cfg(feature = "teams")]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
+        // intentionally empty - deep-link plugin handles the forwarding
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -73,7 +88,9 @@ pub fn run() {
 
     // Teams build only: shell for opening the system browser at OIDC
     // start time, deep-link for receiving the snipdesk://auth?token=...
-    // callback. on_open_url is wired in setup() below.
+    // callback. on_open_url is wired in setup() below. The scheme is
+    // also register_all()'d there so dev-mode (no NSIS installer) and
+    // production installs both work; the call is idempotent.
     #[cfg(feature = "teams")]
     let builder = builder
         .plugin(tauri_plugin_shell::init())
@@ -124,6 +141,18 @@ pub fn run() {
                 // cadences and auth model are different.
                 server_commands::start_server_sync_thread(app.handle().clone());
 
+                // Register the snipdesk:// URL scheme at runtime so
+                // Windows/Linux know what to do when the browser
+                // navigates to snipdesk://auth?token=. The NSIS
+                // installer handles this for production builds; the
+                // explicit register_all() also covers dev (`tauri
+                // dev`) where no installer ran. Idempotent on macOS,
+                // where the Info.plist association is already set.
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register_all() {
+                    eprintln!("deep link scheme registration failed: {e}");
+                }
+
                 // Wire the snipdesk:// URL handler. The OAuth landing
                 // page in the user's browser fires
                 // `snipdesk://auth?token=<jwt>`; the OS hands it to
@@ -133,7 +162,6 @@ pub fn run() {
                 // sync so the UI updates without waiting for the
                 // 5-minute background tick. Errors get logged but
                 // don't crash - a malformed URL just produces a no-op.
-                use tauri_plugin_deep_link::DeepLinkExt;
                 let handle_for_deeplink = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {

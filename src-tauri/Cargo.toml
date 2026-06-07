@@ -46,6 +46,12 @@ tauri-plugin-shell = { version = "2", optional = true }
 # macOS Info.plist, Linux .desktop) so the OAuth landing page can
 # fire the deep link and have it land on the running Tauri app.
 tauri-plugin-deep-link = { version = "2", optional = true }
+# Forwards args from a second exe launch (snipdesk://... opened by the
+# browser) into the already-running instance so the deep-link handler
+# fires on the user's existing session instead of spawning a fresh
+# (signed-out) app. Pairs with deep-link per the plugin's documented
+# pattern.
+tauri-plugin-single-instance = { version = "2", optional = true, features = ["deep-link"] }
 # Parsed by the deep-link handler when reading snipdesk://auth?token=.
 url = { version = "2", optional = true }
 
@@ -60,4 +66,10 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 # `dep:` (Cargo 1.60+) avoids implicitly creating a same-named feature.
-teams = ["dep:snipdesk-teams", "dep:tauri-plugin-shell", "dep:tauri-plugin-deep-link", "dep:url"]
+teams = [
+    "dep:snipdesk-teams",
+    "dep:tauri-plugin-shell",
+    "dep:tauri-plugin-deep-link",
+    "dep:tauri-plugin-single-instance",
+    "dep:url",
+]

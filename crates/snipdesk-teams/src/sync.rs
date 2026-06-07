@@ -22,9 +22,11 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use snipdesk_core::db::Db;
+use snipdesk_core::db::{Db, TelemetryKind};
 
-use crate::api::{self, ApiError, CreateBody, SnippetPayload, UpdateBody};
+use crate::api::{
+    self, ApiError, CreateBody, SnippetPayload, UpdateBody, UsageReport, UsageSnippetDelta,
+};
 
 /// Aggregate result of one `tick()` call. Surfaced via the
 /// `server_status` IPC command so the settings UI can show "last sync N
@@ -304,6 +306,65 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
             // and keep the personal-sync results.
             eprintln!("library pull failed: {e}");
             out.errors += 1;
+        }
+    }
+
+    // 5. Flush paste telemetry. Snapshot the pending counters, post,
+    //    and on success subtract the snapshot amounts from the live
+    //    rows. Any user activity that happened between snapshot and
+    //    commit accumulates and survives.
+    //
+    //    Strictly best-effort: a network blip here costs one batch of
+    //    metric data and nothing more. We log + count an error and
+    //    leave the snapshot on disk, where the next tick will retry.
+    let snapshot = {
+        let db = db
+            .lock()
+            .map_err(|e| ApiError::Network(format!("db poisoned: {e}")))?;
+        db.snapshot_telemetry()
+            .map_err(|e| ApiError::Network(format!("telemetry snapshot: {e}")))?
+    };
+    if !snapshot.is_empty() {
+        let mut chars_total: i64 = 0;
+        let mut snippets_total: i64 = 0;
+        let mut personal: Vec<UsageSnippetDelta> = Vec::new();
+        let mut library: Vec<UsageSnippetDelta> = Vec::new();
+        for s in &snapshot {
+            chars_total += s.chars;
+            snippets_total += s.delta;
+            let bucket = match s.kind {
+                TelemetryKind::Personal => &mut personal,
+                TelemetryKind::Library => &mut library,
+            };
+            bucket.push(UsageSnippetDelta {
+                id: &s.snippet_id,
+                delta: s.delta,
+                last_used: s.last_used,
+            });
+        }
+        let body = UsageReport {
+            chars_pasted_delta: chars_total,
+            snippets_pasted_delta: snippets_total,
+            personal: &personal,
+            library: &library,
+        };
+        match api::report_usage(server_url, token, &body) {
+            Ok(()) => {
+                if let Ok(db) = db.lock() {
+                    if let Err(e) = db.commit_telemetry_flush(&snapshot) {
+                        eprintln!("telemetry commit failed: {e}");
+                        out.errors += 1;
+                    }
+                }
+            }
+            Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
+            Err(ApiError::AccountInactive(msg)) => {
+                return Err(ApiError::AccountInactive(msg));
+            }
+            Err(e) => {
+                eprintln!("telemetry report failed: {e}");
+                out.errors += 1;
+            }
         }
     }
 

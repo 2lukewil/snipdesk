@@ -54,6 +54,19 @@ pub struct UserDto {
     pub display_name: String,
     pub role: String,
     pub created_at: i64,
+    /// Per-user words-per-minute override. None means "use the
+    /// server's [stats] default" - the desktop Settings UI shows
+    /// the default in a placeholder when the override is None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wpm: Option<i64>,
+    /// Per-user hourly wage override in `currency`. None means "use
+    /// the server's [stats] default".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hourly_wage: Option<f64>,
+    /// ISO currency code the wage is expressed in. None means "use
+    /// the server's [stats] default".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +151,13 @@ pub async fn signup(
         display_name,
         role: role.to_string(),
         created_at: now,
+        // Fresh signup: per-user wpm/wage/currency overrides start
+        // unset; the dashboard falls back to the [stats] defaults
+        // until the user configures their own numbers via PATCH
+        // /api/me from the desktop settings panel.
+        wpm: None,
+        hourly_wage: None,
+        currency: None,
     };
     Ok((StatusCode::CREATED, Json(AuthResponse { token, user })))
 }
@@ -215,12 +235,24 @@ pub async fn login(
         .await?;
 
     let token = issue_token(&row.id, &row.role, &state.jwt_secret)?;
+    // Re-read the wage knobs in a tiny follow-up SELECT - LoginRow
+    // intentionally doesn't carry them (keeps the password-hash row
+    // narrow). Two queries on the happy path is fine for login,
+    // which happens once per token lifetime.
+    let extras: (Option<i64>, Option<f64>, Option<String>) =
+        sqlx::query_as("SELECT wpm, hourly_wage, currency FROM users WHERE id = ?")
+            .bind(&row.id)
+            .fetch_one(&state.pool)
+            .await?;
     let user = UserDto {
         id: row.id,
         email: row.email,
         display_name: row.display_name,
         role: row.role,
         created_at: row.created_at,
+        wpm: extras.0,
+        hourly_wage: extras.1,
+        currency: extras.2,
     };
     Ok(Json(AuthResponse { token, user }))
 }
@@ -249,15 +281,17 @@ pub async fn me(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<MeResponse>, ApiError> {
-    let user: UserDto =
-        sqlx::query_as("SELECT id, email, display_name, role, created_at FROM users WHERE id = ?")
-            .bind(&auth.0.sub)
-            .fetch_optional(&state.pool)
-            .await?
-            .ok_or_else(|| {
-                // Token validates, but user was deleted between issue and now.
-                ApiError::unauthorized("user_gone", "your account no longer exists")
-            })?;
+    let user: UserDto = sqlx::query_as(
+        "SELECT id, email, display_name, role, created_at, wpm, hourly_wage, currency \
+         FROM users WHERE id = ?",
+    )
+    .bind(&auth.0.sub)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| {
+        // Token validates, but user was deleted between issue and now.
+        ApiError::unauthorized("user_gone", "your account no longer exists")
+    })?;
 
     // Auto-rotation: if the token presented to us is nearing expiry,
     // mint a fresh one so the client can swap. The new token carries
@@ -277,6 +311,119 @@ pub async fn me(
         user,
         refreshed_token,
     }))
+}
+
+/// Body of `PATCH /api/me`. Every field is optional; a `Some(None)`
+/// value (`null` over the wire) clears the override and reverts that
+/// dimension to the server-wide [stats] default. A missing field
+/// leaves the column untouched.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMeBody {
+    /// Words-per-minute. Sanity bounds: 1..=500. Outside that range
+    /// we 400 rather than silently clamping; the desktop UI should
+    /// catch this before sending.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub wpm: Option<Option<i64>>,
+    /// Hourly wage in `currency`. Must be > 0 when present.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub hourly_wage: Option<Option<f64>>,
+    /// ISO currency code. Validated against the server's aud_rates
+    /// table; an unknown code 400s so users can't accidentally pin
+    /// themselves to a 1:1 fallback.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub currency: Option<Option<String>>,
+}
+
+/// Helper to deserialize "field is absent" vs "field is present as
+/// null". The default serde flavour collapses both to `None`; we
+/// need to distinguish "leave alone" from "clear to default".
+fn deserialize_some<'de, T, D>(d: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(d).map(Some)
+}
+
+/// PATCH /api/me. Updates the per-user wpm/hourly_wage/currency
+/// overrides used by the admin dashboard's hours/money saved
+/// estimates. Returns the refreshed user row so the desktop can
+/// confirm the new state without a follow-up GET.
+pub async fn update_me(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(body): Json<UpdateMeBody>,
+) -> Result<Json<UserDto>, ApiError> {
+    // Validate first so we never half-update on a bogus payload.
+    if let Some(Some(v)) = body.wpm {
+        if !(1..=500).contains(&v) {
+            return Err(ApiError::bad_request(
+                "invalid_wpm",
+                "wpm must be between 1 and 500",
+            ));
+        }
+    }
+    if let Some(Some(v)) = body.hourly_wage {
+        if !v.is_finite() || v <= 0.0 || v > 100_000.0 {
+            return Err(ApiError::bad_request(
+                "invalid_wage",
+                "hourly_wage must be positive and finite",
+            ));
+        }
+    }
+    if let Some(Some(ref c)) = body.currency {
+        // Accept any ISO-ish 3-letter code that we know how to
+        // convert. The static aud_rates table is the source of
+        // truth; live-FX (when wired up) just refreshes the same
+        // map in place.
+        if !state.stats.aud_rates.contains_key(c) {
+            return Err(ApiError::bad_request(
+                "unknown_currency",
+                format!("currency '{c}' is not in the server's aud_rates table"),
+            ));
+        }
+    }
+
+    // Build the UPDATE dynamically only for fields the caller
+    // actually sent. SQLite doesn't have a native "SET x = COALESCE(?,
+    // x)" pattern that would let us collapse this to one statement
+    // without losing the "set to NULL" semantics, so we string
+    // together a small SET clause.
+    let mut sets: Vec<&str> = Vec::new();
+    if body.wpm.is_some() {
+        sets.push("wpm = ?");
+    }
+    if body.hourly_wage.is_some() {
+        sets.push("hourly_wage = ?");
+    }
+    if body.currency.is_some() {
+        sets.push("currency = ?");
+    }
+
+    if !sets.is_empty() {
+        let sql = format!("UPDATE users SET {} WHERE id = ?", sets.join(", "));
+        let mut q = sqlx::query(&sql);
+        if let Some(v) = body.wpm {
+            q = q.bind(v);
+        }
+        if let Some(v) = body.hourly_wage {
+            q = q.bind(v);
+        }
+        if let Some(v) = body.currency {
+            q = q.bind(v);
+        }
+        q = q.bind(&auth.0.sub);
+        q.execute(&state.pool).await?;
+    }
+
+    let user: UserDto = sqlx::query_as(
+        "SELECT id, email, display_name, role, created_at, wpm, hourly_wage, currency \
+         FROM users WHERE id = ?",
+    )
+    .bind(&auth.0.sub)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(user))
 }
 
 /// Permissive email check - RFC 5322 is too forgiving for a useful

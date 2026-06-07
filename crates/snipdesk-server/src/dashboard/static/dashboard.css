@@ -130,6 +130,17 @@ table.data .col-actions { text-align: right; white-space: nowrap; }
 .pill.role-admin { background: var(--pill-admin-bg); color: var(--pill-admin-fg); }
 .pill.role-member { background: var(--pill-member-bg); color: var(--pill-member-fg); }
 .pill.disabled { background: var(--warn-bg); color: var(--warn-fg); }
+/* Usage pill on library cards. Lower-key than role pills - the
+   "used N times" is a metric, not a status, so we drop the
+   all-caps + tracking and use a softer surface. */
+.pill.usage {
+  background: var(--bg);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
 
 /* --- Buttons --- */
 
@@ -164,7 +175,13 @@ input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent);
 }
-textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+textarea {
+  min-height: 120px;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
 
 /* --- Login --- */
 
@@ -229,7 +246,10 @@ textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, 
   margin-bottom: 16px;
 }
 .lib-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.lib-form .actions { display: flex; gap: 8px; margin-top: 10px; }
+/* Same .actions chrome regardless of which form variant; the edit
+   form has class .lib-edit-form, not .lib-form, so we list both. */
+.lib-form .actions,
+.lib-edit-form .actions { display: flex; gap: 8px; margin-top: 10px; }
 .lib-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-dim); }
 /* `role="group"` div for the Body field. Avoids `<label>` so the
    first labelable descendant (Bold button) isn't picked up as the
@@ -372,6 +392,24 @@ textarea { min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, 
 
 /* --- Stats page --- */
 
+/* Top-of-stats-page toolbar holding the currency dropdown. Sits
+   above the grid so the picker is the first thing an admin sees
+   when scanning the money cards. */
+.stats-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 0 10px;
+}
+.stats-currency {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.stats-currency select {
+  font: inherit;
+}
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

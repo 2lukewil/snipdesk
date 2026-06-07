@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod dashboard;
 pub mod db;
 pub mod error;
+pub mod fx;
 pub mod handlers;
 pub mod http;
 pub mod purge;

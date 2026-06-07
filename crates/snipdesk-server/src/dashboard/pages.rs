@@ -393,6 +393,42 @@ pub async fn user_detail_page(
     .await
     .unwrap_or(0);
 
+    // Paste telemetry for this specific user. Same per-user wpm/wage
+    // override logic as the stats page, scoped to one row.
+    let telemetry: (i64, i64, Option<i64>, Option<f64>, Option<String>) = sqlx::query_as(
+        "SELECT chars_pasted, snippets_pasted, wpm, hourly_wage, currency \
+         FROM users WHERE id = ?1",
+    )
+    .bind(&row.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or((0, 0, None, None, None));
+    let (u_chars, u_pastes, u_wpm, u_wage, u_curr) = telemetry;
+    let default_wpm = state.stats.wpm.max(1) as f64;
+    let default_wage = state.stats.hourly_wage;
+    let default_currency = &state.stats.currency;
+    let wpm = u_wpm.map(|v| (v as f64).max(1.0)).unwrap_or(default_wpm);
+    let wage = u_wage.unwrap_or(default_wage);
+    let curr_used = u_curr.clone().unwrap_or_else(|| default_currency.clone());
+    let rate = aud_rate_live(&state, &curr_used).await;
+    let u_hours = u_chars as f64 / (wpm * 5.0 * 60.0);
+    let u_money_aud = u_hours * wage * rate;
+
+    // Top 3 library snippets this user reaches for. JOIN'd to
+    // library_snippets so we have a title to show; tombstoned
+    // library rows are excluded.
+    let u_top_lib: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT s.title, lu.usage_count \
+         FROM library_usage lu \
+         JOIN library_snippets s ON s.id = lu.snippet_id AND s.is_deleted = 0 \
+         WHERE lu.user_id = ?1 \
+         ORDER BY lu.usage_count DESC LIMIT 3",
+    )
+    .bind(&row.id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
     let me_id = admin.user_id().to_string();
     let view = crate::handlers::admin::AdminUserView {
         id: row.id.clone(),
@@ -437,6 +473,37 @@ pub async fn user_detail_page(
         "Tombstoned (pending purge)",
         &tombstoned.to_string(),
     ));
+    // Telemetry block. Only shown for users who've actually
+    // reported something - otherwise we'd be adding seven "0" rows
+    // to every freshly-signed-up user's page, which is noise.
+    if u_chars > 0 || u_pastes > 0 {
+        body.push_str(&detail_pair("Pastes", &format_thousands(u_pastes)));
+        body.push_str(&detail_pair("Characters", &format_thousands(u_chars)));
+        body.push_str(&detail_pair("Hours saved", &format!("{u_hours:.1}")));
+        body.push_str(&detail_pair(
+            "Money saved",
+            &format!(
+                "A${money} <span class=\"muted small\">({wpm:.0} wpm \u{00b7} {wage:.2} {curr}/hr)</span>",
+                money = format_thousands(u_money_aud as i64),
+                wpm = wpm,
+                wage = wage,
+                curr = escape_html(&curr_used),
+            ),
+        ));
+        if !u_top_lib.is_empty() {
+            let list: Vec<String> = u_top_lib
+                .iter()
+                .map(|(t, n)| {
+                    format!(
+                        "{}&nbsp;<span class=\"muted small\">x{}</span>",
+                        escape_html(t),
+                        n
+                    )
+                })
+                .collect();
+            body.push_str(&detail_pair("Favourite library", &list.join("; ")));
+        }
+    }
     body.push_str("</div>");
 
     // Action panel. Hidden for the current user (server-side gates
@@ -578,59 +645,127 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     .await
     .unwrap_or_default();
 
-    // Sum of plaintext sizes across every live personal + library
-    // snippet, used for the time/money-saved estimates. AES-GCM
-    // doesn't pad, so plaintext_len == ciphertext_len - 16 (the
-    // auth tag). Library bodies are stored plaintext so their
-    // LENGTH(body) is the literal answer.
+    // Real telemetry. Aggregate every user's reported chars_pasted
+    // and compute hours/money saved using each user's own wpm/wage
+    // when they've set personal numbers, falling back to the
+    // [stats] block in the server config otherwise. Until the
+    // desktop client starts reporting (or for users who have it
+    // disabled), the totals stay at zero - that's an honest
+    // "no data yet" signal, not a regression.
     //
-    // The estimate sums plaintext characters across the whole
-    // inventory ONCE - we don't multiply by usage_count because
-    // the server doesn't see per-snippet use counts (those live
-    // on the desktop). The dashboard label calls this "estimated
-    // characters in your library" rather than "characters typed
-    // by users" to keep the framing honest. A v1.1 upgrade would
-    // sync the client's usage_count to the server and the
-    // estimate would become "actual hours saved".
-    let total_personal_chars: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(LENGTH(payload_ciphertext) - 16), 0) \
-         FROM personal_snippets WHERE is_deleted = 0",
+    // We pull every user row and do the per-user maths in Rust
+    // because the FX table lives in `state.stats.aud_rates`, not in
+    // SQLite. The query is COUNT(*)-bounded and runs once per page
+    // load - fine even at thousands of users.
+    let default_wpm = state.stats.wpm.max(1) as f64;
+    let default_wage = state.stats.hourly_wage;
+    let default_currency = state.stats.currency.clone();
+    let default_rate = aud_rate_live(&state, &default_currency).await;
+
+    let user_rows: Vec<UserStatsRow> =
+        sqlx::query_as("SELECT chars_pasted, wpm, hourly_wage, currency FROM users")
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+
+    let mut total_chars_pasted: i64 = 0;
+    let mut hours_saved = 0.0_f64;
+    let mut money_saved_aud = 0.0_f64;
+    for (chars, u_wpm, u_wage, u_curr) in &user_rows {
+        if *chars <= 0 {
+            continue;
+        }
+        total_chars_pasted += chars;
+        let wpm = u_wpm.map(|v| (v as f64).max(1.0)).unwrap_or(default_wpm);
+        let wage = u_wage.unwrap_or(default_wage);
+        let rate = match u_curr.as_deref() {
+            Some(c) => aud_rate_live(&state, c).await,
+            None => default_rate,
+        };
+        let h = *chars as f64 / (wpm * 5.0 * 60.0);
+        hours_saved += h;
+        money_saved_aud += h * wage * rate;
+    }
+    let total_snippets_pasted: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(snippets_pasted), 0) FROM users")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
+    // Top contributors by paste activity. LIMIT 5 - the card slot
+    // is narrow and the long tail isn't useful here.
+    let top_users: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT display_name, chars_pasted FROM users \
+         WHERE chars_pasted > 0 \
+         ORDER BY chars_pasted DESC LIMIT 5",
     )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Top library snippets by team-wide paste count. JOINs the
+    // aggregate counter to the live row so we have the title to
+    // display. ORDER BY total DESC, LIMIT 5.
+    let top_library: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT s.title, COALESCE(SUM(u.usage_count), 0) AS total \
+         FROM library_snippets s \
+         LEFT JOIN library_usage u ON u.snippet_id = s.id \
+         WHERE s.is_deleted = 0 \
+         GROUP BY s.id \
+         HAVING total > 0 \
+         ORDER BY total DESC LIMIT 5",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Activity windows for the library: how many new snippets in
+    // the last 7 / 30 days. Helps spot a stagnant library vs an
+    // actively-growing one.
+    let now = chrono::Utc::now().timestamp();
+    let cutoff_7d = now - 7 * 86_400;
+    let library_new_7d: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0 AND created_at >= ?1",
+    )
+    .bind(cutoff_7d)
     .fetch_one(&state.pool)
     .await
     .unwrap_or(0);
-    let total_library_chars: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(LENGTH(body)), 0) \
-         FROM library_snippets WHERE is_deleted = 0",
+    let library_new_30d: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0 AND created_at >= ?1",
     )
+    .bind(cutoff_30d)
     .fetch_one(&state.pool)
     .await
     .unwrap_or(0);
-    let total_chars = (total_personal_chars + total_library_chars).max(0) as f64;
 
-    // Time saved: chars / (wpm * 5 chars/word) = hours. The 5-char
-    // word is the standard typing-speed constant.
-    let wpm = state.stats.wpm.max(1) as f64;
-    let hours_saved = total_chars / (wpm * 5.0 * 60.0);
+    // Adoption: percentage of users who've actually pasted at
+    // least once. Cheap signal for "is rollout sticking".
+    let adopters: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE chars_pasted > 0")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+    let adoption_pct = if counts.total_users > 0 {
+        (adopters as f64 / counts.total_users as f64 * 100.0).round() as i64
+    } else {
+        0
+    };
 
-    // Money saved: hours * hourly_wage, normalised to AUD via the
-    // configured rate table. If the configured currency isn't in
-    // the table we treat the wage as already-AUD and log a warning
-    // so the operator can fix it.
-    let rate_aud = state
-        .stats
-        .aud_rates
-        .get(&state.stats.currency)
-        .copied()
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                "stats.currency '{}' not in aud_rates table; treating wage as AUD",
-                state.stats.currency
-            );
-            1.0
-        });
-    let wage_aud = state.stats.hourly_wage * rate_aud;
-    let money_saved_aud = hours_saved * wage_aud;
+    // Build the rate table the dashboard JS uses to reweight the
+    // money card into the admin's chosen display currency. Live
+    // values overlay the static table - same precedence the math
+    // above used. Sorted by code so the dropdown is alphabetical
+    // and stable across page renders.
+    let mut display_rates: std::collections::BTreeMap<String, f64> =
+        state.stats.aud_rates.clone().into_iter().collect();
+    for (k, v) in state.fx_cache.rates.read().await.iter() {
+        display_rates.insert(k.clone(), *v);
+    }
+    // AUD is the canonical base - always 1.0 - so we don't depend
+    // on the provider returning it.
+    display_rates.insert("AUD".to_string(), 1.0);
+    let rates_json = serde_json::to_string(&display_rates).unwrap_or_else(|_| "{}".to_string());
+    let codes: Vec<&str> = display_rates.keys().map(|s| s.as_str()).collect();
 
     let mut body = String::new();
     body.push_str("<h1>Server stats</h1>");
@@ -639,6 +774,20 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
          hidden cards remember per browser. <a href=\"#\" id=\"stats-reset\">Reset</a> \
          brings them all back.</p>",
     );
+    // Currency picker. Default from navigator.language via the JS
+    // below; persisted in localStorage so the admin's choice
+    // survives reloads. Anchored at top-right of the stats grid so
+    // it's discoverable next to the money cards.
+    body.push_str("<div class=\"stats-toolbar\">");
+    body.push_str("<label class=\"stats-currency\"><span>Display currency:</span>");
+    body.push_str("<select id=\"stats-currency-select\">");
+    for c in &codes {
+        body.push_str(&format!(
+            "<option value=\"{c}\">{c}</option>",
+            c = escape_html(c)
+        ));
+    }
+    body.push_str("</select></label></div>");
 
     body.push_str("<div class=\"stats-grid\" id=\"stats-grid\">");
     body.push_str(&stat_card(
@@ -684,27 +833,100 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         "shared with every member",
     ));
     body.push_str(&stat_card(
-        "inventory",
-        "Inventory size",
-        &format_thousands(total_chars as i64),
-        "plaintext characters across all live snippets",
+        "library_new_7d",
+        "Library added (7d)",
+        &library_new_7d.to_string(),
+        "new shared snippets in the last week",
     ));
-    let wpm = state.stats.wpm;
-    let wage = state.stats.hourly_wage;
+    body.push_str(&stat_card(
+        "library_new_30d",
+        "Library added (30d)",
+        &library_new_30d.to_string(),
+        "new shared snippets in the last 30 days",
+    ));
+    body.push_str(&stat_card(
+        "adoption",
+        "Adoption",
+        &format!("{adoption_pct}%"),
+        "users who've pasted at least once",
+    ));
+    body.push_str(&stat_card(
+        "pastes",
+        "Total pastes",
+        &format_thousands(total_snippets_pasted),
+        "snippet expansions across the team",
+    ));
+    body.push_str(&stat_card(
+        "chars",
+        "Chars typed for them",
+        &format_thousands(total_chars_pasted),
+        "characters users didn't have to type",
+    ));
     let curr = &state.stats.currency;
     body.push_str(&stat_card(
         "hours",
-        "Hours saved (est.)",
+        "Hours saved",
         &format!("{hours_saved:.1}"),
-        &format!("if a {wpm} wpm typist had to write every snippet by hand"),
+        "computed from each user's wpm + paste totals",
     ));
-    body.push_str(&stat_card(
-        "money",
-        "Money saved (est.)",
-        &format!("A${money_saved_aud:.0}"),
-        &format!("{hours_saved:.1} hours at {wage:.2} {curr}/hr, normalised to AUD"),
+    // Money card carries a data-aud attribute so the dropdown JS
+    // can reweight the displayed value into any other code without
+    // a server round-trip. The hint references the default
+    // currency so operators understand the "raw" value before
+    // they pick a different display code.
+    body.push_str(&format!(
+        "<div class=\"stat-card stat-card-money\" data-card-id=\"money\" data-aud=\"{aud}\">\
+           <button type=\"button\" class=\"stat-close\" aria-label=\"Hide card\">&times;</button>\
+           <div class=\"stat-value\" id=\"stat-money-value\">A${val}</div>\
+           <div class=\"stat-label\">Money saved</div>\
+           <div class=\"stat-hint\">each user's wage applied to their own pastes, displayed in {curr_safe} (default {default_safe})</div>\
+         </div>",
+        aud = money_saved_aud,
+        val = format_thousands(money_saved_aud as i64),
+        curr_safe = "<span id=\"stat-money-curr\">AUD</span>",
+        default_safe = escape_html(curr),
     ));
     body.push_str("</div>");
+
+    // Two narrow lists: top contributors + top library snippets.
+    // Sized like the recent-grid so they sit on the same row.
+    if !top_users.is_empty() || !top_library.is_empty() {
+        body.push_str("<div class=\"recent-grid\">");
+        body.push_str("<div><h2>Top contributors</h2>");
+        if top_users.is_empty() {
+            body.push_str("<p class=\"muted\">No paste activity reported yet.</p>");
+        } else {
+            body.push_str("<ul class=\"recent-list\">");
+            for (name, chars) in &top_users {
+                body.push_str(&format!(
+                    "<li><strong>{name}</strong><br />\
+                     <span class=\"muted small\">{chars} chars pasted</span></li>",
+                    name = escape_html(name),
+                    chars = format_thousands(*chars),
+                ));
+            }
+            body.push_str("</ul>");
+        }
+        body.push_str("</div>");
+
+        body.push_str("<div><h2>Top library snippets</h2>");
+        if top_library.is_empty() {
+            body.push_str("<p class=\"muted\">No library paste activity reported yet.</p>");
+        } else {
+            body.push_str("<ul class=\"recent-list\">");
+            for (title, total) in &top_library {
+                body.push_str(&format!(
+                    "<li><strong>{title}</strong><br />\
+                     <span class=\"muted small\">used {total} times across team</span></li>",
+                    title = escape_html(title),
+                    total = format_thousands(*total),
+                ));
+            }
+            body.push_str("</ul>");
+        }
+        body.push_str("</div>");
+        body.push_str("</div>");
+    }
 
     body.push_str("<div class=\"recent-grid\">");
     body.push_str("<div><h2>Recent signups</h2>");
@@ -750,6 +972,13 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     }
     body.push_str("</div>");
     body.push_str("</div>");
+    // Embed the rate table so the dropdown's JS can convert
+    // money_saved_aud into any code locally. Kept inline rather
+    // than on a separate endpoint so the dashboard stays
+    // self-contained.
+    body.push_str(&format!(
+        "<script id=\"stats-rates\" type=\"application/json\">{rates_json}</script>"
+    ));
     body.push_str(STATS_PAGE_JS);
 
     render_page(&state, &session, "Stats", NavTab::Stats, &body)
@@ -777,9 +1006,28 @@ fn stat_card(id: &str, label: &str, value: &str, hint: &str) -> String {
     )
 }
 
+/// Per-user row used by the stats-page money/time aggregator.
+/// `(chars_pasted, wpm_override, wage_override, currency_override)`.
+/// `query_as` decodes tuple-of-Option directly from SELECT columns
+/// in order, so the type is the schema.
+type UserStatsRow = (i64, Option<i64>, Option<f64>, Option<String>);
+
+/// Live-first AUD multiplier lookup. Consults the FX cache (populated
+/// by `crate::fx::spawn_refresher` when `[fx]` is configured),
+/// falling through to the static `stats.aud_rates` table for codes
+/// not in the live feed, and finally to 1.0 (with a warn log) for
+/// codes that nobody knows. Async because the cache lives behind a
+/// `tokio::sync::RwLock`; the read lock is uncontended in steady
+/// state (the refresher only takes the write lock when the periodic
+/// fetch succeeds).
+async fn aud_rate_live(state: &AppState, code: &str) -> f64 {
+    crate::fx::rate_for(&state.fx_cache, &state.stats.aud_rates, code).await
+}
+
 /// Format an i64 with thousands separators. SQLite doesn't have
 /// FORMAT() and pulling in a numeric-formatting crate for one call
-/// would be silly.
+/// would be silly. Used by stats cards that display large counts
+/// (paste totals, library size, etc.).
 fn format_thousands(n: i64) -> String {
     let s = n.abs().to_string();
     let bytes = s.as_bytes();
@@ -839,6 +1087,75 @@ const STATS_PAGE_JS: &str = r#"<script>
       applyHidden();
     }
   });
+
+  // ---- Currency dropdown ----
+  // The Money saved card carries its raw value as data-aud="N". The
+  // rate table is embedded as JSON in a sibling <script>; we read
+  // it once at startup. Picking a code reweights the displayed
+  // value: units_in_code = aud / aud_rates[code].
+  var ratesEl = document.getElementById("stats-rates");
+  var rates = {};
+  try { rates = JSON.parse(ratesEl ? ratesEl.textContent : "{}"); }
+  catch (_e) { rates = {}; }
+  var sel = document.getElementById("stats-currency-select");
+  var moneyEl = document.getElementById("stat-money-value");
+  var moneyCurr = document.getElementById("stat-money-curr");
+  var moneyCard = moneyEl ? moneyEl.closest(".stat-card") : null;
+  var PREF_KEY = "snipdesk-stats-currency";
+
+  function chosenCurrency() {
+    var saved = null;
+    try { saved = localStorage.getItem(PREF_KEY); } catch (_e) {}
+    if (saved && rates[saved]) return saved;
+    // First-time default: best-effort from navigator.language.
+    // "en-US" -> USD, "de-DE" -> EUR, "ja-JP" -> JPY, etc.
+    var localeMap = {
+      "AU": "AUD", "US": "USD", "GB": "GBP", "DE": "EUR", "FR": "EUR",
+      "IT": "EUR", "ES": "EUR", "NL": "EUR", "AT": "EUR", "BE": "EUR",
+      "IE": "EUR", "PT": "EUR", "FI": "EUR", "GR": "EUR", "JP": "JPY",
+      "CA": "CAD", "NZ": "NZD", "CH": "CHF", "IN": "INR", "SG": "SGD",
+      "HK": "HKD", "ZA": "ZAR", "BR": "BRL", "MX": "MXN", "KR": "KRW",
+      "SE": "SEK", "NO": "NOK", "DK": "DKK", "PL": "PLN", "CZ": "CZK",
+      "TR": "TRY", "AE": "AED", "CN": "CNY", "TH": "THB", "ID": "IDR",
+      "PH": "PHP",
+    };
+    var lang = (navigator.language || "").toUpperCase();
+    var parts = lang.split(/[-_]/);
+    var region = parts.length > 1 ? parts[1] : "";
+    if (region && localeMap[region] && rates[localeMap[region]]) {
+      return localeMap[region];
+    }
+    return "AUD";
+  }
+
+  function formatThousands(n) {
+    return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  }
+
+  function updateMoneyCard(code) {
+    if (!moneyEl || !moneyCard) return;
+    var aud = parseFloat(moneyCard.getAttribute("data-aud") || "0");
+    var rate = rates[code];
+    if (!rate || !isFinite(rate) || rate <= 0) return;
+    var converted = aud / rate;
+    // ISO-style "USD 1,234" for everything except the few codes
+    // where a leading symbol is the norm. Keeps the column tidy
+    // for any code we add later without a new entry per currency.
+    var symbol = ({"USD":"US$","AUD":"A$","CAD":"C$","NZD":"NZ$","HKD":"HK$","SGD":"S$","GBP":"£","EUR":"€","JPY":"¥","CNY":"¥","INR":"₹"})[code];
+    moneyEl.textContent = symbol
+      ? symbol + formatThousands(converted)
+      : code + " " + formatThousands(converted);
+    if (moneyCurr) moneyCurr.textContent = code;
+  }
+
+  if (sel) {
+    sel.value = chosenCurrency();
+    updateMoneyCard(sel.value);
+    sel.addEventListener("change", function () {
+      try { localStorage.setItem(PREF_KEY, sel.value); } catch (_e) {}
+      updateMoneyCard(sel.value);
+    });
+  }
 })();
 </script>"#;
 
@@ -1481,12 +1798,27 @@ fn render_library_card(r: &LibraryRow) -> String {
         Some(f) if !f.is_empty() => format!(" | <span class=\"muted\">{}</span>", escape_html(f)),
         _ => String::new(),
     };
+    // Usage pill: only shown for snippets that have actually been
+    // pasted. A "0 uses" pill on every brand-new snippet would be
+    // noisy and undermine the signal of the metric.
+    let usage_pill = if r.use_count > 0 {
+        let when = r
+            .last_used
+            .map(|t| format!(", last {when}", when = format_relative(t)))
+            .unwrap_or_default();
+        format!(
+            " <span class=\"pill usage\" title=\"team-wide paste count\">used {count}{when}</span>",
+            count = format_thousands(r.use_count),
+        )
+    } else {
+        String::new()
+    };
     format!(
         "<div class=\"library-card\" id=\"lib-{id_attr}\" \
              draggable=\"true\" data-snippet-id=\"{id_attr}\">\
            <div class=\"card-head\">\
              <span class=\"drag-handle\" title=\"Drag to move\">::</span>\
-             <span class=\"title\">{title}</span>{folder}{tags}\
+             <span class=\"title\">{title}</span>{folder}{tags}{usage_pill}\
              <span class=\"meta\">v{ver} | updated {when}</span>\
            </div>\
            <pre class=\"body\">{body}</pre>\
@@ -1508,6 +1840,7 @@ fn render_library_card(r: &LibraryRow) -> String {
         when = format_relative(r.updated_at),
         tags = tags_html,
         folder = folder,
+        usage_pill = usage_pill,
     )
 }
 
@@ -1565,11 +1898,21 @@ fn decode_tags_for_form(stored: &str) -> String {
 }
 
 async fn load_library(state: &AppState) -> Result<Vec<LibraryRow>, ()> {
+    // LEFT JOIN to library_usage so we can show per-snippet paste
+    // counts on each card. Aggregated across all users -
+    // breaking it down per-user would explode the row count and
+    // isn't useful at the team-library list level. The query is
+    // O(n_snippets) with a covering index on (snippet_id) - cheap
+    // even at thousands of snippets and millions of usage rows.
     sqlx::query_as::<_, LibraryRow>(
-        "SELECT id, title, body, tags, folder_path, version, updated_at \
-         FROM library_snippets \
-         WHERE is_deleted = 0 \
-         ORDER BY updated_at DESC",
+        "SELECT s.id, s.title, s.body, s.tags, s.folder_path, s.version, s.updated_at, \
+                COALESCE(SUM(u.usage_count), 0) AS use_count, \
+                MAX(u.last_used) AS last_used \
+         FROM library_snippets s \
+         LEFT JOIN library_usage u ON u.snippet_id = s.id \
+         WHERE s.is_deleted = 0 \
+         GROUP BY s.id \
+         ORDER BY s.updated_at DESC",
     )
     .fetch_all(&state.pool)
     .await
@@ -1695,6 +2038,15 @@ struct LibraryRow {
     folder_path: Option<String>,
     version: i64,
     updated_at: i64,
+    /// Team-wide paste count for this snippet (SUM over library_usage).
+    /// Defaults to 0 when no users have pasted it; the LEFT JOIN +
+    /// COALESCE in load_library() makes this column always present.
+    #[sqlx(default)]
+    use_count: i64,
+    /// Most-recent paste timestamp across the team (unix seconds);
+    /// None when nobody has pasted yet.
+    #[sqlx(default)]
+    last_used: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1762,6 +2114,10 @@ pub async fn library_create(
                 folder_path: folder_opt,
                 version: write.version,
                 updated_at: write.updated_at,
+                // A brand-new card has no usage yet - the next page
+                // refresh will pick up real numbers from library_usage.
+                use_count: 0,
+                last_used: None,
             }),
         )
             .into_response(),
@@ -1853,6 +2209,18 @@ pub async fn library_update(
     .await;
     match res {
         Ok(Json(write)) => {
+            // Re-fetch live usage so the swapped-in card shows the
+            // real paste count immediately - htmx replaces just this
+            // slot, so anything we don't include here would read as
+            // "0 uses" until the next full page reload.
+            let (use_count, last_used) = sqlx::query_as::<_, (i64, Option<i64>)>(
+                "SELECT COALESCE(SUM(usage_count), 0), MAX(last_used) \
+                 FROM library_usage WHERE snippet_id = ?1",
+            )
+            .bind(&write.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or((0, None));
             let row = LibraryRow {
                 id: write.id,
                 title: title.to_string(),
@@ -1861,6 +2229,8 @@ pub async fn library_update(
                 folder_path: folder_opt,
                 version: write.version,
                 updated_at: write.updated_at,
+                use_count,
+                last_used,
             };
             (
                 [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

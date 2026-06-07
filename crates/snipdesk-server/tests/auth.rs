@@ -34,6 +34,7 @@ async fn make_app() -> axum::Router {
         oidc_google: None,
         secure_cookies: false,
         stats: snipdesk_server::config::StatsConfig::default(),
+        fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
     };
     router(state)
 }
@@ -257,4 +258,132 @@ async fn signup_rejects_duplicate_email() {
     let (s2, b2) = post_json(&app, "/api/auth/signup", body).await;
     assert_eq!(s2, StatusCode::CONFLICT);
     assert_eq!(b2["error"], "email_taken");
+}
+
+async fn patch_with_bearer(
+    app: &axum::Router,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(path)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("build request"),
+        )
+        .await
+        .expect("oneshot");
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    };
+    (status, json)
+}
+
+// PATCH /api/me persists per-user wpm/wage/currency overrides. The
+// response echoes the row, GET /api/me then sees the same values, and
+// out-of-range / unknown values 400 instead of silently clamping.
+#[tokio::test]
+async fn me_patch_updates_overrides_then_clears_them() {
+    let app = make_app().await;
+    let (_, signup) = post_json(
+        &app,
+        "/api/auth/signup",
+        serde_json::json!({
+            "email": "patch@example.com",
+            "password": "correcthorsebatterystaple",
+            "display_name": "Patch",
+        }),
+    )
+    .await;
+    let token = signup["token"].as_str().unwrap();
+
+    // Initial state: no overrides; fields omitted from response by
+    // skip_serializing_if = "Option::is_none".
+    let (status, body) = get_with_bearer(&app, "/api/me", Some(token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["user"]["wpm"].is_null() || body["user"].get("wpm").is_none());
+
+    // Set all three.
+    let (status, body) = patch_with_bearer(
+        &app,
+        "/api/me",
+        token,
+        serde_json::json!({"wpm": 95, "hourly_wage": 38.5, "currency": "USD"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["wpm"], 95);
+    assert_eq!(body["hourly_wage"], 38.5);
+    assert_eq!(body["currency"], "USD");
+
+    // GET shows them too.
+    let (_, body) = get_with_bearer(&app, "/api/me", Some(token)).await;
+    assert_eq!(body["user"]["wpm"], 95);
+    assert_eq!(body["user"]["currency"], "USD");
+
+    // Clear by sending null.
+    let (status, body) = patch_with_bearer(
+        &app,
+        "/api/me",
+        token,
+        serde_json::json!({"wpm": null, "currency": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // hourly_wage was NOT in the payload - it must survive the PATCH.
+    assert_eq!(body["hourly_wage"], 38.5);
+    // wpm / currency are cleared, so skip_serializing_if omits them.
+    assert!(body.get("wpm").is_none() || body["wpm"].is_null());
+    assert!(body.get("currency").is_none() || body["currency"].is_null());
+}
+
+#[tokio::test]
+async fn me_patch_rejects_out_of_range_values() {
+    let app = make_app().await;
+    let (_, signup) = post_json(
+        &app,
+        "/api/auth/signup",
+        serde_json::json!({
+            "email": "bounds@example.com",
+            "password": "correcthorsebatterystaple",
+            "display_name": "Bounds",
+        }),
+    )
+    .await;
+    let token = signup["token"].as_str().unwrap();
+
+    let (status, body) =
+        patch_with_bearer(&app, "/api/me", token, serde_json::json!({"wpm": 9999})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_wpm");
+
+    let (status, body) = patch_with_bearer(
+        &app,
+        "/api/me",
+        token,
+        serde_json::json!({"hourly_wage": -5.0}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_wage");
+
+    let (status, body) = patch_with_bearer(
+        &app,
+        "/api/me",
+        token,
+        serde_json::json!({"currency": "XYZ"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "unknown_currency");
 }

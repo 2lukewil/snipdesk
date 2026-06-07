@@ -76,6 +76,52 @@ pub struct DirtySnippet {
     pub server_version: Option<i64>,
 }
 
+/// Which server counter a telemetry delta belongs to. Mirrors the
+/// `personal` / `library` arms of POST /api/usage/report on the
+/// server: personal snippets bump `personal_snippets.usage_count`
+/// scoped by owner; library snippets land in `library_usage` keyed
+/// per (user, snippet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryKind {
+    Personal,
+    Library,
+}
+
+impl TelemetryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TelemetryKind::Personal => "personal",
+            TelemetryKind::Library => "library",
+        }
+    }
+
+    /// Parse from the canonical wire string. Named `parse_kind` (not
+    /// `from_str`) so clippy doesn't confuse it with the
+    /// `std::str::FromStr` trait method - we deliberately don't
+    /// implement that trait because the trait's error type is
+    /// stricter than we need here.
+    pub fn parse_kind(s: &str) -> Option<Self> {
+        match s {
+            "personal" => Some(TelemetryKind::Personal),
+            "library" => Some(TelemetryKind::Library),
+            _ => None,
+        }
+    }
+}
+
+/// One snapshotted entry from `pending_telemetry`. The sync engine
+/// reads a Vec of these, posts them, then calls
+/// `Db::commit_telemetry_flush` to subtract the snapshot amounts
+/// from the live table.
+#[derive(Debug, Clone)]
+pub struct TelemetryDelta {
+    pub snippet_id: String,
+    pub kind: TelemetryKind,
+    pub delta: i64,
+    pub chars: i64,
+    pub last_used: i64,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -148,6 +194,25 @@ impl Db {
             CREATE TABLE IF NOT EXISTS sync_state (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            -- Pending paste telemetry. Each row aggregates `delta` paste
+            -- events for one snippet since the last successful flush;
+            -- `chars` is the cumulative rendered-body character count.
+            -- The sync engine snapshots this table, posts to
+            -- /api/usage/report, and on success subtracts the snapshot
+            -- amounts from each row (deleting rows that hit zero). Any
+            -- bumps that arrived between snapshot and commit survive
+            -- the subtraction. At-most-once delivery is fine for a
+            -- metric - we'd rather under-count by one batch on a sync
+            -- failure than double-count after a retry.
+            CREATE TABLE IF NOT EXISTS pending_telemetry (
+                snippet_id TEXT NOT NULL,
+                kind       TEXT NOT NULL,
+                delta      INTEGER NOT NULL DEFAULT 0,
+                chars      INTEGER NOT NULL DEFAULT 0,
+                last_used  INTEGER NOT NULL,
+                PRIMARY KEY (kind, snippet_id)
             );",
         )?;
 
@@ -399,6 +464,80 @@ impl Db {
             "UPDATE snippets SET usage_count = usage_count + 1, last_used = ?1 WHERE id = ?2",
             params![now, id],
         )?;
+        Ok(())
+    }
+
+    /// Enqueue a paste event for the next telemetry flush. `id_for_server`
+    /// is the snippet identifier the server uses (already stripped of any
+    /// `team:` prefix); `kind` says which server-side counter the delta
+    /// should land on. `chars` is the rendered (post-substitution) body
+    /// length in unicode code points - what the user actually didn't
+    /// have to type. UPSERT'd so heavy usage of one snippet accumulates
+    /// into a single row, keeping the table small even between long
+    /// offline sessions.
+    pub fn record_telemetry(
+        &self,
+        id_for_server: &str,
+        kind: TelemetryKind,
+        chars: i64,
+    ) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let kind_str = kind.as_str();
+        self.conn.execute(
+            "INSERT INTO pending_telemetry (snippet_id, kind, delta, chars, last_used) \
+             VALUES (?1, ?2, 1, ?3, ?4) \
+             ON CONFLICT(kind, snippet_id) DO UPDATE SET \
+               delta = delta + 1, \
+               chars = chars + excluded.chars, \
+               last_used = MAX(last_used, excluded.last_used)",
+            params![id_for_server, kind_str, chars, now],
+        )?;
+        Ok(())
+    }
+
+    /// Read a snapshot of the pending telemetry. Doesn't delete - the
+    /// caller commits with `commit_telemetry_flush` only after the
+    /// server has acknowledged the post. New events that land between
+    /// snapshot and commit accumulate into the same rows and survive
+    /// the subtraction step.
+    pub fn snapshot_telemetry(&self) -> Result<Vec<TelemetryDelta>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT snippet_id, kind, delta, chars, last_used FROM pending_telemetry")?;
+        let rows = stmt.query_map([], |row| {
+            let kind_str: String = row.get(1)?;
+            Ok(TelemetryDelta {
+                snippet_id: row.get(0)?,
+                kind: TelemetryKind::parse_kind(&kind_str).unwrap_or(TelemetryKind::Personal),
+                delta: row.get(2)?,
+                chars: row.get(3)?,
+                last_used: row.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Subtract each snapshotted row from the live table. Rows that
+    /// drop to delta <= 0 are deleted. Called after a successful POST
+    /// to /api/usage/report so any user activity between snapshot and
+    /// commit is preserved rather than overwritten.
+    pub fn commit_telemetry_flush(&self, snapshot: &[TelemetryDelta]) -> Result<()> {
+        for r in snapshot {
+            self.conn.execute(
+                "UPDATE pending_telemetry SET delta = delta - ?1, chars = chars - ?2 \
+                 WHERE kind = ?3 AND snippet_id = ?4",
+                params![r.delta, r.chars, r.kind.as_str(), &r.snippet_id],
+            )?;
+        }
+        // Prune zero/negative rows in one go. Negative shouldn't happen
+        // (we only subtract what we read) but a paranoid <= guards
+        // against any future drift.
+        self.conn
+            .execute("DELETE FROM pending_telemetry WHERE delta <= 0", [])?;
         Ok(())
     }
 
@@ -1123,5 +1262,84 @@ mod tests {
         assert_eq!(path_ancestors("Solo"), vec!["Solo".to_string()]);
         let empty: Vec<String> = vec![];
         assert_eq!(path_ancestors(""), empty);
+    }
+
+    fn fresh_db() -> Db {
+        // In-memory SQLite via the open() entry point. Pulls in the
+        // full schema (incl. pending_telemetry) so we can exercise
+        // the UPSERT + flush mechanics.
+        Db::open(std::path::Path::new(":memory:")).expect("open mem db")
+    }
+
+    // record_telemetry aggregates repeat bumps onto the same row
+    // (deduped per kind+id) so the table stays small even after
+    // thousands of pastes. The flush snapshot reflects the running
+    // totals.
+    #[test]
+    fn telemetry_aggregates_per_kind_and_id() {
+        let db = fresh_db();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 12)
+            .unwrap();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 8)
+            .unwrap();
+        db.record_telemetry("lib-x", TelemetryKind::Library, 30)
+            .unwrap();
+
+        let snap = db.snapshot_telemetry().unwrap();
+        assert_eq!(snap.len(), 2);
+        let personal = snap
+            .iter()
+            .find(|s| s.kind == TelemetryKind::Personal)
+            .unwrap();
+        assert_eq!(personal.snippet_id, "snip-1");
+        assert_eq!(personal.delta, 2);
+        assert_eq!(personal.chars, 20);
+        let library = snap
+            .iter()
+            .find(|s| s.kind == TelemetryKind::Library)
+            .unwrap();
+        assert_eq!(library.snippet_id, "lib-x");
+        assert_eq!(library.delta, 1);
+        assert_eq!(library.chars, 30);
+    }
+
+    // commit_telemetry_flush subtracts only what the snapshot saw.
+    // Bumps that landed between snapshot and commit survive (mimicking
+    // the real flush flow where a user might paste during a slow
+    // POST /api/usage/report round-trip).
+    #[test]
+    fn telemetry_flush_preserves_interleaved_increments() {
+        let db = fresh_db();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 10)
+            .unwrap();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 5)
+            .unwrap();
+        let snap = db.snapshot_telemetry().unwrap();
+        assert_eq!(snap[0].delta, 2);
+        assert_eq!(snap[0].chars, 15);
+
+        // User pastes again while the POST is in flight.
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 7)
+            .unwrap();
+
+        // Server acknowledged the snapshot - commit subtracts only
+        // what was snapshotted.
+        db.commit_telemetry_flush(&snap).unwrap();
+        let leftover = db.snapshot_telemetry().unwrap();
+        assert_eq!(leftover.len(), 1, "the post-snapshot bump survives");
+        assert_eq!(leftover[0].delta, 1);
+        assert_eq!(leftover[0].chars, 7);
+    }
+
+    // Successful flush that exactly drains the table leaves it empty
+    // (rows with delta <= 0 get pruned).
+    #[test]
+    fn telemetry_flush_clears_table_when_idle() {
+        let db = fresh_db();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 4)
+            .unwrap();
+        let snap = db.snapshot_telemetry().unwrap();
+        db.commit_telemetry_flush(&snap).unwrap();
+        assert!(db.snapshot_telemetry().unwrap().is_empty());
     }
 }

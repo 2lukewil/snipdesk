@@ -385,6 +385,14 @@ const els = {
   serverLastSync: document.getElementById("server-last-sync"),
   serverSyncDetail: document.getElementById("server-sync-detail"),
   serverLastResult: document.getElementById("server-last-result"),
+  // Per-user wpm/wage/currency overrides for the admin dashboard's
+  // hours/money saved estimate. Empty = "use server default".
+  setProfileWpm: document.getElementById("set-profile-wpm"),
+  setProfileWage: document.getElementById("set-profile-wage"),
+  setProfileCurrency: document.getElementById("set-profile-currency"),
+  serverProfileError: document.getElementById("server-profile-error"),
+  btnServerProfileSave: document.getElementById("btn-server-profile-save"),
+  btnServerProfileClear: document.getElementById("btn-server-profile-clear"),
   // Trash modal (Teams only)
   trashModal: document.getElementById("trash-modal"),
   trashList: document.getElementById("trash-list"),
@@ -3277,6 +3285,17 @@ function renderServerStatus() {
     els.serverUserEmail.textContent = st.user.email;
     els.serverUserRole.textContent = st.user.role;
     els.serverUrlDisplay.textContent = st.server_url;
+    // Reflect the user's saved wage/wpm/currency. Empty inputs map to
+    // "use server defaults"; the placeholder already says so.
+    if (els.setProfileWpm) {
+      els.setProfileWpm.value = st.user.wpm ?? "";
+    }
+    if (els.setProfileWage) {
+      els.setProfileWage.value = st.user.hourly_wage ?? "";
+    }
+    if (els.setProfileCurrency) {
+      els.setProfileCurrency.value = st.user.currency ?? "";
+    }
     els.serverLastSync.textContent = st.last_sync
       ? formatSyncTimestamp(st.last_sync.at)
       : "Never";
@@ -3520,6 +3539,92 @@ async function doServerSyncNow() {
     els.btnServerSync.disabled = false;
     els.btnServerSync.textContent = "Sync now";
   }
+}
+
+// PATCH /api/me with the user's wpm/wage/currency. Empty inputs send
+// `null` to clear the override and revert to the server default;
+// non-empty inputs send the parsed value. Errors (validation, network)
+// are surfaced inline.
+async function doServerProfileSave() {
+  if (!TEAMS_BUILD) return;
+  if (!els.btnServerProfileSave) return;
+  hideServerProfileError();
+  const args = {};
+  const wpmRaw = els.setProfileWpm.value.trim();
+  if (wpmRaw === "") {
+    args.wpm = null;
+  } else {
+    const n = parseInt(wpmRaw, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 500) {
+      showServerProfileError("WPM must be a whole number between 1 and 500.");
+      return;
+    }
+    args.wpm = n;
+  }
+  const wageRaw = els.setProfileWage.value.trim();
+  if (wageRaw === "") {
+    args.hourly_wage = null;
+  } else {
+    const v = parseFloat(wageRaw);
+    if (!Number.isFinite(v) || v <= 0 || v > 100000) {
+      showServerProfileError("Hourly wage must be a positive number.");
+      return;
+    }
+    args.hourly_wage = v;
+  }
+  const currRaw = els.setProfileCurrency.value.trim().toUpperCase();
+  if (currRaw === "") {
+    args.currency = null;
+  } else {
+    if (!/^[A-Z]{3}$/.test(currRaw)) {
+      showServerProfileError("Currency must be a 3-letter ISO code (e.g. USD).");
+      return;
+    }
+    args.currency = currRaw;
+  }
+  els.btnServerProfileSave.disabled = true;
+  els.btnServerProfileSave.textContent = "Saving...";
+  try {
+    await invoke("server_update_profile", { args });
+    await loadServerStatus();
+    setStatus("Profile saved.", "ok");
+  } catch (err) {
+    showServerProfileError(String(err));
+  } finally {
+    els.btnServerProfileSave.disabled = false;
+    els.btnServerProfileSave.textContent = "Save";
+  }
+}
+
+// Reset all three fields to "use server defaults" in one PATCH.
+async function doServerProfileClear() {
+  if (!TEAMS_BUILD) return;
+  if (!els.btnServerProfileClear) return;
+  hideServerProfileError();
+  els.btnServerProfileClear.disabled = true;
+  try {
+    await invoke("server_update_profile", {
+      args: { wpm: null, hourly_wage: null, currency: null },
+    });
+    await loadServerStatus();
+    setStatus("Reverted to server defaults.", "ok");
+  } catch (err) {
+    showServerProfileError(String(err));
+  } finally {
+    els.btnServerProfileClear.disabled = false;
+  }
+}
+
+function showServerProfileError(msg) {
+  if (!els.serverProfileError) return;
+  els.serverProfileError.textContent = msg;
+  els.serverProfileError.classList.remove("hidden");
+}
+
+function hideServerProfileError() {
+  if (!els.serverProfileError) return;
+  els.serverProfileError.classList.add("hidden");
+  els.serverProfileError.textContent = "";
 }
 
 // ---------- Settings save ----------
@@ -3821,6 +3926,10 @@ function bindEvents() {
     if (els.btnServerOidc) els.btnServerOidc.addEventListener("click", doServerOidcStart);
     if (els.btnServerPasteToken)
       els.btnServerPasteToken.addEventListener("click", doServerPasteToken);
+    if (els.btnServerProfileSave)
+      els.btnServerProfileSave.addEventListener("click", doServerProfileSave);
+    if (els.btnServerProfileClear)
+      els.btnServerProfileClear.addEventListener("click", doServerProfileClear);
     if (els.trashClose) els.trashClose.addEventListener("click", closeTrashModal);
     if (els.trashModal) {
       // Click outside the card closes the modal, same UX as other

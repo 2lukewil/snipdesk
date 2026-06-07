@@ -177,12 +177,26 @@ pub fn use_snippet(
 ) -> CmdResult<UseSnippetResult> {
     // Team snippets are read-only and live in a separate table that's
     // wholly replaced each sync - recording usage there would be lost.
-    let (body, settings) = {
+    let (body, settings, telemetry_target) = {
         let db = state.db.lock().map_err(e)?;
-        let snippet = if let Some(team_id) = args.id.strip_prefix("team:") {
-            db.get_team_snippet(team_id)
+        let (snippet, telemetry_target) = if let Some(team_id) = args.id.strip_prefix("team:") {
+            let s = db
+                .get_team_snippet(team_id)
                 .map_err(e)?
-                .ok_or_else(|| "team snippet not found".to_string())?
+                .ok_or_else(|| "team snippet not found".to_string())?;
+            // Library snippets are read-only and live in their own
+            // table - no local usage_count, no variable history.
+            // We still feed paste activity into the telemetry queue
+            // so the server can credit it to library_usage; the
+            // server-side `id` for a library snippet is the
+            // un-prefixed team_id.
+            (
+                s,
+                Some((
+                    team_id.to_string(),
+                    snipdesk_core::db::TelemetryKind::Library,
+                )),
+            )
         } else {
             let s = db
                 .get(&args.id)
@@ -194,13 +208,30 @@ pub fn use_snippet(
                     eprintln!("var history record failed: {err}");
                 }
             }
-            s
+            (
+                s,
+                Some((args.id.clone(), snipdesk_core::db::TelemetryKind::Personal)),
+            )
         };
         let settings = state.settings.lock().map_err(e)?.clone();
-        (snippet.body, settings)
+        (snippet.body, settings, telemetry_target)
     };
 
     let rendered = substitute_variables(&body, &args.variables);
+
+    // Telemetry: record the post-substitution character count, since
+    // that's what the user actually didn't have to type. Counted in
+    // unicode code points (`chars()`), not bytes, so non-ASCII
+    // content isn't over-counted. Errors here are non-fatal -
+    // metrics losing one event matters less than the paste
+    // succeeding.
+    if let Some((server_id, kind)) = telemetry_target {
+        let chars = rendered.chars().count() as i64;
+        let db = state.db.lock().map_err(e)?;
+        if let Err(err) = db.record_telemetry(&server_id, kind, chars) {
+            eprintln!("telemetry record failed: {err}");
+        }
+    }
 
     // Windows: write CF_UNICODETEXT directly. The plugin's arboard path
     // mangled non-ASCII (em dash, curly quotes) into UTF-8-as-Windows-1252

@@ -70,6 +70,49 @@ pub struct Config {
     /// normalise all displayed money to AUD on the dashboard.
     #[serde(default)]
     pub stats: StatsConfig,
+
+    /// Optional live FX feed for the money-saved estimate. When
+    /// present, the server fetches the provider on boot and
+    /// `cache_ttl_hours` later, overlaying the static
+    /// `[stats.aud_rates]` table with fresh numbers. When absent
+    /// (default), only the static table is used - no outbound HTTP
+    /// from the server.
+    #[serde(default)]
+    pub fx: Option<FxConfig>,
+}
+
+/// Live FX feed configuration. Optional; absence keeps the server
+/// fully offline-capable. We don't ship a provider API key in the
+/// default - the supported providers are key-free.
+#[derive(Debug, Deserialize, Clone)]
+pub struct FxConfig {
+    /// Provider identifier. `"open.er-api.com"` is the supported
+    /// default (free, no key, USD-base). Any value starting with
+    /// `http` is treated as a custom URL returning the same response
+    /// shape - useful for self-hosted proxies and tests.
+    #[serde(default = "default_fx_provider")]
+    pub provider: String,
+    /// How long to cache the fetched rates before fetching again.
+    /// Minimum 1, default 24 hours; FX moves slowly enough that any
+    /// shorter cadence wastes provider quota.
+    #[serde(default = "default_fx_ttl_hours")]
+    pub cache_ttl_hours: u32,
+}
+
+impl Default for FxConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_fx_provider(),
+            cache_ttl_hours: default_fx_ttl_hours(),
+        }
+    }
+}
+
+fn default_fx_provider() -> String {
+    "open.er-api.com".to_string()
+}
+fn default_fx_ttl_hours() -> u32 {
+    24
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -126,17 +169,38 @@ fn default_stats_currency() -> String {
     "AUD".to_string()
 }
 fn default_stats_rates() -> std::collections::HashMap<String, f64> {
-    // Approximate long-term averages. Operators override in config
-    // when their accounting wants real FX. We don't try to fetch live
-    // rates - the dashboard estimate is order-of-magnitude, not
-    // accounting-grade.
+    // Approximate long-term averages, 1 unit of <code> = N AUD.
+    // Operators override in config when their accounting wants real
+    // FX, and (when enabled) the FX poller can refresh these from
+    // a live source. The static table is the cold-start default and
+    // the offline fallback.
     let mut m = std::collections::HashMap::new();
-    m.insert("AUD".to_string(), 1.0);
+    m.insert("AUD".to_string(), 1.00);
     m.insert("USD".to_string(), 1.50);
     m.insert("EUR".to_string(), 1.65);
     m.insert("GBP".to_string(), 1.95);
     m.insert("CAD".to_string(), 1.10);
     m.insert("NZD".to_string(), 0.92);
+    m.insert("JPY".to_string(), 0.0098);
+    m.insert("CHF".to_string(), 1.70);
+    m.insert("INR".to_string(), 0.018);
+    m.insert("SGD".to_string(), 1.12);
+    m.insert("HKD".to_string(), 0.19);
+    m.insert("ZAR".to_string(), 0.082);
+    m.insert("BRL".to_string(), 0.27);
+    m.insert("MXN".to_string(), 0.080);
+    m.insert("KRW".to_string(), 0.0011);
+    m.insert("SEK".to_string(), 0.14);
+    m.insert("NOK".to_string(), 0.14);
+    m.insert("DKK".to_string(), 0.22);
+    m.insert("PLN".to_string(), 0.38);
+    m.insert("CZK".to_string(), 0.066);
+    m.insert("TRY".to_string(), 0.045);
+    m.insert("AED".to_string(), 0.41);
+    m.insert("CNY".to_string(), 0.21);
+    m.insert("THB".to_string(), 0.041);
+    m.insert("IDR".to_string(), 0.000093);
+    m.insert("PHP".to_string(), 0.027);
     m
 }
 

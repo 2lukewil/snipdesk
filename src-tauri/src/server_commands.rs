@@ -378,6 +378,60 @@ pub fn refresh_team_snippet_count(app: &AppHandle, state: &AppState) {
     let _ = app.emit("snipdesk://team-library-updated", ());
 }
 
+/// Args for `server_update_profile`. Three-state per field:
+///   - field missing from JSON   → leave the server's value alone
+///   - field present with value  → set to that value
+///   - field present and null    → clear back to the server's [stats] default
+///
+/// JS callers idiomatically pass `undefined` for "leave alone" (which
+/// serde-tauri converts to a missing field) and `null` for "clear".
+/// The double-Option mirrors the wire body so the round-trip is
+/// exact.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateProfileArgs {
+    #[serde(default, deserialize_with = "double_option")]
+    pub wpm: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub hourly_wage: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub currency: Option<Option<String>>,
+}
+
+/// `Some(None)` if the JSON field is `null`, `Some(Some(v))` if it
+/// has a value, never `None` when called - serde uses `default` for
+/// the absent case.
+fn double_option<'de, T, D>(d: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(d).map(Some)
+}
+
+/// PATCH the signed-in user's wpm/wage/currency on the server. On
+/// success we re-save the local user record so `server_status`
+/// reflects the new values immediately (the next /api/me probe would
+/// pick them up too, but we don't want a 60s lag).
+#[tauri::command]
+pub fn server_update_profile(app: AppHandle, args: UpdateProfileArgs) -> CmdResult<UserDto> {
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Err("no server configured".to_string());
+    }
+    let token = credentials::load(&server_url)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "not signed in".to_string())?;
+    let body = api::UpdateMeBody {
+        wpm: args.wpm,
+        hourly_wage: args.hourly_wage,
+        currency: args.currency,
+    };
+    let user = api::update_me(&server_url, &token, &body).map_err(map_api_err)?;
+    save_signed_in_user(&state, &user)?;
+    Ok(user)
+}
+
 #[tauri::command]
 pub fn server_migrate_local_snippets(app: AppHandle) -> CmdResult<usize> {
     let state = app.state::<AppState>();

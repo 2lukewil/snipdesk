@@ -27,6 +27,7 @@ async fn make_app() -> axum::Router {
         oidc_google: None,
         secure_cookies: false,
         stats: snipdesk_server::config::StatsConfig::default(),
+        fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
     };
     router(state)
 }

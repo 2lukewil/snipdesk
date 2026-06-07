@@ -53,6 +53,12 @@ urlencoding = "2"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 
+# Live FX fetch (optional; enabled when [fx] block is configured).
+# reqwest is already in the tree via openidconnect, so this just
+# pins the same crate at the same major - no extra dep weight.
+# rustls so we don't drag in openssl on Alpine/musl builds.
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "gzip"] }
+
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

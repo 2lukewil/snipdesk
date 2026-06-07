@@ -16,9 +16,11 @@ data_dir = "./data"
 jwt_secret = ""
 
 # Dashboard stats-page knobs. Optional; the defaults estimate using
-# 80 wpm at AUD $25/hr. The dashboard normalises money to AUD using
-# the rates below; override these (or just set `currency = "AUD"` and
-# `hourly_wage` directly) when your team thinks in different money.
+# 80 wpm at AUD $25/hr. Per-user wpm/wage/currency overrides set via
+# PATCH /api/me (from the desktop Settings panel) take precedence
+# over these server-wide defaults. The dashboard normalises money to
+# AUD using the rates below; the currency dropdown on the stats page
+# converts the displayed value to any code in the table.
 #
 # [stats]
 # wpm = 80
@@ -28,6 +30,23 @@ jwt_secret = ""
 # AUD = 1.0
 # USD = 1.50
 # EUR = 1.65
+
+# Optional live FX feed. When this block is present, the server
+# fetches current rates from a free no-auth provider on boot and
+# every `cache_ttl_hours` thereafter, overlaying the static
+# `[stats.aud_rates]` table with fresh numbers. Falls back to the
+# static table on fetch failure, so the dashboard never breaks if
+# the provider is down. Leave commented to keep the server fully
+# offline-capable.
+#
+# Supported providers:
+#   - "open.er-api.com" (default; USD-base, daily-updated, free)
+#   - any URL starting with "http(s)://" returning the same response
+#     shape, for self-hosted proxies and tests
+#
+# [fx]
+# provider = "open.er-api.com"
+# cache_ttl_hours = 24
 
 [crypto]
 # Master encryption key for personal-snippet payloads. In priority order:

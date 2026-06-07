@@ -465,6 +465,8 @@ pub fn run() {
             server_commands::server_oidc_start_url,
             #[cfg(feature = "teams")]
             server_commands::server_oidc_paste_token,
+            #[cfg(feature = "teams")]
+            server_commands::server_update_profile,
             commands::capture_selection_for_snippet,
             commands::open_logs_folder,
             commands::open_backups_folder,

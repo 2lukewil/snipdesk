@@ -66,6 +66,17 @@ pub struct UserDto {
     pub display_name: String,
     pub role: String,
     pub created_at: i64,
+    /// Per-user wpm/wage/currency overrides used by the admin
+    /// dashboard's hours/money saved estimates. The server omits
+    /// these fields when the user hasn't set them (skip_serializing_if
+    /// "Option::is_none"), so `#[serde(default)]` here defaults to
+    /// None and the existing absent-field cases keep working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wpm: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hourly_wage: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -225,6 +236,32 @@ pub fn me(server_url: &str, token: &str) -> ApiResult<MeResponse> {
     let res = ureq::get(&url(server_url, "/api/me"))
         .set("authorization", &format!("Bearer {token}"))
         .call();
+    handle_response(res)
+}
+
+/// Body of `PATCH /api/me`. Outer Option = "field is present in the
+/// payload"; inner Option = "value is null (clear the override)".
+/// `serde_json` serializes `Some(None)` to `null` and skips the
+/// field entirely when the outer is None - which is exactly the
+/// "leave alone vs reset" distinction the server expects.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct UpdateMeBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wpm: Option<Option<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hourly_wage: Option<Option<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<Option<String>>,
+}
+
+/// PATCH /api/me. Returns the refreshed user row (UserDto). Server
+/// validates ranges and unknown currency codes; map_api_err on the
+/// IPC side turns those into user-visible strings.
+pub fn update_me(server_url: &str, token: &str, body: &UpdateMeBody) -> ApiResult<UserDto> {
+    let res = ureq::request("PATCH", &url(server_url, "/api/me"))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json")
+        .send_json(serde_json::to_value(body).unwrap_or(serde_json::Value::Null));
     handle_response(res)
 }
 
@@ -404,5 +441,36 @@ pub fn delete_library_snippet(server_url: &str, token: &str, id: &str) -> ApiRes
     let res = ureq::delete(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .call();
+    handle_unit(res)
+}
+
+// ---- Telemetry ----
+
+/// One snippet's worth of paste activity since the last flush. Wire
+/// shape mirrors `SnippetDelta` on the server side of
+/// `/api/usage/report` (handlers/usage.rs).
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageSnippetDelta<'a> {
+    pub id: &'a str,
+    pub delta: i64,
+    pub last_used: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageReport<'a> {
+    pub chars_pasted_delta: i64,
+    pub snippets_pasted_delta: i64,
+    pub personal: &'a [UsageSnippetDelta<'a>],
+    pub library: &'a [UsageSnippetDelta<'a>],
+}
+
+/// POST /api/usage/report. Returns Ok on 204 No Content. At-most-once
+/// delivery: a network failure here drops the batch; the next sync
+/// tick retries from a fresh snapshot.
+pub fn report_usage(server_url: &str, token: &str, body: &UsageReport<'_>) -> ApiResult<()> {
+    let res = ureq::post(&url(server_url, "/api/usage/report"))
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/json")
+        .send_json(serde_json::to_value(body).unwrap_or(serde_json::Value::Null));
     handle_unit(res)
 }

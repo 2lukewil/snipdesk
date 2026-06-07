@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{GoogleOidcConfig, MasterKey, StatsConfig};
+use crate::fx::FxCache;
 use crate::handlers;
 
 /// Shared application state. Cloned per handler invocation; `pool` and
@@ -41,6 +42,12 @@ pub struct AppState {
     /// to clone (small map of FX rates) - we pass by value rather
     /// than Arc-wrap.
     pub stats: StatsConfig,
+    /// Live FX cache. Always present; empty by default. Populated
+    /// by `crate::fx::spawn_refresher` when `[fx]` is configured in
+    /// the TOML. The dashboard reads via `crate::fx::rate_for`
+    /// which falls through to `stats.aud_rates` when the live
+    /// cache misses a code.
+    pub fx_cache: Arc<FxCache>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -49,7 +56,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/signup", post(handlers::auth::signup))
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/logout", post(handlers::auth::logout))
-        .route("/api/me", get(handlers::auth::me))
+        .route(
+            "/api/me",
+            get(handlers::auth::me).patch(handlers::auth::update_me),
+        )
         // OIDC / "Sign in with Google" - both endpoints are public
         // (no AuthUser required); the start endpoint initiates the
         // OAuth dance and the callback validates the response from
@@ -86,6 +96,11 @@ pub fn router(state: AppState) -> Router {
             "/api/library/:id",
             put(handlers::library::update).delete(handlers::library::delete),
         )
+        // Paste telemetry. Auth-required; the desktop client posts
+        // delta packets every sync tick. Folded into the per-user +
+        // per-snippet counters used by the stats page and library
+        // page.
+        .route("/api/usage/report", post(handlers::usage::report))
         // Admin user management - JSON API; the htmx dashboard uses
         // these handlers directly (not over HTTP) but mounting them
         // here keeps a single source of truth and exposes the surface

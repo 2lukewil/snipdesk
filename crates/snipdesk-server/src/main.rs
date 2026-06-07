@@ -125,6 +125,20 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
 
     let pool = db::open(&cfg.data_dir).await?;
 
+    let fx_cache = Arc::new(snipdesk_server::fx::FxCache::default());
+    // Live FX is opt-in via [fx] in the TOML. When unset, the
+    // dashboard's currency conversion uses the static aud_rates
+    // table; no outbound HTTP from the server.
+    if let Some(fx_cfg) = cfg.fx.clone() {
+        tracing::info!(
+            provider = %fx_cfg.provider,
+            ttl_hours = fx_cfg.cache_ttl_hours,
+            "fx: live currency feed enabled"
+        );
+        snipdesk_server::fx::spawn_refresher(fx_cfg, fx_cache.clone());
+    } else {
+        tracing::info!("fx: live feed disabled (no [fx] in config); using static aud_rates");
+    }
     let state = http::AppState {
         // Clone the pool so the interactive console can borrow it
         // alongside the HTTP handlers. sqlx pools are Arc-internal, so
@@ -135,6 +149,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         oidc_google: cfg.oidc.google.clone(),
         secure_cookies: cfg.secure_cookies,
         stats: cfg.stats.clone(),
+        fx_cache,
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(

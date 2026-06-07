@@ -825,7 +825,14 @@ function mergeSorted(personal, team, sort) {
 /// only - mixing the team count in would mislead the rename / delete
 /// folder dialogs that quote it.
 function mergeTeamFoldersIntoTree(personalFolders, teamSnippets) {
-  if (!TEAMS_BUILD || (teamSnippets || []).length === 0) {
+  // Same gate as refresh()'s teamPromise: ignore the cached team
+  // table when the user is signed out, so the folder tree doesn't
+  // surface ghost team folders from a previous session.
+  if (
+    !TEAMS_BUILD ||
+    !state.serverStatus?.signed_in ||
+    (teamSnippets || []).length === 0
+  ) {
     return personalFolders;
   }
   const byPath = new Map();
@@ -886,17 +893,23 @@ async function refresh() {
       state.folders = mergeTeamFoldersIntoTree(folders || [], teamSnippets || []);
       state.allSnippets = allSnippets || [];
     } else {
-      // Non-team views: personal + team snippets co-exist. Team rows
-      // come from a separate backend command (list_team_snippets has
-      // no folder/tag/search arg), so we filter them client-side to
-      // match the same selector as personal. Identical folder names
-      // collide naturally - both sources land in the same bucket -
-      // which is the desired UX: a team "Billing" folder merges with
-      // a user's "Billing" folder rather than appearing twice.
-      const teamPromise =
-        TEAMS_BUILD
-          ? invoke("list_team_snippets").catch(() => [])
-          : Promise.resolve([]);
+      // Non-team views: personal + team snippets co-exist when the
+      // user is signed in to a server. Team rows come from a separate
+      // backend command (list_team_snippets has no folder/tag/search
+      // arg), so we filter them client-side to match the same selector
+      // as personal. Identical folder names collide naturally - both
+      // sources land in the same bucket - which is the desired UX:
+      // a team "Billing" folder merges with a user's "Billing" rather
+      // than appearing twice.
+      //
+      // Gated on serverStatus.signed_in: stale team_snippets rows from
+      // a previous session shouldn't leak into the list of a now-
+      // signed-out user. Logout already wipes team_snippets via
+      // reset_sync_metadata, but the gate is the belt-and-suspenders.
+      const includeTeam = TEAMS_BUILD && Boolean(state.serverStatus?.signed_in);
+      const teamPromise = includeTeam
+        ? invoke("list_team_snippets").catch(() => [])
+        : Promise.resolve([]);
       const [snippets, tags, folders, allSnippets, teamSnippets] = await Promise.all([
         invoke("list_snippets", {
           query: els.search.value || null,
@@ -1578,20 +1591,26 @@ function renderList() {
 
     const title = document.createElement("div");
     title.className = "snip-title";
+    // .snip-title uses flex + space-between to push the usage count
+    // to the far right, so the cloud + title need to live together
+    // inside ONE flex item or the cloud gets ripped to the opposite
+    // side of the row. The wrapper span carries the existing
+    // `:first-child` ellipsis styling, so the title still truncates
+    // cleanly when long.
+    const titleHead = document.createElement("span");
+    titleHead.className = "snip-title-head";
     if (isTeam) {
-      // Cloud glyph before the title - immediately readable as
-      // "this row is shared from the team library" even when the
-      // snippet is mixed in with the user's personal snippets in
-      // the All / folder views.
       const cloud = document.createElement("span");
       cloud.className = "snip-cloud";
       cloud.textContent = "☁";
       cloud.title = "Shared team snippet";
-      title.appendChild(cloud);
+      titleHead.appendChild(cloud);
     }
     const titleText = document.createElement("span");
+    titleText.className = "snip-title-text";
     titleText.textContent = s.title;
-    title.appendChild(titleText);
+    titleHead.appendChild(titleText);
+    title.appendChild(titleHead);
     const showUsage = state.settings?.show_usage_count ?? true;
     if (showUsage && s.usage_count > 0) {
       const count = document.createElement("span");

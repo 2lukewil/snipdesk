@@ -325,6 +325,24 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The .snip-title-head wraps the optional cloud glyph + the title
+   text into a single flex item, so the cloud sits inline beside the
+   name rather than getting pushed to the opposite end of the row by
+   the outer .snip-title's `justify-content: space-between`. */
+.snip-title-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.snip-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .snip-count {
   font-size: 10px;
   color: var(--text-dim);

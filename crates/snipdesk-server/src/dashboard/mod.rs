@@ -48,12 +48,28 @@ pub fn routes() -> Router<AppState> {
         // page provides the container.
         .route("/dashboard/users/rows", get(pages::users_rows))
         .route("/dashboard/library/cards", get(pages::library_cards))
+        // Folder-tree fragment for the library sidebar polling sweep.
+        .route("/dashboard/library/folders", get(pages::library_folders))
         .route("/dashboard/users/:id", put(pages::user_update_row))
         .route("/dashboard/users/:id", delete(pages::user_delete_row))
         .route("/dashboard/library", get(pages::library_page))
         .route("/dashboard/library", post(pages::library_create))
         .route("/dashboard/library/:id", put(pages::library_update))
         .route("/dashboard/library/:id", delete(pages::library_delete))
+        // Inline edit: GET returns the edit form fragment, /card
+        // returns the read-only card (for cancel), /move is the
+        // drag-drop endpoint.
+        .route("/dashboard/library/:id/edit", get(pages::library_edit_form))
+        .route(
+            "/dashboard/library/:id/card",
+            get(pages::library_card_fragment),
+        )
+        .route("/dashboard/library/:id/move", put(pages::library_move))
+        // Per-user detail + stats. Detail uses the same /users/:id
+        // path as the JSON PUT/DELETE because GET there is unused;
+        // axum routes on (path, method) so the methods coexist.
+        .route("/dashboard/users/:id", get(pages::user_detail_page))
+        .route("/dashboard/stats", get(pages::stats_page))
         // Static assets - vendored htmx + a small CSS file. Served as
         // raw bytes via plain handlers (no fs reads at runtime; the
         // bytes are baked into the binary by include_str!).

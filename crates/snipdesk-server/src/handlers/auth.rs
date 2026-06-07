@@ -235,6 +235,14 @@ pub async fn logout() -> StatusCode {
 #[derive(Debug, Serialize)]
 pub struct MeResponse {
     pub user: UserDto,
+    /// When the calling token has less than `REFRESH_THRESHOLD_HOURS`
+    /// of lifetime left, the server issues a fresh 30-day token and
+    /// returns it here. The desktop client swaps its stored credential
+    /// to the new value, so a user who touches the app every couple
+    /// of weeks stays signed in indefinitely. None when the current
+    /// token still has plenty of life.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refreshed_token: Option<String>,
 }
 
 pub async fn me(
@@ -250,7 +258,25 @@ pub async fn me(
                 // Token validates, but user was deleted between issue and now.
                 ApiError::unauthorized("user_gone", "your account no longer exists")
             })?;
-    Ok(Json(MeResponse { user }))
+
+    // Auto-rotation: if the token presented to us is nearing expiry,
+    // mint a fresh one so the client can swap. The new token carries
+    // the SAME role + sub as the old (we re-read the role from the
+    // row above in case the admin promoted/demoted), so this isn't a
+    // privilege-escalation vector - just a lifetime extension.
+    let now = Utc::now().timestamp();
+    let exp = auth.0.exp as i64;
+    let remaining_hours = (exp - now) / 3600;
+    let refreshed_token = if remaining_hours < crate::auth::REFRESH_THRESHOLD_HOURS {
+        Some(issue_token(&user.id, &user.role, &state.jwt_secret)?)
+    } else {
+        None
+    };
+
+    Ok(Json(MeResponse {
+        user,
+        refreshed_token,
+    }))
 }
 
 /// Permissive email check - RFC 5322 is too forgiving for a useful

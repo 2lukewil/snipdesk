@@ -57,6 +57,13 @@ pub struct SyncOutcome {
     /// previous value" rather than "user vanished".
     #[serde(default)]
     pub user: Option<api::UserDto>,
+    /// When the server rotates our token (current one is near
+    /// expiry), the new one lands here. The IPC layer swaps the
+    /// keychain entry; subsequent ticks pick up the fresh token via
+    /// the normal credentials::load path. None on the typical case
+    /// where rotation wasn't needed yet.
+    #[serde(default)]
+    pub refreshed_token: Option<String>,
 }
 
 /// One full sync round. Takes a locked Db so the caller (Tauri
@@ -76,7 +83,20 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
     //    rather than later in the tick. Network failures are tolerated
     //    (None in out.user means "I couldn't check this round").
     match api::me(server_url, token) {
-        Ok(me) => out.user = Some(me.user),
+        Ok(me) => {
+            out.user = Some(me.user);
+            // Token rotation: the server returns `refreshed_token`
+            // when our current one is nearing expiry. Forward it so
+            // the IPC layer can persist the new token; subsequent
+            // ticks pick it up from the keychain via the normal
+            // credentials::load path. The CURRENT tick still uses
+            // the old token for the rest of its requests - that's
+            // fine because the old token is, by definition, not
+            // expired yet.
+            if let Some(t) = me.refreshed_token {
+                out.refreshed_token = Some(t);
+            }
+        }
         Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
         Err(ApiError::AccountInactive(msg)) => return Err(ApiError::AccountInactive(msg)),
         Err(e) => {

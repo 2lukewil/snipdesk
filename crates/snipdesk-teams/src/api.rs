@@ -211,6 +211,14 @@ pub fn login(server_url: &str, email: &str, password: &str) -> ApiResult<AuthRes
 #[derive(Debug, Deserialize)]
 pub struct MeResponse {
     pub user: UserDto,
+    /// When the server decides our token is nearing expiry it mints a
+    /// fresh one and returns it here. The sync engine forwards this to
+    /// the IPC layer, which calls credentials::store to swap the
+    /// keychain entry. Optional - omitted when our token still has
+    /// plenty of life, so steady-state requests aren't paying the
+    /// keychain-write cost.
+    #[serde(default)]
+    pub refreshed_token: Option<String>,
 }
 
 pub fn me(server_url: &str, token: &str) -> ApiResult<MeResponse> {

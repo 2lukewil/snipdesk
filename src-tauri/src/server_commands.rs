@@ -200,6 +200,15 @@ pub fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
     if let Some(u) = &outcome.user {
         let _ = save_signed_in_user(&state, u);
     }
+    // Auto-rotated token: stash the new value in the keychain so the
+    // next tick (and the next launch) uses it. The current request
+    // already finished against the old token; we're swapping the
+    // stored credential ahead of the next call.
+    if let Some(new_token) = &outcome.refreshed_token {
+        if let Err(e) = credentials::store(&server_url, new_token) {
+            eprintln!("failed to persist refreshed token: {e}");
+        }
+    }
     let _ = app.emit("snipdesk://server-sync", outcome.clone());
     Ok(outcome)
 }
@@ -354,6 +363,11 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     refresh_team_snippet_count(&handle, &state);
                     if let Some(u) = &outcome.user {
                         let _ = save_signed_in_user(&state, u);
+                    }
+                    if let Some(new_token) = &outcome.refreshed_token {
+                        if let Err(e) = credentials::store(&server_url, new_token) {
+                            eprintln!("background sync: failed to persist refreshed token: {e}");
+                        }
                     }
                     let _ = handle.emit("snipdesk://server-sync", outcome);
                 }

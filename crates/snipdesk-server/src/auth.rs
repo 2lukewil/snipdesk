@@ -21,8 +21,20 @@ use serde::{Deserialize, Serialize};
 use crate::error::ApiError;
 use crate::http::AppState;
 
-/// 24-hour session lifetime - matches docs/server-design.md.
-pub const SESSION_TTL_HOURS: i64 = 24;
+/// Session lifetime: 30 days. Plus per-request auto-rotation in
+/// `/api/me` (see `handlers::auth::me`) means a desktop client that
+/// touches the server at least once every two weeks stays signed in
+/// indefinitely - the user re-enters credentials only after a real
+/// gap in usage. Short enough that a stolen device's session
+/// eventually expires on its own; the `AuthUser` extractor's
+/// per-request `is_disabled` check is the immediate-revocation path.
+pub const SESSION_TTL_HOURS: i64 = 24 * 30;
+
+/// When a token has fewer than this many hours left, `/api/me` issues
+/// a fresh one alongside the normal response. Picked so a once-a-week
+/// user keeps rolling without re-login, but tokens still rotate often
+/// enough that a long-stolen JWT eventually ages out.
+pub const REFRESH_THRESHOLD_HOURS: i64 = 24 * 14;
 
 /// Pre-computed sentinel hash used in `verify_password_constant_time`.
 /// When a login attempt names an unknown user we still run a verify

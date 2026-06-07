@@ -513,6 +513,11 @@ async function init() {
     // Initial paint when settings opens; load once at boot too so the
     // signed-in state is ready by the time Settings is opened.
     await loadServerStatus();
+    // Heartbeat + focus-sync wiring runs once at startup. Both bail
+    // immediately when not signed in, so they're cheap when the user
+    // is offline / never set up sync.
+    startServerHeartbeat();
+    attachFocusSync();
   }
 
   await listen("snipdesk://first-run", async () => {
@@ -2116,6 +2121,10 @@ async function doSaveEditor({ title, body, tags, folder_path }) {
       }
     }
     await refresh();
+    // Push the create/edit to the server immediately so the change
+    // appears on other devices (and in the admin dashboard) without
+    // waiting for the next 5-minute background tick.
+    syncIfTeams();
   } catch (err) {
     // Surface the failure inside the editor (the main status bar is hidden
     // behind this modal at default window size).
@@ -2180,6 +2189,9 @@ async function deleteCurrent() {
     await invoke("delete_snippet", { id: s.id });
     setStatus("Snippet deleted", "ok");
     await refresh();
+    // Push the tombstone to the server now so it shows up in the user's
+    // Trash modal immediately, not only after the next 5-min tick.
+    syncIfTeams();
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
   }
@@ -2315,6 +2327,9 @@ async function bulkDelete(ids) {
     fail ? "err" : "ok"
   );
   await refresh();
+  // Bulk deletes also push immediately - same UX rationale as the
+  // single-delete path.
+  syncIfTeams();
 }
 
 // Move a single snippet via the folder picker. Used by the snippet context
@@ -3183,6 +3198,62 @@ function escapeHtmlBasic(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/// Fire a server sync in the background if we're signed in. Doesn't
+/// block the caller - errors are logged but swallowed because the
+/// mutation that triggered this sync already succeeded locally; the
+/// next regular sync tick will retry the push.
+///
+/// Called after every local snippet create / edit / delete so the
+/// server sees the change immediately rather than waiting up to 5
+/// minutes for the background sync. Heartbeat-style ticks live
+/// separately (see startServerHeartbeat).
+function syncIfTeams() {
+  if (!TEAMS_BUILD) return;
+  if (!state.serverStatus?.signed_in) return;
+  invoke("server_sync_now").catch((err) => {
+    console.debug("background sync after mutation failed:", err);
+  });
+}
+
+/// 60-second heartbeat that flushes any unsynced data + updates the
+/// server's last_seen for this user. The AuthUser extractor on the
+/// server side bumps last_seen_at on every authenticated request, so
+/// any cheap authenticated call gets the side effect; we use the
+/// full sync_now because it also pushes pending dirty rows. The
+/// alternative (a dedicated /api/heartbeat that does nothing
+/// expensive) would let us run faster, but at 60s cadence the cost
+/// of a full sync_now is negligible and the bonus is that the user's
+/// data stays fresh on the server even when they aren't actively
+/// editing.
+///
+/// Kicked off on app launch and on every successful sign-in.
+let serverHeartbeatTimer = null;
+function startServerHeartbeat() {
+  if (!TEAMS_BUILD) return;
+  if (serverHeartbeatTimer) return;
+  serverHeartbeatTimer = setInterval(() => {
+    if (!state.serverStatus?.signed_in) return;
+    // Sneak past the standard background-sync interval (which runs
+    // every 5 minutes); this is a "keep state warm" tick, not a
+    // full reconciliation. Errors are silent - the background loop
+    // will eventually retry.
+    invoke("server_sync_now").catch((err) => {
+      console.debug("heartbeat sync failed:", err);
+    });
+  }, 60_000);
+}
+
+/// Window-focus listener. Fires a sync the moment the user comes
+/// back to the app from another window. Doesn't double-fire with the
+/// heartbeat because syncIfTeams is idempotent at the server level
+/// (no-op if nothing changed).
+function attachFocusSync() {
+  if (!TEAMS_BUILD) return;
+  window.addEventListener("focus", () => {
+    syncIfTeams();
+  });
 }
 
 async function loadServerStatus() {

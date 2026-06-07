@@ -64,6 +64,80 @@ pub struct Config {
     /// plaintext requests).
     #[serde(default)]
     pub secure_cookies: bool,
+
+    /// Knobs the stats page uses to translate snippet usage into
+    /// time / money saved. Defaults are AUD-denominated since we
+    /// normalise all displayed money to AUD on the dashboard.
+    #[serde(default)]
+    pub stats: StatsConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StatsConfig {
+    /// Words-per-minute assumed for the "time saved by not typing
+    /// this manually" estimate. 80 wpm is a fast-but-realistic
+    /// support-agent typing speed; the desktop client also defaults
+    /// to 40, but the dashboard estimate is "what if everyone typed
+    /// at a brisk pace" so we lean higher.
+    #[serde(default = "default_stats_wpm")]
+    pub wpm: u32,
+
+    /// Hourly wage in `currency`. Multiplied by saved hours to get
+    /// the money-saved estimate. Defaults to AUD 25/hr - replace
+    /// with your team's real number if you want the dashboard to
+    /// be meaningful.
+    #[serde(default = "default_stats_wage")]
+    pub hourly_wage: f64,
+
+    /// Currency code the wage is expressed in. Anything that isn't
+    /// AUD is converted to AUD on the dashboard using the rates
+    /// table below; if a code isn't in the table we treat the
+    /// wage as already-AUD and warn in the logs.
+    #[serde(default = "default_stats_currency")]
+    pub currency: String,
+
+    /// Exchange rates relative to AUD (1 unit of <code> = N AUD).
+    /// Used to normalise the configured wage into AUD for display.
+    /// Operators can override the defaults via config when rates
+    /// drift materially - the values shipped are approximate
+    /// long-term averages, not live FX.
+    #[serde(default = "default_stats_rates")]
+    pub aud_rates: std::collections::HashMap<String, f64>,
+}
+
+impl Default for StatsConfig {
+    fn default() -> Self {
+        Self {
+            wpm: default_stats_wpm(),
+            hourly_wage: default_stats_wage(),
+            currency: default_stats_currency(),
+            aud_rates: default_stats_rates(),
+        }
+    }
+}
+
+fn default_stats_wpm() -> u32 {
+    80
+}
+fn default_stats_wage() -> f64 {
+    25.0
+}
+fn default_stats_currency() -> String {
+    "AUD".to_string()
+}
+fn default_stats_rates() -> std::collections::HashMap<String, f64> {
+    // Approximate long-term averages. Operators override in config
+    // when their accounting wants real FX. We don't try to fetch live
+    // rates - the dashboard estimate is order-of-magnitude, not
+    // accounting-grade.
+    let mut m = std::collections::HashMap::new();
+    m.insert("AUD".to_string(), 1.0);
+    m.insert("USD".to_string(), 1.50);
+    m.insert("EUR".to_string(), 1.65);
+    m.insert("GBP".to_string(), 1.95);
+    m.insert("CAD".to_string(), 1.10);
+    m.insert("NZD".to_string(), 0.92);
+    m
 }
 
 fn default_tombstone_retention_days() -> u32 {

@@ -33,6 +33,7 @@ async fn make_app() -> axum::Router {
         jwt_secret: "test-jwt-secret-not-for-production".into(),
         oidc_google: None,
         secure_cookies: false,
+        stats: snipdesk_server::config::StatsConfig::default(),
     };
     router(state)
 }

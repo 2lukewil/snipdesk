@@ -15,6 +15,20 @@ data_dir = "./data"
 # Leave blank until auth lands.
 jwt_secret = ""
 
+# Dashboard stats-page knobs. Optional; the defaults estimate using
+# 80 wpm at AUD $25/hr. The dashboard normalises money to AUD using
+# the rates below; override these (or just set `currency = "AUD"` and
+# `hourly_wage` directly) when your team thinks in different money.
+#
+# [stats]
+# wpm = 80
+# hourly_wage = 25.0
+# currency = "AUD"
+# [stats.aud_rates]
+# AUD = 1.0
+# USD = 1.50
+# EUR = 1.65
+
 [crypto]
 # Master encryption key for personal-snippet payloads. In priority order:
 #   1. SNIPDESK_MASTER_KEY env var (preferred for containers).

@@ -578,45 +578,131 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     .await
     .unwrap_or_default();
 
+    // Sum of plaintext sizes across every live personal + library
+    // snippet, used for the time/money-saved estimates. AES-GCM
+    // doesn't pad, so plaintext_len == ciphertext_len - 16 (the
+    // auth tag). Library bodies are stored plaintext so their
+    // LENGTH(body) is the literal answer.
+    //
+    // The estimate sums plaintext characters across the whole
+    // inventory ONCE - we don't multiply by usage_count because
+    // the server doesn't see per-snippet use counts (those live
+    // on the desktop). The dashboard label calls this "estimated
+    // characters in your library" rather than "characters typed
+    // by users" to keep the framing honest. A v1.1 upgrade would
+    // sync the client's usage_count to the server and the
+    // estimate would become "actual hours saved".
+    let total_personal_chars: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(LENGTH(payload_ciphertext) - 16), 0) \
+         FROM personal_snippets WHERE is_deleted = 0",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let total_library_chars: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(LENGTH(body)), 0) \
+         FROM library_snippets WHERE is_deleted = 0",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let total_chars = (total_personal_chars + total_library_chars).max(0) as f64;
+
+    // Time saved: chars / (wpm * 5 chars/word) = hours. The 5-char
+    // word is the standard typing-speed constant.
+    let wpm = state.stats.wpm.max(1) as f64;
+    let hours_saved = total_chars / (wpm * 5.0 * 60.0);
+
+    // Money saved: hours * hourly_wage, normalised to AUD via the
+    // configured rate table. If the configured currency isn't in
+    // the table we treat the wage as already-AUD and log a warning
+    // so the operator can fix it.
+    let rate_aud = state
+        .stats
+        .aud_rates
+        .get(&state.stats.currency)
+        .copied()
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                "stats.currency '{}' not in aud_rates table; treating wage as AUD",
+                state.stats.currency
+            );
+            1.0
+        });
+    let wage_aud = state.stats.hourly_wage * rate_aud;
+    let money_saved_aud = hours_saved * wage_aud;
+
     let mut body = String::new();
     body.push_str("<h1>Server stats</h1>");
-    body.push_str("<p class=\"muted\">Activity snapshot. Counts exclude tombstoned (soft-deleted) rows except where noted.</p>");
+    body.push_str(
+        "<p class=\"muted\">Activity snapshot. Click the &times; on any card to hide it; \
+         hidden cards remember per browser. <a href=\"#\" id=\"stats-reset\">Reset</a> \
+         brings them all back.</p>",
+    );
 
-    body.push_str("<div class=\"stats-grid\">");
+    body.push_str("<div class=\"stats-grid\" id=\"stats-grid\">");
     body.push_str(&stat_card(
+        "users",
         "Users",
         &counts.total_users.to_string(),
         "total accounts",
     ));
     body.push_str(&stat_card(
+        "active",
         "Active (30 days)",
         &counts.active_users.to_string(),
         "last_seen in the last 30 days",
     ));
     body.push_str(&stat_card(
+        "admins",
         "Admins",
         &counts.admin_users.to_string(),
         "users with the admin role",
     ));
     body.push_str(&stat_card(
+        "disabled",
         "Disabled",
         &counts.disabled_users.to_string(),
         "blocked from signing in",
     ));
     body.push_str(&stat_card(
+        "personal",
         "Personal snippets",
         &counts.total_snippets.to_string(),
         "live rows, encrypted at rest",
     ));
     body.push_str(&stat_card(
+        "tombstones",
         "Tombstones",
         &counts.tombstoned_snippets.to_string(),
         "deleted, awaiting purge",
     ));
     body.push_str(&stat_card(
+        "library",
         "Library snippets",
         &counts.library_snippets.to_string(),
         "shared with every member",
+    ));
+    body.push_str(&stat_card(
+        "inventory",
+        "Inventory size",
+        &format_thousands(total_chars as i64),
+        "plaintext characters across all live snippets",
+    ));
+    let wpm = state.stats.wpm;
+    let wage = state.stats.hourly_wage;
+    let curr = &state.stats.currency;
+    body.push_str(&stat_card(
+        "hours",
+        "Hours saved (est.)",
+        &format!("{hours_saved:.1}"),
+        &format!("if a {wpm} wpm typist had to write every snippet by hand"),
+    ));
+    body.push_str(&stat_card(
+        "money",
+        "Money saved (est.)",
+        &format!("A${money_saved_aud:.0}"),
+        &format!("{hours_saved:.1} hours at {wage:.2} {curr}/hr, normalised to AUD"),
     ));
     body.push_str("</div>");
 
@@ -664,24 +750,97 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     }
     body.push_str("</div>");
     body.push_str("</div>");
+    body.push_str(STATS_PAGE_JS);
 
     render_page(&state, &session, "Stats", NavTab::Stats, &body)
         .await
         .into_response()
 }
 
-fn stat_card(label: &str, value: &str, hint: &str) -> String {
+fn stat_card(id: &str, label: &str, value: &str, hint: &str) -> String {
+    // `data-card-id` lets the per-admin localStorage hide list refer
+    // to cards stably across renders. The close button is wired up
+    // by STATS_PAGE_JS below; on click it toggles the card's hidden
+    // class and persists the id to localStorage so the choice
+    // survives reloads.
     format!(
-        "<div class=\"stat-card\">\
+        "<div class=\"stat-card\" data-card-id=\"{id_safe}\">\
+           <button type=\"button\" class=\"stat-close\" aria-label=\"Hide card\">&times;</button>\
            <div class=\"stat-value\">{value_safe}</div>\
            <div class=\"stat-label\">{label_safe}</div>\
            <div class=\"stat-hint\">{hint_safe}</div>\
          </div>",
+        id_safe = escape_html(id),
         value_safe = escape_html(value),
         label_safe = escape_html(label),
         hint_safe = escape_html(hint),
     )
 }
+
+/// Format an i64 with thousands separators. SQLite doesn't have
+/// FORMAT() and pulling in a numeric-formatting crate for one call
+/// would be silly.
+fn format_thousands(n: i64) -> String {
+    let s = n.abs().to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in bytes.iter().enumerate() {
+        if i != 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*c as char);
+    }
+    if n < 0 {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
+/// Inline JS for the stats page: per-admin hide/show persistence in
+/// localStorage. Doesn't need to coordinate with the server because
+/// it's purely a display preference; storing it server-side would
+/// also mean each admin's view is "their" view across browsers,
+/// which is overkill for v1.
+const STATS_PAGE_JS: &str = r#"<script>
+(function () {
+  var KEY = "snipdesk-hidden-stat-cards";
+  function loadHidden() {
+    try { return JSON.parse(localStorage.getItem(KEY) || "[]"); }
+    catch (_e) { return []; }
+  }
+  function saveHidden(list) {
+    try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (_e) {}
+  }
+  function applyHidden() {
+    var hidden = loadHidden();
+    document.querySelectorAll(".stat-card[data-card-id]").forEach(function (el) {
+      el.classList.toggle("hidden", hidden.indexOf(el.getAttribute("data-card-id")) !== -1);
+    });
+  }
+  applyHidden();
+  document.body.addEventListener("click", function (e) {
+    var closeBtn = e.target.closest && e.target.closest(".stat-close");
+    if (closeBtn) {
+      var card = closeBtn.closest(".stat-card[data-card-id]");
+      if (card) {
+        var id = card.getAttribute("data-card-id");
+        var hidden = loadHidden();
+        if (hidden.indexOf(id) === -1) hidden.push(id);
+        saveHidden(hidden);
+        card.classList.add("hidden");
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.target && e.target.id === "stats-reset") {
+      e.preventDefault();
+      saveHidden([]);
+      applyHidden();
+    }
+  });
+})();
+</script>"#;
 
 /// Inline "Create user" form. Lives at the top of the users page so an
 /// admin can add a teammate without poking around. Submitted via htmx
@@ -1063,7 +1222,8 @@ pub async fn library_page(
     body.push_str("<div class=\"library-layout\">");
     body.push_str(
         "<aside class=\"library-sidebar\" id=\"library-sidebar\" \
-        hx-get=\"/dashboard/library/folders\" hx-trigger=\"every 10s\" \
+        hx-get=\"/dashboard/library/folders\" \
+        hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null]\" \
         hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">",
     );
     body.push_str(&render_library_folder_tree(&rows, &selected));
@@ -1078,11 +1238,15 @@ pub async fn library_page(
     body.push_str(&library_create_form(&selected));
     // Polls every 5s so another admin's adds / edits / deletes surface
     // without a manual refresh. The folder filter rides along via
-    // hx-include on the hidden input above.
+    // hx-include on the hidden input above. The JS-expression gate on
+    // the trigger skips the poll when an inline edit form is open,
+    // otherwise the next tick would wipe whatever the admin was
+    // typing - the poll swaps the whole tbody's innerHTML, including
+    // their half-finished edit.
     body.push_str(
         "<div class=\"library-list\" id=\"library-list\" \
               hx-get=\"/dashboard/library/cards\" \
-              hx-trigger=\"every 5s\" \
+              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null]\" \
               hx-include=\"#library-folder-input\" \
               hx-swap=\"innerHTML\">",
     );
@@ -1277,10 +1441,11 @@ fn library_create_form(selected: &str) -> String {
              <label>Folder<input type=\"text\" name=\"folder_path\" \
                 placeholder=\"e.g. Replies/Billing\" value=\"{prefill}\" /></label>\
            </div>\
-           <label>Body\
+           <div class=\"field-block\" role=\"group\" aria-label=\"Body\">\
+             <span>Body</span>\
              <div class=\"format-toolbar\" data-target=\"lib-create-body\">{toolbar}</div>\
              <textarea id=\"lib-create-body\" name=\"body\" required></textarea>\
-           </label>\
+           </div>\
            <label>Tags (comma-separated)\
              <input type=\"text\" name=\"tags\" placeholder=\"billing, refund\" /></label>\
            <div class=\"actions\"><button class=\"primary\" type=\"submit\">Add to library</button></div>\
@@ -1361,10 +1526,11 @@ fn render_library_edit_form(r: &LibraryRow) -> String {
              <label>Folder<input type=\"text\" name=\"folder_path\" \
                 placeholder=\"e.g. Replies/Billing\" value=\"{folder_attr}\" /></label>\
            </div>\
-           <label>Body\
+           <div class=\"field-block\" role=\"group\" aria-label=\"Body\">\
+             <span>Body</span>\
              <div class=\"format-toolbar\" data-target=\"lib-edit-body-{id_attr}\">{toolbar}</div>\
              <textarea id=\"lib-edit-body-{id_attr}\" name=\"body\" required>{body_text}</textarea>\
-           </label>\
+           </div>\
            <label>Tags (comma-separated)\
              <input type=\"text\" name=\"tags\" value=\"{tags_attr}\" placeholder=\"billing, refund\" /></label>\
            <div class=\"actions\">\

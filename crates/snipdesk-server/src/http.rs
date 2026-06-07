@@ -15,7 +15,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::trace::TraceLayer;
 
-use crate::config::{GoogleOidcConfig, MasterKey};
+use crate::config::{GoogleOidcConfig, MasterKey, StatsConfig};
 use crate::handlers;
 
 /// Shared application state. Cloned per handler invocation; `pool` and
@@ -37,6 +37,10 @@ pub struct AppState {
     /// Dashboard session cookie gets the `Secure` attribute when this
     /// is `true`. Forwarded from `secure_cookies` in the TOML config.
     pub secure_cookies: bool,
+    /// Stats-page knobs (wpm / wage / currency conversion). Cheap
+    /// to clone (small map of FX rates) - we pass by value rather
+    /// than Arc-wrap.
+    pub stats: StatsConfig,
 }
 
 pub fn router(state: AppState) -> Router {

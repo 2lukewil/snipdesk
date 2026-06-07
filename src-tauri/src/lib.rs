@@ -55,7 +55,7 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -69,7 +69,17 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         // Remember the main window's last size/position across launches.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build());
+
+    // Teams build only: shell for opening the system browser at OIDC
+    // start time, deep-link for receiving the snipdesk://auth?token=...
+    // callback. on_open_url is wired in setup() below.
+    #[cfg(feature = "teams")]
+    let builder = builder
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_deep_link::init());
+
+    builder
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -113,6 +123,27 @@ pub fn run() {
                 // from the legacy team-library polling because the
                 // cadences and auth model are different.
                 server_commands::start_server_sync_thread(app.handle().clone());
+
+                // Wire the snipdesk:// URL handler. The OAuth landing
+                // page in the user's browser fires
+                // `snipdesk://auth?token=<jwt>`; the OS hands it to
+                // the running Tauri app; this closure extracts the
+                // token, persists it via credentials::store under the
+                // currently-configured server URL, then triggers a
+                // sync so the UI updates without waiting for the
+                // 5-minute background tick. Errors get logged but
+                // don't crash - a malformed URL just produces a no-op.
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle_for_deeplink = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        if let Err(e) =
+                            server_commands::handle_oidc_deep_link(&handle_for_deeplink, &url)
+                        {
+                            eprintln!("oidc deep link handling failed: {e}");
+                        }
+                    }
+                });
             }
 
             // --- System tray ---
@@ -402,6 +433,10 @@ pub fn run() {
             server_commands::server_trash_list,
             #[cfg(feature = "teams")]
             server_commands::server_trash_restore,
+            #[cfg(feature = "teams")]
+            server_commands::server_oidc_start_url,
+            #[cfg(feature = "teams")]
+            server_commands::server_oidc_paste_token,
             commands::capture_selection_for_snippet,
             commands::open_logs_folder,
             commands::open_backups_folder,

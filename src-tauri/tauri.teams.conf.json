@@ -5,11 +5,35 @@
   "build": {
     "beforeBuildCommand": ""
   },
+  "app": {
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "teams",
+          "description": "Teams-only: shell + deep-link for OIDC sign-in.",
+          "windows": ["main"],
+          "permissions": [
+            {
+              "identifier": "shell:allow-open",
+              "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+            },
+            "deep-link:default"
+          ]
+        }
+      ]
+    }
+  },
   "plugins": {
     "updater": {
       "endpoints": [
         "https://github.com/2lukewil/snipdesk/releases/latest/download/snipdesk-teams-update.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["snipdesk"]
+      }
     }
   }
 }

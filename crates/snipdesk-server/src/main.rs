@@ -132,6 +132,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         pool: pool.clone(),
         master_key: Arc::new(master_key),
         jwt_secret: cfg.jwt_secret.clone().unwrap_or_default(),
+        oidc_google: cfg.oidc.google.clone(),
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(

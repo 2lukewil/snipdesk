@@ -337,6 +337,23 @@
                     <button id="btn-server-login" class="btn-primary" type="button">Sign in</button>
                     <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
                   </div>
+                  <div class="server-sso-divider"><span>or</span></div>
+                  <button id="btn-server-oidc" class="btn-secondary server-oidc-btn" type="button">Sign in with Google</button>
+                  <details class="server-paste-fallback">
+                    <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
+                    <p class="hint-block">
+                      If the browser callback page didn't auto-launch SnipDesk after
+                      signing in with Google, copy the token shown on that page and
+                      paste it below.
+                    </p>
+                    <label>
+                      <span>Sign-in token</span>
+                      <input id="set-server-paste-token" type="text" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <div class="server-auth-actions">
+                      <button id="btn-server-paste-token" class="btn-primary" type="button">Use this token</button>
+                    </div>
+                  </details>
                 </div>
 
                 <div id="server-signed-in" class="hidden">

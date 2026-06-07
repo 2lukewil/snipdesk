@@ -40,6 +40,15 @@ base64 = "0.22"
 argon2 = "0.5"
 jsonwebtoken = "9"
 
+# OIDC for "Sign in with Google" (and any future OIDC providers). The
+# crate handles PKCE, discovery, ID token verification with Google's
+# JWKS, and the nonce binding - rolling those by hand is a footgun.
+openidconnect = "3"
+url = "2"
+# Used by the OIDC callback page to safely URL-encode the JWT before
+# appending it to the snipdesk:// deep link.
+urlencoding = "2"
+
 # Config + CLI
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }

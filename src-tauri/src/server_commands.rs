@@ -228,6 +228,95 @@ pub fn handle_account_inactive(app: &AppHandle, state: &AppState, server_url: &s
     let _ = app.emit("snipdesk://server-signed-out", ());
 }
 
+/// Called from the deep-link handler in lib.rs when the OS hands us a
+/// snipdesk:// URL. Pulls the token out of the query string, validates
+/// it via /api/me (catches paste mistakes, expired returns, mismatch
+/// against current server_url), persists to keychain, and emits the
+/// usual server-sync event so the frontend redraws.
+pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), String> {
+    // We only act on snipdesk://auth?token=... - any other path is
+    // silently ignored (the scheme is reserved for this app, but a
+    // future "snipdesk://open-snippet/abc" would land in this same
+    // handler).
+    if url.host_str() != Some("auth") {
+        return Ok(());
+    }
+    let token = url
+        .query_pairs()
+        .find(|(k, _)| k == "token")
+        .map(|(_, v)| v.into_owned())
+        .ok_or_else(|| "deep link missing token".to_string())?;
+    if token.is_empty() {
+        return Err("empty token in deep link".to_string());
+    }
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Err("no server URL configured; can't bind incoming token".to_string());
+    }
+    // Validate against the server before persisting. If the user
+    // somehow opened the deep link against the wrong server (or the
+    // token was already revoked), the /api/me call returns an error
+    // and we don't write garbage to the keychain.
+    let me = api::me(&server_url, &token).map_err(map_api_err)?;
+    credentials::store(&server_url, &token).map_err(|e| e.to_string())?;
+    save_signed_in_user(&state, &me.user)?;
+    refresh_team_snippet_count(app, &state);
+    let _ = app.emit("snipdesk://server-sync", ());
+    Ok(())
+}
+
+/// Build the URL the user should open in their browser to start the
+/// OIDC dance. The desktop side opens this with `shell::open` (the
+/// system browser), so the user gets their existing Google session.
+/// The redirect param tells the server's callback to return us via
+/// the `snipdesk://auth?token=...` deep link.
+#[tauri::command]
+pub fn server_oidc_start_url(app: AppHandle, server_url: String) -> CmdResult<String> {
+    let server_url = server_url.trim().trim_end_matches('/').to_string();
+    if server_url.is_empty() {
+        return Err("server URL is required before signing in".to_string());
+    }
+    // Persist the URL up front - the deep-link handler reads it from
+    // settings to know which server to associate the returned token
+    // with. If we waited until after the browser dance, the handler
+    // would have no idea which server's account it just signed in to.
+    let state = app.state::<AppState>();
+    persist_server_url(&app, &server_url)?;
+    let _ = state;
+    Ok(format!(
+        "{server_url}/api/auth/oidc/start?redirect=snipdesk%3A%2F%2Fauth"
+    ))
+}
+
+/// Manual fallback for the case where the deep link didn't fire (the
+/// OS didn't claim the snipdesk:// scheme, an antivirus stripped it,
+/// the user is on a corp-locked Windows config). The user copies the
+/// token from the browser landing page and pastes it into the desktop
+/// app; this command takes the pasted value, calls /api/me to confirm
+/// it's valid, and persists it to the keychain just like the deep-
+/// link path would have.
+#[tauri::command]
+pub fn server_oidc_paste_token(app: AppHandle, token: String) -> CmdResult<UserDto> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err("token is empty".to_string());
+    }
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Err("set the server URL before pasting a token".to_string());
+    }
+    // Validate via /api/me - same probe used by every sync tick - so a
+    // garbage paste returns a sensible error before we write to the
+    // keychain.
+    let me = api::me(&server_url, &token).map_err(map_api_err)?;
+    credentials::store(&server_url, &token).map_err(|e| e.to_string())?;
+    save_signed_in_user(&state, &me.user)?;
+    let _ = app.emit("snipdesk://server-sync", ());
+    Ok(me.user)
+}
+
 /// List the server-side trash for the signed-in user. Returns the
 /// `TrashView` shape verbatim from the server: id, version, payload,
 /// created_at, deleted_at. The desktop renders these in a dedicated

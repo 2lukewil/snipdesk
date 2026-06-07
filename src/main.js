@@ -373,6 +373,9 @@ const els = {
   btnServerSignup: document.getElementById("btn-server-signup"),
   btnServerLogout: document.getElementById("btn-server-logout"),
   btnServerSync: document.getElementById("btn-server-sync"),
+  btnServerOidc: document.getElementById("btn-server-oidc"),
+  setServerPasteToken: document.getElementById("set-server-paste-token"),
+  btnServerPasteToken: document.getElementById("btn-server-paste-token"),
   serverError: document.getElementById("server-error"),
   serverUserName: document.getElementById("server-user-name"),
   serverUserEmail: document.getElementById("server-user-email"),
@@ -3241,6 +3244,83 @@ async function doServerLogin() {
   }
 }
 
+/// Open the server's OIDC start URL in the system browser. The
+/// server returns us via snipdesk://auth?token=... which the deep-
+/// link handler in Rust picks up. The B fallback (paste-token form)
+/// covers the case where the OS didn't claim the URL scheme.
+async function doServerOidcStart() {
+  if (!TEAMS_BUILD) return;
+  const server_url = els.setServerUrl.value.trim();
+  if (!server_url) {
+    showServerError("Enter the server URL before signing in with Google.");
+    return;
+  }
+  clearServerError();
+  els.btnServerOidc.disabled = true;
+  els.btnServerOidc.textContent = "Opening browser...";
+  try {
+    const startUrl = await invoke("server_oidc_start_url", { serverUrl: server_url });
+    // openUrl from the Tauri shell plugin hands off to the user's
+    // default browser. Falls back to window.open if the plugin
+    // somehow isn't available (lite-build accident, etc.).
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-shell");
+      await openUrl(startUrl);
+    } catch (err) {
+      window.open(startUrl, "_blank");
+    }
+    setStatus(
+      "Browser opened. Finish signing in with Google there - SnipDesk will pick up automatically.",
+      "ok",
+    );
+  } catch (err) {
+    showServerError(String(err));
+  } finally {
+    els.btnServerOidc.disabled = false;
+    els.btnServerOidc.textContent = "Sign in with Google";
+  }
+}
+
+/// Manual fallback: user pastes the token from the browser landing
+/// page into a field, we validate via /api/me and persist it just
+/// like the deep-link path would have. Used when the OS didn't claim
+/// snipdesk:// for any reason (AV interference, corp-locked Windows,
+/// etc.).
+async function doServerPasteToken() {
+  if (!TEAMS_BUILD) return;
+  const token = (els.setServerPasteToken.value || "").trim();
+  if (!token) {
+    showServerError("Paste the sign-in token from the browser first.");
+    return;
+  }
+  // Make sure the server URL is saved before we try; the IPC needs
+  // it to know which keychain entry to write.
+  const server_url = els.setServerUrl.value.trim();
+  if (!server_url) {
+    showServerError("Enter the server URL above first.");
+    return;
+  }
+  clearServerError();
+  els.btnServerPasteToken.disabled = true;
+  els.btnServerPasteToken.textContent = "Validating...";
+  try {
+    // server_oidc_start_url persists the URL too, so calling it
+    // (and ignoring the returned URL) ensures settings are aligned
+    // even if the user pasted without ever clicking "Sign in with
+    // Google" first.
+    await invoke("server_oidc_start_url", { serverUrl: server_url });
+    await invoke("server_oidc_paste_token", { token });
+    els.setServerPasteToken.value = "";
+    await afterSignedIn();
+    setStatus("Signed in.", "ok");
+  } catch (err) {
+    showServerError(String(err));
+  } finally {
+    els.btnServerPasteToken.disabled = false;
+    els.btnServerPasteToken.textContent = "Use this token";
+  }
+}
+
 async function doServerSignup() {
   if (!TEAMS_BUILD) return;
   const server_url = els.setServerUrl.value.trim();
@@ -3639,6 +3719,9 @@ function bindEvents() {
     els.btnServerSignup.addEventListener("click", doServerSignup);
     els.btnServerLogout.addEventListener("click", doServerLogout);
     els.btnServerSync.addEventListener("click", doServerSyncNow);
+    if (els.btnServerOidc) els.btnServerOidc.addEventListener("click", doServerOidcStart);
+    if (els.btnServerPasteToken)
+      els.btnServerPasteToken.addEventListener("click", doServerPasteToken);
     if (els.trashClose) els.trashClose.addEventListener("click", closeTrashModal);
     if (els.trashModal) {
       // Click outside the card closes the modal, same UX as other

@@ -15,7 +15,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::trace::TraceLayer;
 
-use crate::config::MasterKey;
+use crate::config::{GoogleOidcConfig, MasterKey};
 use crate::handlers;
 
 /// Shared application state. Cloned per handler invocation; `pool` and
@@ -30,6 +30,10 @@ pub struct AppState {
     /// startup; empty when no auth is configured (handlers will reject
     /// then, but having the field always present keeps state lean).
     pub jwt_secret: String,
+    /// Google OIDC config when set in `[oidc.google]`. None when this
+    /// server is in password-only mode; the OIDC endpoints return a
+    /// "not configured" error instead of 500ing.
+    pub oidc_google: Option<GoogleOidcConfig>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -39,6 +43,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/logout", post(handlers::auth::logout))
         .route("/api/me", get(handlers::auth::me))
+        // OIDC / "Sign in with Google" - both endpoints are public
+        // (no AuthUser required); the start endpoint initiates the
+        // OAuth dance and the callback validates the response from
+        // Google. Returns "oidc_disabled" 400 when [oidc.google]
+        // isn't configured on this server.
+        .route("/api/auth/oidc/start", get(handlers::oidc::start))
+        .route("/api/auth/oidc/callback", get(handlers::oidc::callback))
         .route(
             "/api/snippets",
             post(handlers::snippets::create).get(handlers::snippets::list),

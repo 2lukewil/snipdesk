@@ -25,3 +25,23 @@ jwt_secret = ""
 #   snipdesk-server gen-key
 master_key = ""
 # master_key_file = "/run/secrets/snipdesk-master-key"
+
+# Optional: "Sign in with Google" via OIDC. Uncomment the section and
+# fill in the values from your Google Cloud Console OAuth client to
+# enable the desktop "Sign in with Google" button. Without this section
+# the OIDC endpoints return a clean "not configured" error and the
+# desktop stays on password sign-in.
+#
+# [oidc.google]
+# client_id = "123456789012-abcdef.apps.googleusercontent.com"
+# client_secret = "GOCSPX-replace-me"
+# # The full URL Google will redirect to. Must EXACTLY match an
+# # Authorized Redirect URI registered in the GCP console.
+# redirect_uri = "https://snipdesk.yourcompany.com/api/auth/oidc/callback"
+# # Strict Workspace lock: only accept tokens whose hd claim matches.
+# # Comment out for "any Google account" mode (the consent screen still
+# # gates who reaches sign-in, depending on External vs Internal app
+# # type in GCP).
+# required_hd = "yourcompany.com"
+# # Softer fallback: allow any email whose domain matches one of these.
+# allowed_email_domains = ["yourcompany.com"]

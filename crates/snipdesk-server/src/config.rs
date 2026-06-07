@@ -49,6 +49,13 @@ pub struct Config {
     /// entirely.
     #[serde(default = "default_tombstone_retention_days")]
     pub tombstone_retention_days: u32,
+
+    /// OIDC / Google Workspace SSO. Optional - if `[oidc.google]`
+    /// isn't set, the OIDC endpoints just return a 400 explaining
+    /// the server is in password-only mode. Set this section to
+    /// enable "Sign in with Google" from the desktop client.
+    #[serde(default)]
+    pub oidc: OidcConfig,
 }
 
 fn default_tombstone_retention_days() -> u32 {
@@ -61,6 +68,44 @@ pub struct CryptoConfig {
     pub master_key: Option<String>,
     /// Path to a file containing the base64 master key.
     pub master_key_file: Option<PathBuf>,
+}
+
+/// Optional OIDC providers. Currently only Google is wired up;
+/// extending to other providers (Microsoft, Okta) is "add another
+/// field + another handler module". For Workspace-only sign-in, set
+/// `required_hd` to the Workspace primary domain.
+#[derive(Debug, Deserialize, Default)]
+pub struct OidcConfig {
+    #[serde(default)]
+    pub google: Option<GoogleOidcConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GoogleOidcConfig {
+    /// The OAuth 2.0 client_id from Google Cloud Console. Looks like
+    /// `123456789-abcdef.apps.googleusercontent.com`.
+    pub client_id: String,
+    /// The OAuth 2.0 client secret. Source of authentication; treat
+    /// like a password. The example.toml carries a placeholder and is
+    /// committed; the real value goes in the gitignored real config.
+    pub client_secret: String,
+    /// Where Google sends the user after sign-in. Must EXACTLY match
+    /// one of the Authorized Redirect URIs registered in Google Cloud
+    /// Console. For local dev: http://127.0.0.1:8080/api/auth/oidc/callback
+    pub redirect_uri: String,
+    /// Strict: reject any ID token whose `hd` claim doesn't match
+    /// this Workspace domain. Google sets `hd` on tokens issued for
+    /// Workspace members; personal @gmail.com accounts lack it.
+    /// Combined with the consent screen being External, this is the
+    /// canonical "lock down to my Workspace" knob.
+    #[serde(default)]
+    pub required_hd: Option<String>,
+    /// Softer fallback: allow any email whose domain is in this list.
+    /// Used when `required_hd` doesn't fit (e.g. contractors with
+    /// custom-domain Gmail outside the Workspace). Empty = no email-
+    /// domain filter beyond required_hd.
+    #[serde(default)]
+    pub allowed_email_domains: Vec<String>,
 }
 
 impl Config {

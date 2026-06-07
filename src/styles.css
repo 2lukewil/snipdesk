@@ -356,6 +356,42 @@ html, body {
   letter-spacing: 0.02em;
 }
 
+/* SSO affordances in the server-signed-out panel. The divider is a
+   horizontal line with the word "or" floated centred; pure CSS so we
+   don't have to fight a JS-driven layout. */
+.server-sso-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 12px 0 8px;
+}
+.server-sso-divider::before,
+.server-sso-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.server-oidc-btn {
+  width: 100%;
+}
+.server-paste-fallback {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.server-paste-fallback summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.server-paste-fallback summary:hover {
+  color: var(--text);
+}
+
 /* Cloud glyph next to team-library snippets and folders. Small,
    muted, just enough to distinguish at a glance. */
 .snip-cloud,

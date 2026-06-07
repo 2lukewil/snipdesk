@@ -1,0 +1,435 @@
+# Deploying snipdesk-server
+
+This is the production deployment guide. For local development, the
+quick-start in [`README.md`](../README.md#self-hosting-the-teams-server)
+covers it in five lines.
+
+Audience: an ops or platform engineer setting up a real Teams
+deployment for their organization. Expects familiarity with Docker,
+reverse proxies, and TLS.
+
+## What you're deploying
+
+One binary (`snipdesk-server`) backed by a single SQLite file. No
+external dependencies. Talks HTTP on a configurable port; you
+terminate TLS at a reverse proxy in front of it.
+
+Endpoints:
+
+- `/api/health` - liveness probe (200 OK / 503 when DB unreachable).
+- `/api/auth/*`, `/api/me`, `/api/snippets/*`, `/api/library/*`,
+  `/api/admin/users/*` - JSON API for the desktop client.
+- `/` and `/dashboard/*` - htmx admin dashboard, cookie-authed,
+  admin-only.
+- `/static/*` - vendored htmx + dashboard CSS, baked into the binary.
+
+## 1. Pick where it runs
+
+Anywhere that runs Linux containers (or that you can drop a static
+Rust binary on). For most teams that means:
+
+- **A small VM** (1 vCPU / 1 GB RAM is plenty for hundreds of users
+  in tests). DigitalOcean, Hetzner, Vultr, AWS Lightsail all fine.
+- **Your existing Kubernetes cluster**, if you have one.
+- **A box under someone's desk**, if you trust your office network.
+
+Resource shape: the server is overwhelmingly idle. Hot path is one
+SQLite query per API call plus AES-GCM on writes. RAM scales with
+concurrent OIDC sign-ins (~1 KB per pending auth, capped at 1024).
+Disk grows with snippets - assume a few hundred bytes per snippet
+including the ciphertext+nonce overhead.
+
+## 2. Plan the persistent state
+
+Two things must survive process restarts and image rebuilds:
+
+- **The SQLite database** at `<data_dir>/snipdesk.db` (plus the WAL
+  and shared-memory files in the same directory). Losing this loses
+  every user's snippets.
+- **The master encryption key.** Losing this makes every encrypted
+  personal snippet permanently unreadable, even if you still have the
+  DB. Generate once, store somewhere safe, rotate only with a
+  documented procedure (see "Key rotation" below).
+
+Treat the master key like a password manager root key: backed up
+offline, multiple custodians, never committed.
+
+## 3. Generate the secrets
+
+On any machine with the snipdesk-server binary:
+
+```
+snipdesk-server gen-key         # base64 master encryption key
+snipdesk-server gen-jwt-secret  # base64 HS256 signing secret
+```
+
+Each prints one line. Pipe to your secret store of choice.
+
+The master key is the more sensitive of the two:
+
+- Lose the JWT secret -> users get bounced on next request, fix by
+  putting the secret back. No data lost.
+- Lose the master key -> every encrypted personal snippet is now
+  unrecoverable. Library snippets are still readable (they're
+  plaintext at rest).
+
+## 4. Write the config
+
+Create `snipdesk-server.toml` next to where the binary will run
+(or wherever you'll mount it inside the container):
+
+```toml
+# Public bind address. 0.0.0.0:8080 listens on all interfaces; the
+# reverse proxy in front terminates TLS.
+bind_addr = "0.0.0.0:8080"
+
+# Where the SQLite DB lives. In Docker, mount this from a named
+# volume or host path so the data survives container restarts.
+data_dir = "/var/lib/snipdesk"
+
+# HS256 signing secret for session JWTs. Output of
+# `snipdesk-server gen-jwt-secret`.
+jwt_secret = "<base64 from gen-jwt-secret>"
+
+# How long soft-deleted snippets stay around before the hourly purge
+# drops them. 90 days is the default and the right answer unless
+# users routinely sync from devices that have been offline longer.
+# Set to 0 to disable purge entirely.
+tombstone_retention_days = 90
+
+# Set true when the dashboard is reachable over HTTPS. The session
+# cookie gets the Secure attribute so browsers won't send it over
+# plain HTTP at all. Leave false for local-only dev.
+secure_cookies = true
+
+[crypto]
+# AES-256-GCM key, base64. Source priority: SNIPDESK_MASTER_KEY env
+# var > master_key_file > master_key (inline). For container
+# deployments, prefer the env var (orchestrator manages the secret)
+# or a mounted file (e.g. Docker secret).
+master_key = "<base64 from gen-key>"
+# master_key_file = "/run/secrets/snipdesk-master-key"
+
+# Optional: "Sign in with Google" via OIDC. Omit this section for
+# password-only.
+[oidc.google]
+client_id = "<from Google Cloud Console>"
+client_secret = "<from Google Cloud Console>"
+redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/callback"
+# Workspace lock: reject any token whose hd claim doesn't match.
+# Comment out for "any Google account allowed" mode.
+required_hd = "yourcompany.com"
+# Softer fallback: allow emails whose domain matches one of these.
+allowed_email_domains = ["yourcompany.com"]
+```
+
+Keep this file out of source control. The
+[`snipdesk-server.example.toml`](../crates/snipdesk-server/snipdesk-server.example.toml)
+template in the repo is gitignored at the real-config name and
+committed at the example name only.
+
+## 5. Set up Google OIDC (optional, recommended)
+
+Skip this section if you're running password-only.
+
+1. https://console.cloud.google.com/ -> create or select a project
+   you'll dedicate to SnipDesk.
+2. **APIs & Services -> OAuth consent screen.** User type
+   "External" for personal projects, "Internal" if you're using a
+   Workspace-owned GCP project (the latter restricts at the
+   consent-screen level too, not just `required_hd`). Add scopes
+   `openid`, `email`, `profile`. Add yourself as a test user if the
+   app is still in Testing.
+3. **APIs & Services -> Credentials -> Create credentials -> OAuth
+   client ID.** Application type Web application. Add an
+   **Authorized redirect URI** that matches `redirect_uri` in your
+   config exactly - typically your production URL plus
+   `/api/auth/oidc/callback`. For local dev you can add
+   `http://127.0.0.1:8080/api/auth/oidc/callback` as a second URI.
+4. Copy the `client_id` and `client_secret` into the config.
+5. **Decide on Workspace lockdown.** `required_hd` is the strict
+   knob - Google sets the `hd` claim on tokens issued to Workspace
+   members, and we reject any token whose `hd` doesn't match. Set
+   this and only your Workspace can sign in. Leave it unset and any
+   Google account that passes the consent screen can sign up.
+6. **Bootstrap the first admin.** The first user who signs up (via
+   email/password OR OIDC) is auto-promoted to admin. Sign in as
+   yourself before sharing the URL with the team, so you control the
+   admin role from the start.
+
+## 6. Container deployment (recommended)
+
+The repo ships a multi-stage `Dockerfile` at the repo root. To build
+the image yourself:
+
+```
+docker build -t snipdesk-server:latest -f Dockerfile .
+```
+
+(GitHub Actions also builds + publishes the image on `server-v*` tag
+pushes to `ghcr.io/2lukewil/snipdesk-server` - check the release
+workflow if you'd rather pull a pre-built one.)
+
+Minimal `docker-compose.yml`:
+
+```yaml
+services:
+  snipdesk-server:
+    image: snipdesk-server:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/var/lib/snipdesk
+      - ./snipdesk-server.toml:/etc/snipdesk-server.toml:ro
+    environment:
+      # Picking the master key up from an env var is preferred over
+      # the inline `master_key` in the TOML for containers - the env
+      # is orchestrator-managed, the TOML can be checked into
+      # configuration-management more safely.
+      SNIPDESK_MASTER_KEY: "${SNIPDESK_MASTER_KEY}"
+      RUST_LOG: "info,sqlx=warn,tower_http=info"
+    command: ["snipdesk-server", "--config", "/etc/snipdesk-server.toml"]
+```
+
+The container exposes only `127.0.0.1:8080` to the host - put it
+behind your reverse proxy (next section), don't open 8080 to the
+internet.
+
+## 7. Reverse proxy + TLS
+
+Pick whichever you already run. Two complete examples follow.
+
+### Caddy
+
+`Caddyfile`:
+
+```
+snippets.yourcompany.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy provisions a Let's Encrypt cert on first boot. That's the
+entire config.
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name snippets.yourcompany.com;
+
+    ssl_certificate     /etc/letsencrypt/live/snippets.yourcompany.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/snippets.yourcompany.com/privkey.pem;
+
+    # 2 MiB matches the server's own body cap so the proxy doesn't
+    # buffer a request the upstream is going to reject anyway.
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+server {
+    listen 80;
+    server_name snippets.yourcompany.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+(Cloudflare in front works fine too. Set the origin certificate or
+flexible-SSL toggle to taste; `secure_cookies = true` in the server
+config is what really matters.)
+
+## 8. First boot + admin signup
+
+```
+docker compose up -d
+docker compose logs -f snipdesk-server
+```
+
+Expect:
+
+```
+INFO snipdesk-server listening on 0.0.0.0:8080
+INFO master key loaded; preparing database
+INFO tombstone purge task starting (will sweep hourly)
+```
+
+Then in a browser, hit `https://<your-host>/` - the dashboard's
+login page. Sign up. You're admin.
+
+After bootstrap, configure your desktop client to point at the same
+URL.
+
+## 9. Operations
+
+### Health / monitoring
+
+Point your uptime check at `GET /api/health`. 200 with a JSON body
+of `{ "status": "ok", "db": true, ... }` means alive; 503 means the
+DB ping failed (disk full, file corruption, container restarting).
+
+For richer monitoring: `RUST_LOG=info` produces structured JSON logs
+on stdout (when not attached to a TTY - the dev terminal switches to
+human-readable format automatically). Ship to Loki / Vector / Datadog
+via the platform's standard container-log shipper.
+
+### Backups
+
+Two strategies, pick one:
+
+**Option A: filesystem snapshots.** Stop the container briefly, copy
+`data/snipdesk.db` (plus `.db-wal` and `.db-shm` if present), restart.
+Works for any host. Daily cron job is plenty for an internal tool.
+
+**Option B: SQLite `.backup`**. `sqlite3 /var/lib/snipdesk/snipdesk.db
+".backup '/backups/snipdesk-$(date +%Y%m%d).db'"`. Doesn't require
+a stop; SQLite handles the consistency.
+
+You must back up the master key separately. A DB without the key is
+useless for personal snippets (library snippets stay readable).
+
+### CLI / interactive console
+
+The server has user-management commands you can run from the same
+host:
+
+```
+docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users list
+docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users promote alice@example.com
+docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users reset-password alice@example.com
+```
+
+When the server is started attached to a TTY (no `-d` on
+docker-compose up), it also drops into an interactive console that
+accepts `users list`, `users promote <email>`, `stop`, etc. - useful
+for poking at things during incident response.
+
+### Updates
+
+Tagged releases at `server-v*` publish a new image to
+`ghcr.io/2lukewil/snipdesk-server`. Pull and restart:
+
+```
+docker compose pull
+docker compose up -d
+```
+
+Migrations run automatically on boot. The checksum-repair logic in
+`db.rs` handles comment-only edits to applied migrations cleanly;
+real schema changes only land via new migration files.
+
+### Tombstone purge
+
+The hourly background sweep deletes `is_deleted = 1` snippets older
+than `tombstone_retention_days`. Default 90 days. If you need to
+hold deleted data longer (legal hold, audit), bump the value and
+restart. Set to `0` to disable purging entirely.
+
+### Key rotation
+
+JWT secret rotation: just swap `jwt_secret` in the config and
+restart. Every active session is invalidated; users sign back in.
+
+Master encryption key rotation is harder. The current row format
+records `key_version` (currently always 1); the planned procedure
+adds the new key as `key_version = 2`, runs a re-encryption pass
+against existing rows, then drops the old key. The CLI subcommand
+for this is v1.1 work; for v1.0 you'd do it manually with the
+encrypt/decrypt functions in `crates/snipdesk-server/src/crypto.rs`.
+
+In other words: don't rotate the master key on a running system in
+v1.0 unless you're comfortable scripting the migration. Treat it as
+"set once, never rotate" - which is the same posture as a database
+encryption-at-rest key in most managed-database products.
+
+### Disaster recovery
+
+A user who has signed in on a desktop client has the entire library
+of their snippets cached locally in their `app_data_dir`. If the
+server permanently dies, those caches survive - users have local
+copies. Bring up a fresh server; users re-sign-up; ask each to
+**Upload existing snippets** during the migration prompt.
+
+The library (shared snippets) is harder - it lives only on the
+server. Your backup strategy covers this; without backups, library
+content needs to be recreated manually.
+
+## 10. Security posture
+
+The honest answer to "what protects user data" for v1.0:
+
+- **In transit:** TLS, at the reverse proxy.
+- **At rest, personal snippets:** AES-256-GCM with a server-held
+  master key. DB dumps reveal nothing without the key.
+- **At rest, library snippets:** plaintext, deliberately. Library
+  content is explicitly shared and intended to be visible to every
+  authenticated member.
+- **API authorization:** every personal-snippet endpoint enforces
+  `owner_id == authenticated_user.id`. Cross-user access via the
+  API is impossible.
+- **Admin dashboard:** never exposes personal snippet bodies. Admin
+  views are counts, timestamps, account metadata.
+- **OIDC token compromise:** an attacker with a stolen JWT can read
+  the victim's snippets via the API. Mitigation: 30-day TTL with
+  rolling refresh, plus admins can disable a user from the dashboard
+  to invalidate active sessions on the next request.
+- **Server compromise (shell access):** an attacker with the master
+  key + DB can decrypt all personal snippets. This is the v1
+  trust-boundary limit: the operator is inside the boundary.
+
+End-to-end encryption is the v2 upgrade path documented in
+`docs/server-design.md`. The v1 schema is forward-compatible so the
+migration won't break the wire protocol.
+
+## 11. Troubleshooting
+
+**"no master encryption key configured"** at startup: the server
+couldn't find a key via any source. Either `SNIPDESK_MASTER_KEY` env
+var is unset, `master_key_file` points at something unreadable, or
+`master_key` is missing from the config. See section 3.
+
+**"migration N was previously applied but has been modified"**:
+shouldn't happen with the in-tree migrations (the self-repair in
+`db.rs` handles comment-only edits). If you see this, a custom
+migration file is divergent from what was first applied - inspect,
+fix, restart.
+
+**Dashboard says "members can't access the dashboard"** when you
+sign in: your account is `member` not `admin`. Promote via the CLI:
+
+```
+snipdesk-server -c /etc/snipdesk-server.toml users promote you@example.com
+```
+
+**OIDC returns `redirect_uri_mismatch`**: the `redirect_uri` in your
+config doesn't EXACTLY match an Authorized Redirect URI in the
+Google Cloud Console. Add it there.
+
+**"this server doesn't have Google OIDC configured"** on the
+desktop's Sign in with Google: your config is missing the
+`[oidc.google]` section. Add it (section 5).
+
+**Server starts but immediately exits with a SQLite error**: usually
+`data_dir` is unwritable. Check container volume mounts and host
+file permissions.
+
+**Snippets aren't syncing on a client**: check the client's local
+`high_water_mark` sync state. The server-side `/api/snippets` and
+`/api/library` log lines (`tracing::info!` at debug level) show
+`since=N returned=M` - if `returned=0` even when there should be
+data, the client's cursor is past the server's data.
+
+---
+
+If something in this doc is wrong or missing, file an issue and
+include your environment + the symptom. The doc trails reality; PRs
+that move it forward are welcome.

@@ -3258,23 +3258,37 @@ async function doServerOidcStart() {
   clearServerError();
   els.btnServerOidc.disabled = true;
   els.btnServerOidc.textContent = "Opening browser...";
+  let startUrl = null;
   try {
-    const startUrl = await invoke("server_oidc_start_url", { serverUrl: server_url });
-    // openUrl from the Tauri shell plugin hands off to the user's
-    // default browser. Falls back to window.open if the plugin
-    // somehow isn't available (lite-build accident, etc.).
-    try {
-      const { openUrl } = await import("@tauri-apps/plugin-shell");
-      await openUrl(startUrl);
-    } catch (err) {
-      window.open(startUrl, "_blank");
-    }
+    startUrl = await invoke("server_oidc_start_url", { serverUrl: server_url });
+    // tauri-plugin-shell exports `open` (not `openUrl`). It hands off
+    // to the OS default browser. If it throws - permissions misconfig,
+    // plugin not loaded in this build, etc. - we DON'T silently fall
+    // back to window.open (which doesn't work from inside a Tauri
+    // webview anyway). Instead we surface the URL so the user can
+    // paste it into their browser manually.
+    const { open: openExternal } = await import("@tauri-apps/plugin-shell");
+    await openExternal(startUrl);
     setStatus(
       "Browser opened. Finish signing in with Google there - SnipDesk will pick up automatically.",
       "ok",
     );
   } catch (err) {
-    showServerError(String(err));
+    console.error("Sign in with Google failed:", err);
+    if (startUrl) {
+      // Best-fallback we can do without external tooling: copy the URL
+      // to the clipboard so the user can paste it into their browser.
+      try {
+        await navigator.clipboard.writeText(startUrl);
+        showServerError(
+          `Couldn't auto-open the browser. The sign-in URL has been copied to your clipboard - paste it into a browser tab to continue.`,
+        );
+      } catch (_clipErr) {
+        showServerError(`Couldn't open the browser: ${err}. URL: ${startUrl}`);
+      }
+    } else {
+      showServerError(String(err));
+    }
   } finally {
     els.btnServerOidc.disabled = false;
     els.btnServerOidc.textContent = "Sign in with Google";

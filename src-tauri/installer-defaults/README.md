@@ -22,20 +22,24 @@ SmartScreen and Explorer render crisply at any size.
 
 ## Wiring
 
-Add a `bundle.windows.nsis` block to `src-tauri/tauri.conf.json`
-inside `bundle`:
+Add the relevant fields to `src-tauri/tauri.conf.json`. Header,
+sidebar, and installer icon live under `bundle.windows.nsis`; the
+license file is a top-level `bundle.licenseFile` (Tauri's NSIS
+bundler picks it up automatically from there, and the same field
+covers the license shown in any other installer format we might
+add later).
 
 ```json
 "bundle": {
   "...": "(existing fields)",
   "windows": {
     "nsis": {
-      "headerImage":   "installer-defaults/header.bmp",
-      "sidebarImage":  "installer-defaults/sidebar.bmp",
-      "installerIcon": "installer-defaults/installer.ico",
-      "license":       "installer-defaults/license.rtf"
+      "headerImage": "installer-defaults/header.bmp",
+      "sidebarImage": "installer-defaults/sidebar.bmp",
+      "installerIcon": "installer-defaults/installer.ico"
     }
-  }
+  },
+  "licenseFile": "installer-defaults/license.rtf"
 }
 ```
 

@@ -217,17 +217,22 @@ function applySubs(cfg) {
 // purely-textual JSON overrides.
 const JSON_PATCHES = [];
 
-// Maps brand.json's installer.* field names to the tauri.conf.json
-// keys they patch. applyWhitelabelInstaller walks this list and,
-// for each entry whose source file is present in the bundle,
-// stages the file and rewrites the JSON path. Missing files skip
-// the override, so the stock default (whatever tauri.conf.json
-// already points at) wins per field.
+// Maps brand.json's installer.* field names to the JSON path in
+// tauri.conf.json that gets patched. applyWhitelabelInstaller
+// walks this list and, for each entry whose source file is
+// present in the bundle, stages the file and rewrites the JSON
+// path. Missing files skip the override, so the stock default
+// (whatever tauri.conf.json already points at) wins per field.
+//
+// Header / sidebar / icon live under bundle.windows.nsis; the
+// license file is a top-level bundle.licenseFile (Tauri's NSIS
+// bundler picks it up from there automatically and it doubles as
+// the license for any other installer formats we might add).
 const INSTALLER_FIELD_MAP = [
-  { field: "header_image",   nsisKey: "headerImage" },
-  { field: "sidebar_image",  nsisKey: "sidebarImage" },
-  { field: "installer_icon", nsisKey: "installerIcon" },
-  { field: "license_file",   nsisKey: "license" },
+  { field: "header_image",   jsonPath: ["bundle", "windows", "nsis", "headerImage"] },
+  { field: "sidebar_image",  jsonPath: ["bundle", "windows", "nsis", "sidebarImage"] },
+  { field: "installer_icon", jsonPath: ["bundle", "windows", "nsis", "installerIcon"] },
+  { field: "license_file",   jsonPath: ["bundle", "licenseFile"] },
 ];
 
 function setJsonPath(obj, path, value) {
@@ -304,14 +309,14 @@ function applyWhitelabelInstaller(cfg, brandConfigPath, backups) {
   const copied = [];
   let parsedConf = null;
 
-  for (const { field, nsisKey } of INSTALLER_FIELD_MAP) {
+  for (const { field, jsonPath } of INSTALLER_FIELD_MAP) {
     const filename = cfg.installer[field];
     if (typeof filename !== "string" || !filename) continue;
     const src = join(sourceDir, filename);
     if (!existsSync(src)) {
       console.warn(
         `[brand] installer.${field} declared "${filename}" but it's not in ` +
-          `the bundle; keeping the project default for ${nsisKey}.`,
+          `the bundle; keeping the project default for ${jsonPath.join(".")}.`,
       );
       continue;
     }
@@ -329,12 +334,8 @@ function applyWhitelabelInstaller(cfg, brandConfigPath, backups) {
     const dst = join(INSTALLER_ASSETS_DIR, filename);
     copyFileSync(src, dst);
     copied.push(dst);
-    setJsonPath(
-      parsedConf,
-      ["bundle", "windows", "nsis", nsisKey],
-      `installer-assets/${filename}`,
-    );
-    console.log(`[brand] override: ${nsisKey} -> installer-assets/${filename}`);
+    setJsonPath(parsedConf, jsonPath, `installer-assets/${filename}`);
+    console.log(`[brand] override: ${jsonPath.join(".")} -> installer-assets/${filename}`);
   }
 
   if (parsedConf) {

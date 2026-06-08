@@ -54,6 +54,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "headerImage": "installer-defaults/header.bmp",
+        "sidebarImage": "installer-defaults/sidebar.bmp",
+        "installerIcon": "installer-defaults/installer.ico"
+      }
+    },
+    "licenseFile": "installer-defaults/license.rtf",
     "category": "Productivity",
     "shortDescription": "Snippet launcher for support agents",
     "longDescription": "SnipDesk is a fast, searchable snippet launcher triggered by a global hotkey. Built for support agents who send similar replies many times a day."

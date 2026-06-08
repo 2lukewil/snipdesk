@@ -63,31 +63,39 @@ const extraArgs = remainingArgs;
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 
-await withBrand(async () => {
-  console.log("[build-teams] vite build --mode teams");
-  const vite = spawnSync(
-    "npx",
-    ["vite", "build", "--mode", "teams"],
-    { stdio: "inherit", env: childEnv, shell: true },
-  );
-  if (vite.status !== 0) {
-    console.error("[build-teams] vite build failed");
-    process.exit(vite.status ?? 1);
-  }
+// Throwing inside the callback instead of process.exit'ing lets
+// withBrand's finally block run and restore the worktree before
+// the error propagates. A bare process.exit() from here bypasses
+// the finally entirely - that's how a failed build used to leave
+// the tree in a substituted state until the next git restore.
+try {
+  await withBrand(async () => {
+    console.log("[build-teams] vite build --mode teams");
+    const vite = spawnSync(
+      "npx",
+      ["vite", "build", "--mode", "teams"],
+      { stdio: "inherit", env: childEnv, shell: true },
+    );
+    if (vite.status !== 0) {
+      throw new Error(`[build-teams] vite build failed (exit ${vite.status})`);
+    }
 
-  console.log(
-    `[build-teams] tauri build --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
-  );
-  const tauri = spawnSync(
-    "npx",
-    ["tauri", "build", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
-    { stdio: "inherit", env: childEnv, shell: true },
-  );
-  if (tauri.status !== 0) {
-    console.error("[build-teams] tauri build failed");
-    process.exit(tauri.status ?? 1);
-  }
-});
+    console.log(
+      `[build-teams] tauri build --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
+    );
+    const tauri = spawnSync(
+      "npx",
+      ["tauri", "build", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
+      { stdio: "inherit", env: childEnv, shell: true },
+    );
+    if (tauri.status !== 0) {
+      throw new Error(`[build-teams] tauri build failed (exit ${tauri.status})`);
+    }
+  });
+} catch (err) {
+  console.error(err.message || err);
+  process.exit(1);
+}
 
 // Normalize the Teams NSIS installer to a stable, version-less, ASCII name.
 // Tauri derives the filename from productName ("SnipDesk" -> "SnipDesk_<ver>_

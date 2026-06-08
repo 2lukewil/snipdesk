@@ -580,17 +580,26 @@ export async function withBrand(callback) {
   applyJsonPatches(cfg, backups);
   const assets = applyWhitelabelInstaller(cfg, process.env.BRAND_CONFIG, backups);
   const iconSnapshot = regenerateAppIcons(cfg, process.env.BRAND_CONFIG);
+  let restored = false;
   const restore = () => {
+    if (restored) return;
+    restored = true;
     restoreFiles(backups);
     cleanupInstallerAssets(assets);
     restoreIcons(iconSnapshot);
   };
-  const onSignal = (sig, code) => {
+  const onSignal = (code) => {
     restore();
     process.exit(code);
   };
-  process.once("SIGINT", () => onSignal("SIGINT", 130));
-  process.once("SIGTERM", () => onSignal("SIGTERM", 143));
+  process.once("SIGINT", () => onSignal(130));
+  process.once("SIGTERM", () => onSignal(143));
+  // Safety net for callers that do process.exit() from inside the
+  // callback (which would otherwise bypass the finally below).
+  // 'exit' fires synchronously when the event loop drains, after
+  // a normal return, an unhandled throw, or process.exit; restore
+  // is purely sync so it completes in time.
+  process.once("exit", restore);
   try {
     return await callback();
   } finally {

@@ -2548,9 +2548,15 @@ pub struct AuditPageQuery {
     pub page: Option<i64>,
 }
 
-/// Hard cap on page count for the audit list. Bounded so a runaway
-/// URL can't waste indefinite SELECTs against the index.
-const AUDIT_PAGE_SIZE: i64 = 50;
+/// 25 fits comfortably on a single screen for the typical desktop
+/// monitor and makes pagination easy to test (10-20 audit events is
+/// already enough to exercise the second page). The old 50 was
+/// inherited from the API list cap; for a human-skim view 25 is
+/// the right shape.
+const AUDIT_PAGE_SIZE: i64 = 25;
+/// Hard cap so a runaway `?page=99999` doesn't blow time on a
+/// pointless OFFSET. The dashboard never advertises a page above
+/// (total / AUDIT_PAGE_SIZE); this just shields the SELECT.
 const AUDIT_MAX_PAGES: i64 = 200;
 
 pub async fn audit_page(
@@ -2563,6 +2569,19 @@ pub async fn audit_page(
     };
     let page = q.page.unwrap_or(0).clamp(0, AUDIT_MAX_PAGES);
     let offset = page * AUDIT_PAGE_SIZE;
+    // Total + page count drive both the "page N of M" display and
+    // the next-link condition. The old `rows.len() == PAGE_SIZE`
+    // heuristic only worked once the first page was completely
+    // full, which made the pager look broken on small instances.
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+    let total_pages = if total == 0 {
+        1
+    } else {
+        ((total + AUDIT_PAGE_SIZE - 1) / AUDIT_PAGE_SIZE).min(AUDIT_MAX_PAGES + 1)
+    };
     let rows = crate::audit::list_recent(&state.pool, AUDIT_PAGE_SIZE, offset).await;
 
     let mut body = String::new();
@@ -2573,34 +2592,27 @@ pub async fn audit_page(
     );
 
     if rows.is_empty() {
-        body.push_str("<p class=\"muted\">No audit entries on this page.</p>");
+        body.push_str("<p class=\"muted\">No audit entries yet.</p>");
     } else {
         body.push_str("<table class=\"audit-table\"><thead><tr>");
         body.push_str("<th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th>");
         body.push_str("</tr></thead><tbody>");
         for r in &rows {
-            let details_html = r
-                .details
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|s| format!("<code>{}</code>", escape_html(s)))
-                .unwrap_or_else(|| "<span class=\"muted\">-</span>".to_string());
-            let target = match (r.target_kind.as_deref(), r.target_id.as_deref()) {
-                (Some(k), Some(i)) => format!("{}:{}", escape_html(k), escape_html(i)),
-                _ => "-".to_string(),
-            };
+            let details_html = humanize_audit_details(&r.action, r.details.as_deref());
+            let target_html =
+                humanize_audit_target(r.target_kind.as_deref(), r.target_id.as_deref());
             body.push_str(&format!(
                 "<tr>\
                    <td class=\"audit-when\">{when}</td>\
                    <td>{actor}</td>\
-                   <td><code>{action}</code></td>\
+                   <td>{action}</td>\
                    <td>{target}</td>\
                    <td class=\"audit-details\">{details}</td>\
                  </tr>",
                 when = format_relative(r.at),
                 actor = escape_html(&r.actor_email),
-                action = escape_html(&r.action),
-                target = target,
+                action = humanize_audit_action(&r.action),
+                target = target_html,
                 details = details_html,
             ));
         }
@@ -2617,10 +2629,14 @@ pub async fn audit_page(
         body.push_str("<span class=\"muted\">&larr; Newer</span>");
     }
     body.push_str(&format!(
-        " <span class=\"muted small\">page {}</span> ",
+        " <span class=\"muted small\">page {} of {} ({} {})</span> ",
         page + 1,
+        total_pages,
+        total,
+        if total == 1 { "entry" } else { "entries" },
     ));
-    if rows.len() as i64 == AUDIT_PAGE_SIZE && page < AUDIT_MAX_PAGES {
+    let has_next = (page + 1) < total_pages && page < AUDIT_MAX_PAGES;
+    if has_next {
         body.push_str(&format!(
             "<a href=\"/dashboard/audit?page={}\">Older &rarr;</a>",
             page + 1
@@ -2633,4 +2649,178 @@ pub async fn audit_page(
     render_page(&state, &session, "Audit", NavTab::Audit, &body)
         .await
         .into_response()
+}
+
+/// Pretty-print the dotted action code: "user.update" → "User update".
+/// Keeps the raw form available in the table title attribute so an
+/// operator wanting to grep logs can still find the exact code.
+fn humanize_audit_action(action: &str) -> String {
+    let (kind, verb) = action.split_once('.').unwrap_or((action, ""));
+    let kind_title = capitalize(kind);
+    let verb_title = if verb.is_empty() {
+        String::new()
+    } else {
+        format!(" {verb}")
+    };
+    format!(
+        "<span title=\"{raw}\">{kind}{verb}</span>",
+        raw = escape_html(action),
+        kind = escape_html(&kind_title),
+        verb = escape_html(&verb_title),
+    )
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Render the target cell as a clickable link to the relevant
+/// dashboard page when we know how to navigate to one. Users get
+/// links to their detail page; library snippets link to the
+/// library list (no per-snippet detail page exists). Anything
+/// else falls back to the raw "kind:id" string.
+fn humanize_audit_target(kind: Option<&str>, id: Option<&str>) -> String {
+    match (kind, id) {
+        (Some("user"), Some(uid)) => format!(
+            "<a href=\"/dashboard/users/{uid}\" title=\"user {uid}\">user</a>",
+            uid = escape_html(uid),
+        ),
+        (Some("library"), Some(lid)) => format!(
+            "<a href=\"/dashboard/library\" title=\"library snippet {lid}\">library snippet</a>",
+            lid = escape_html(lid),
+        ),
+        (Some(k), Some(i)) => format!("{}:{}", escape_html(k), escape_html(i)),
+        _ => "<span class=\"muted\">-</span>".to_string(),
+    }
+}
+
+/// Translate the JSON `details` blob into a human-readable sentence
+/// per action. Falls back to the raw JSON (still HTML-escaped, in
+/// <code>) for any action we don't have a formatter for - so an
+/// operator never loses information, just gets nicer copy for the
+/// common cases.
+fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
+    let Some(s) = details.filter(|s| !s.is_empty()) else {
+        return "<span class=\"muted\">-</span>".to_string();
+    };
+    let parsed: Option<serde_json::Value> = serde_json::from_str(s).ok();
+    let Some(json) = parsed else {
+        return format!("<code>{}</code>", escape_html(s));
+    };
+    let get_str = |key: &str| -> Option<String> {
+        json.get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+    let get_from_to = |key: &str| -> Option<(String, String)> {
+        let obj = json.get(key)?;
+        let from = obj.get("from")?;
+        let to = obj.get("to")?;
+        Some((value_to_string(from), value_to_string(to)))
+    };
+    match action {
+        "user.create" => {
+            let email = get_str("email").unwrap_or_default();
+            let role = get_str("role").unwrap_or_default();
+            format!(
+                "Created <strong>{}</strong> as {}",
+                escape_html(&email),
+                escape_html(&role)
+            )
+        }
+        "user.update" => {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some((from, to)) = get_from_to("role") {
+                parts.push(format!(
+                    "role {} &rarr; <strong>{}</strong>",
+                    escape_html(&from),
+                    escape_html(&to)
+                ));
+            }
+            if let Some((from, to)) = get_from_to("is_disabled") {
+                // booleans round-trip through value_to_string as
+                // "true"/"false"; translate to the language an
+                // admin actually thinks in.
+                let pretty = |b: String| -> String {
+                    match b.as_str() {
+                        "true" => "disabled".to_string(),
+                        "false" => "active".to_string(),
+                        _ => b,
+                    }
+                };
+                parts.push(format!(
+                    "status {} &rarr; <strong>{}</strong>",
+                    escape_html(&pretty(from)),
+                    escape_html(&pretty(to))
+                ));
+            }
+            if parts.is_empty() {
+                "<span class=\"muted\">no fields changed</span>".to_string()
+            } else {
+                parts.join(", ")
+            }
+        }
+        "user.delete" => {
+            let email = get_str("email").unwrap_or_default();
+            if email.is_empty() {
+                "Deleted account".to_string()
+            } else {
+                format!("Deleted <strong>{}</strong>", escape_html(&email))
+            }
+        }
+        "library.create" => {
+            let title = get_str("title").unwrap_or_default();
+            let folder = get_str("folder_path").unwrap_or_default();
+            if folder.is_empty() {
+                format!("Created \"<strong>{}</strong>\"", escape_html(&title))
+            } else {
+                format!(
+                    "Created \"<strong>{}</strong>\" in <em>{}</em>",
+                    escape_html(&title),
+                    escape_html(&folder)
+                )
+            }
+        }
+        "library.update" => {
+            let title = get_str("title").unwrap_or_default();
+            let folder = get_str("folder_path").unwrap_or_default();
+            let v = json.get("to_version").and_then(|v| v.as_i64());
+            let v_suffix = v.map(|n| format!(" (v{n})")).unwrap_or_default();
+            if folder.is_empty() {
+                format!(
+                    "Updated \"<strong>{}</strong>\"{}",
+                    escape_html(&title),
+                    v_suffix
+                )
+            } else {
+                format!(
+                    "Updated \"<strong>{}</strong>\" in <em>{}</em>{}",
+                    escape_html(&title),
+                    escape_html(&folder),
+                    v_suffix
+                )
+            }
+        }
+        "library.delete" => "Deleted library snippet".to_string(),
+        // Unknown action - keep the raw JSON, but escaped + in a
+        // <code> block so the table column doesn't break HTML.
+        _ => format!("<code>{}</code>", escape_html(s)),
+    }
+}
+
+/// JSON value -> short display string. Bools render as
+/// "true"/"false"; strings unwrap; numbers display as-is; nulls
+/// and objects fall back to compact JSON.
+fn value_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(),
+    }
 }

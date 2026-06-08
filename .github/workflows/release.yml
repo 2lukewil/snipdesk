@@ -109,17 +109,107 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri:build:teams -- --bundles nsis
 
-      # ---- Manifest generation ----
-      - name: Generate update manifests
+      # ---- Vanilla manifest generation ----
+      - name: Generate vanilla update manifests
         shell: pwsh
         run: |
           .\scripts\generate-manifest.ps1 `
             -Version "${{ steps.version.outputs.VERSION }}" `
             -Notes "Release ${{ steps.version.outputs.VERSION }}. See commit history for changes."
 
-      # ---- Sanity check before publishing ----
-      - name: Verify all six release artifacts exist
+      # ---- Whitelabel build (optional) ----
+      # When secrets.BRAND_CONFIG_WHITELABEL is set, build a second
+      # pair of installers + manifests with the customer's brand
+      # overrides applied via scripts/brand.mjs. The customer's
+      # binary embeds its own updater_url pointing at the
+      # whitelabel manifest file in this same release - so one
+      # tag push services every audience and there's no extra
+      # hosting required.
+      - name: Resolve whitelabel inputs
+        id: wl
         shell: pwsh
+        env:
+          BRAND_CONFIG_VALUE: ${{ secrets.BRAND_CONFIG_WHITELABEL }}
+        run: |
+          $raw = $env:BRAND_CONFIG_VALUE
+          if (-not $raw) {
+            Write-Host "No BRAND_CONFIG_WHITELABEL secret; skipping whitelabel build."
+            "configured=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          try { $cfg = $raw | ConvertFrom-Json -ErrorAction Stop }
+          catch { Write-Error "BRAND_CONFIG_WHITELABEL is not valid JSON: $_"; exit 1 }
+          foreach ($key in 'name','identifier','teams_identifier') {
+            if (-not $cfg.$key) { Write-Error "BRAND_CONFIG_WHITELABEL missing required field: $key"; exit 1 }
+          }
+          $tmp = Join-Path $env:RUNNER_TEMP "brand.json"
+          Set-Content -Path $tmp -Value $raw -Encoding UTF8
+          # PascalCase ASCII prefix for installer filenames; defaults
+          # to name with non-alphanumerics stripped. Customers can
+          # set "slug" explicitly for a shorter or different prefix.
+          $installerPrefix = if ($cfg.slug) { $cfg.slug } else { ($cfg.name -replace '[^A-Za-z0-9]','') }
+          # kebab-case prefix for the manifest filenames; always
+          # rooted at "snipdesk-" so vanilla and whitelabel coexist
+          # cleanly in releases/latest/download/.
+          $slugLower = if ($cfg.slug) { $cfg.slug.ToLower() } else { ($cfg.name -replace '[^A-Za-z0-9]','').ToLower() }
+          "configured=true" >> $env:GITHUB_OUTPUT
+          "config_path=$tmp" >> $env:GITHUB_OUTPUT
+          "product_name=$($cfg.name)" >> $env:GITHUB_OUTPUT
+          "installer_prefix=$installerPrefix" >> $env:GITHUB_OUTPUT
+          "manifest_prefix=snipdesk-$slugLower" >> $env:GITHUB_OUTPUT
+          Write-Host "Whitelabel configured: $($cfg.name) -> installer prefix '$installerPrefix', manifest prefix 'snipdesk-$slugLower'"
+
+      - name: Build whitelabel Lite (signed)
+        if: steps.wl.outputs.configured == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BRAND_CONFIG: ${{ steps.wl.outputs.config_path }}
+        run: npm run tauri:build -- --bundles nsis
+
+      - name: Normalize whitelabel Lite installer name
+        if: steps.wl.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          PRODUCT_NAME: ${{ steps.wl.outputs.product_name }}
+          INSTALLER_PREFIX: ${{ steps.wl.outputs.installer_prefix }}
+        run: |
+          $nsis = "target\release\bundle\nsis"
+          $filter = "$($env:PRODUCT_NAME) Lite_*_x64-setup.exe"
+          $exe = Get-ChildItem $nsis -Filter $filter | Select-Object -First 1
+          if (-not $exe) { Write-Error "Whitelabel Lite NSIS installer not found (filter: $filter)"; exit 1 }
+          $target = "$($env:INSTALLER_PREFIX)-Lite-setup.exe"
+          if (Test-Path "$($exe.FullName).sig") {
+            Rename-Item "$($exe.FullName).sig" "$target.sig"
+          }
+          Rename-Item $exe.FullName $target
+          Write-Host "Renamed $($exe.Name) -> $target"
+
+      - name: Build whitelabel Teams (signed)
+        if: steps.wl.outputs.configured == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BRAND_CONFIG: ${{ steps.wl.outputs.config_path }}
+        run: npm run tauri:build:teams -- --bundles nsis
+
+      - name: Generate whitelabel update manifests
+        if: steps.wl.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          .\scripts\generate-manifest.ps1 `
+            -Version "${{ steps.version.outputs.VERSION }}" `
+            -Notes "Release ${{ steps.version.outputs.VERSION }}. See commit history for changes." `
+            -InstallerPrefix "${{ steps.wl.outputs.installer_prefix }}" `
+            -ManifestPrefix "${{ steps.wl.outputs.manifest_prefix }}"
+
+      # ---- Sanity check before publishing ----
+      - name: Verify all release artifacts exist
+        shell: pwsh
+        env:
+          WL_CONFIGURED: ${{ steps.wl.outputs.configured }}
+          WL_INSTALLER_PREFIX: ${{ steps.wl.outputs.installer_prefix }}
+          WL_MANIFEST_PREFIX: ${{ steps.wl.outputs.manifest_prefix }}
         run: |
           $expected = @(
             "target\release\bundle\nsis\SnipDesk-Lite-setup.exe",
@@ -129,12 +219,56 @@ jobs:
             "snipdesk-update.json",
             "snipdesk-teams-update.json"
           )
+          if ($env:WL_CONFIGURED -eq 'true') {
+            $expected += @(
+              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe",
+              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe.sig",
+              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe",
+              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe.sig",
+              "$($env:WL_MANIFEST_PREFIX)-update.json",
+              "$($env:WL_MANIFEST_PREFIX)-teams-update.json"
+            )
+          }
           $missing = $expected | Where-Object { -not (Test-Path $_) }
           if ($missing) {
             Write-Error "Missing release artifacts: $($missing -join ', ')"
             exit 1
           }
-          Write-Host "All six artifacts present."
+          Write-Host "All $($expected.Count) artifacts present."
+
+      # ---- Build the release-files list ----
+      # softprops/action-gh-release reads its `files:` input as a
+      # newline-separated string; we assemble it here so the
+      # whitelabel rows only appear when the build actually ran.
+      - name: Compose release file list
+        id: files
+        shell: pwsh
+        env:
+          WL_CONFIGURED: ${{ steps.wl.outputs.configured }}
+          WL_INSTALLER_PREFIX: ${{ steps.wl.outputs.installer_prefix }}
+          WL_MANIFEST_PREFIX: ${{ steps.wl.outputs.manifest_prefix }}
+        run: |
+          $lines = @(
+            "target/release/bundle/nsis/SnipDesk-Lite-setup.exe",
+            "target/release/bundle/nsis/SnipDesk-Lite-setup.exe.sig",
+            "target/release/bundle/nsis/SnipDesk-Teams-setup.exe",
+            "target/release/bundle/nsis/SnipDesk-Teams-setup.exe.sig",
+            "snipdesk-update.json",
+            "snipdesk-teams-update.json"
+          )
+          if ($env:WL_CONFIGURED -eq 'true') {
+            $lines += @(
+              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe",
+              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe.sig",
+              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe",
+              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe.sig",
+              "$($env:WL_MANIFEST_PREFIX)-update.json",
+              "$($env:WL_MANIFEST_PREFIX)-teams-update.json"
+            )
+          }
+          # Multi-line output via the GHA heredoc syntax.
+          $out = "files<<EOF`n" + ($lines -join "`n") + "`nEOF"
+          $out >> $env:GITHUB_OUTPUT
 
       # ---- Publish release ----
       - name: Create GitHub release
@@ -149,10 +283,4 @@ jobs:
           # is what makes connected clients pick up the new version.
           make_latest: 'true'
           fail_on_unmatched_files: true
-          files: |
-            target/release/bundle/nsis/SnipDesk-Lite-setup.exe
-            target/release/bundle/nsis/SnipDesk-Lite-setup.exe.sig
-            target/release/bundle/nsis/SnipDesk-Teams-setup.exe
-            target/release/bundle/nsis/SnipDesk-Teams-setup.exe.sig
-            snipdesk-update.json
-            snipdesk-teams-update.json
+          files: ${{ steps.files.outputs.files }}

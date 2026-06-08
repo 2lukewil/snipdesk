@@ -16,10 +16,30 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readdirSync, renameSync, existsSync } from "node:fs";
+import { readdirSync, renameSync, existsSync, readFileSync } from "node:fs";
 
 import { loadEnv } from "./load-env.mjs";
 import { withBrand } from "./brand.mjs";
+
+// Resolve the brand-derived names this build will produce. Reads
+// $BRAND_CONFIG up front (before withBrand restores) so the
+// post-build rename can find the file by its full productName-
+// derived prefix and emit a slug-derived stable filename. Vanilla
+// builds with no BRAND_CONFIG fall through to the historical
+// "SnipDesk" / "SnipDesk-Teams-setup.exe" pair, so the existing
+// updater URL keeps resolving.
+function resolveBrandNames() {
+  const path = process.env.BRAND_CONFIG;
+  if (!path || !existsSync(path)) {
+    return { sourcePrefix: "SnipDesk", installerPrefix: "SnipDesk" };
+  }
+  const cfg = JSON.parse(readFileSync(path, "utf8"));
+  const name = cfg.name || "SnipDesk";
+  const installerPrefix =
+    (typeof cfg.slug === "string" && cfg.slug) ||
+    name.replace(/[^A-Za-z0-9]/g, "");
+  return { sourcePrefix: name, installerPrefix };
+}
 
 // Pull signing key + passphrase from .env if present so local builds can
 // sign updater artifacts without per-shell env-var ceremony. No-op in CI.
@@ -65,19 +85,26 @@ await withBrand(async () => {
 // releases/latest/download/<name> URL constant across versions and avoids the
 // space/%20 mess the "SnipDesk Lite" name would otherwise carry. The .sig
 // signs the installer bytes, not the filename, so renaming is safe.
-// `^SnipDesk_` (underscore) matches only the Teams build, never the Lite one
-// ("SnipDesk Lite_...", a space) even when both land in the same dir in CI.
+// For brand-overridden builds the source prefix is the full
+// productName (no trailing space, since the Teams config sets
+// productName without the " Lite" suffix) and the target prefix
+// is the slug-derived ASCII form.
 const nsisDir = join(repoRoot, "target", "release", "bundle", "nsis");
+const { sourcePrefix, installerPrefix } = resolveBrandNames();
+const sourceRegex = new RegExp(
+  `^${sourcePrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}_.*_x64-setup\\.exe$`,
+);
 const built = existsSync(nsisDir)
-  ? readdirSync(nsisDir).find((f) => /^SnipDesk_.*_x64-setup\.exe$/.test(f))
+  ? readdirSync(nsisDir).find((f) => sourceRegex.test(f))
   : undefined;
 if (!built) {
   console.error(`[build-teams] could not find Teams NSIS installer in ${nsisDir}`);
   process.exit(1);
 }
+const targetExe = `${installerPrefix}-Teams-setup.exe`;
 for (const [from, to] of [
-  [built, "SnipDesk-Teams-setup.exe"],
-  [`${built}.sig`, "SnipDesk-Teams-setup.exe.sig"],
+  [built, targetExe],
+  [`${built}.sig`, `${targetExe}.sig`],
 ]) {
   const fromPath = join(nsisDir, from);
   if (existsSync(fromPath)) {

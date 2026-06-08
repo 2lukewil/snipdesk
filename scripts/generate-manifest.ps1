@@ -32,7 +32,19 @@
 param(
   [Parameter(Mandatory = $true)] [string]$Version,
   [Parameter(Mandatory = $true)] [string]$Notes,
-  [string]$RepoUrl = "https://github.com/2lukewil/snipdesk"
+  [string]$RepoUrl = "https://github.com/2lukewil/snipdesk",
+  # Prefix of the renamed installer files in target/release/bundle/nsis/.
+  # Defaults to "SnipDesk" so the vanilla flow finds SnipDesk-Lite-setup.exe
+  # / SnipDesk-Teams-setup.exe. Whitelabel builds pass their own
+  # PascalCase brand prefix (e.g. "Acme") to match the rename done in
+  # release.yml / build-teams.mjs.
+  [string]$InstallerPrefix = "SnipDesk",
+  # Prefix of the emitted manifest JSON files at the repo root. Defaults
+  # to "snipdesk" so the vanilla flow writes snipdesk-update.json /
+  # snipdesk-teams-update.json. Whitelabel builds pass their own
+  # kebab-case prefix (e.g. "snipdesk-acme") so each customer gets a
+  # distinct manifest URL in the same GitHub release.
+  [string]$ManifestPrefix = "snipdesk"
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,8 +58,8 @@ Set-Location $repoRoot
 # just build Teams; this script expects the canonical names below.)
 $nsisDir = "target\release\bundle\nsis"
 
-$offlineExe = Join-Path $nsisDir "SnipDesk-Lite-setup.exe"
-$teamsExe   = Join-Path $nsisDir "SnipDesk-Teams-setup.exe"
+$offlineExe = Join-Path $nsisDir "$InstallerPrefix-Lite-setup.exe"
+$teamsExe   = Join-Path $nsisDir "$InstallerPrefix-Teams-setup.exe"
 
 if (-not (Test-Path $offlineExe)) {
   throw "Couldn't find $offlineExe. Did the offline build + rename run?"
@@ -82,7 +94,7 @@ $offlineManifest = [ordered]@{
   platforms = @{
     "windows-x86_64" = @{
       signature = $offlineSigContent
-      url       = "$RepoUrl/releases/download/v$Version/SnipDesk-Lite-setup.exe"
+      url       = "$RepoUrl/releases/download/v$Version/$InstallerPrefix-Lite-setup.exe"
     }
   }
 }
@@ -94,13 +106,13 @@ $teamsManifest = [ordered]@{
   platforms = @{
     "windows-x86_64" = @{
       signature = $teamsSigContent
-      url       = "$RepoUrl/releases/download/v$Version/SnipDesk-Teams-setup.exe"
+      url       = "$RepoUrl/releases/download/v$Version/$InstallerPrefix-Teams-setup.exe"
     }
   }
 }
 
-$offlineOut = Join-Path $repoRoot "snipdesk-update.json"
-$teamsOut   = Join-Path $repoRoot "snipdesk-teams-update.json"
+$offlineOut = Join-Path $repoRoot "$ManifestPrefix-update.json"
+$teamsOut   = Join-Path $repoRoot "$ManifestPrefix-teams-update.json"
 
 $offlineManifest | ConvertTo-Json -Depth 6 | Set-Content -Path $offlineOut -Encoding UTF8
 $teamsManifest   | ConvertTo-Json -Depth 6 | Set-Content -Path $teamsOut   -Encoding UTF8

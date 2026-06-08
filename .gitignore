@@ -41,6 +41,14 @@ desktop.ini
 # restore, so the tracked tree never carries customer files.
 src-tauri/installer-assets/
 
+# Convenience directory for per-build brand bundles you don't want
+# to keep elsewhere on disk. Each subdirectory holds one customer's
+# brand.json + icon.png + installer-assets/. scripts/brand.mjs is
+# happy with any path passed via $BRAND_CONFIG; this is just a
+# convention so the bundles sit next to the project without ever
+# being tracked.
+brands/
+
 # snipdesk-server local state and active config. The committed file is
 # snipdesk-server.example.toml; the live config + the SQLite data
 # directory stay out of git.

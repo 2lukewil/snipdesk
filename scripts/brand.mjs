@@ -16,6 +16,7 @@
 //
 //   <bundle>/
 //     brand.json
+//     icon.png                 # optional; single master PNG (1024x1024 ideal)
 //     installer-assets/        # optional; only needed for branded NSIS chrome
 //       <whatever>.bmp / .ico / .rtf
 //
@@ -25,14 +26,15 @@
 //     "identifier":        "<lite bundle id>",      // required
 //     "teams_identifier":  "<teams bundle id>",     // required
 //     "slug":              "<filename-safe slug>",  // optional
+//     "icon_source":       "<filename>",            // optional master PNG; "icon.png" is conventional
 //     "updater_url":       "<lite updater feed>",   // optional
 //     "teams_updater_url": "<teams updater feed>",  // optional
 //     "deep_link_scheme":  "<custom URL scheme>",   // optional
 //     "server_url":        "<default server URL>",  // optional
 //     "sso_only":          true | false,            // optional
 //     "installer": {                                // optional NSIS cosmetics
-//       "header_image":   "<filename>",             //   150x57 bmp in installer-assets/
-//       "sidebar_image":  "<filename>",             //   164x314 bmp in installer-assets/
+//       "header_image":   "<filename>",             //   24-bit BMP, 150x57, in installer-assets/
+//       "sidebar_image":  "<filename>",             //   24-bit BMP, 164x314, in installer-assets/
 //       "installer_icon": "<filename>",             //   .ico for the installer chrome
 //       "license_file":   "<filename>"              //   .rtf shown on the License page
 //     }
@@ -40,11 +42,19 @@
 //
 // server_url + sso_only seed defaults in Settings::default(); end
 // users can still flip both from the Team Library settings panel.
+//
 // installer.* values are bare filenames inside the bundle's
 // installer-assets/ folder; this script copies them into
 // src-tauri/installer-assets/ for the build and removes them again
-// on restore. The src-tauri target dir is gitignored so a customer
-// build never dirties the tracked tree.
+// on restore. That target dir is gitignored so a customer build
+// never dirties the tracked tree.
+//
+// icon_source is a single PNG (ideally 1024x1024 with transparency)
+// that `tauri icon` expands into the full platform-specific app
+// icon set inside src-tauri/icons/. Before the expansion this
+// script snapshots the tracked icon files in memory; restore puts
+// the originals back so the worktree ends each build identical to
+// how it started.
 
 import {
   readFileSync,
@@ -55,13 +65,15 @@ import {
   unlinkSync,
   rmdirSync,
   readdirSync,
+  statSync,
 } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const INSTALLER_ASSETS_DIR = join(repoRoot, "src-tauri", "installer-assets");
+const APP_ICONS_DIR = join(repoRoot, "src-tauri", "icons");
 
 // Files touched by substitution. Keep this list in sync with any
 // new source that hard-codes one of the constants below.
@@ -142,15 +154,17 @@ function loadConfig() {
   return cfg;
 }
 
-function ensureClean() {
-  // Union of every file that substitution OR JSON patching may
-  // touch. `git diff --quiet -- <paths>` exits 1 when any has
-  // uncommitted changes. We refuse to substitute over uncommitted
-  // work because a mid-build crash would conflate the user's edits
-  // with the substitution and make restore unsafe.
+function ensureClean(cfg) {
+  // Union of every file that substitution OR JSON patching OR
+  // icon regen may touch. `git diff --quiet -- <paths>` exits 1
+  // when any has uncommitted changes. We refuse to substitute
+  // over uncommitted work because a mid-build crash would
+  // conflate the user's edits with the substitution and make
+  // restore unsafe.
   const watched = Array.from(
     new Set([...TARGETS, ...JSON_PATCHES.map((p) => p.target)]),
   );
+  if (cfg.icon_source) watched.push("src-tauri/icons");
   try {
     execSync(`git diff --quiet -- ${watched.join(" ")}`, {
       cwd: repoRoot,
@@ -158,7 +172,7 @@ function ensureClean() {
     });
   } catch {
     console.error(
-      "[brand] target files have uncommitted changes; commit or stash before building with $BRAND_CONFIG set:",
+      "[brand] target paths have uncommitted changes; commit or stash before building with $BRAND_CONFIG set:",
     );
     for (const t of watched) console.error(`  ${t}`);
     process.exit(1);
@@ -301,6 +315,135 @@ function stageInstallerAssets(cfg, brandConfigPath) {
   return { copied, createdDir: !targetExisted };
 }
 
+// Recursive file walker. `tauri icon` writes into subdirectories
+// (android/, ios/) under src-tauri/icons/, so a flat readdir
+// misses most of what the snapshot needs to cover.
+function walkFiles(root) {
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const p = join(dir, name);
+      try {
+        const s = statSync(p);
+        if (s.isDirectory()) stack.push(p);
+        else if (s.isFile()) out.push(p);
+      } catch {
+        // Symlink race / permissions; skip silently.
+      }
+    }
+  }
+  return out;
+}
+
+// Take a byte-perfect snapshot of every file currently under
+// src-tauri/icons/ (recursive). Used as the restore target after
+// `tauri icon` overwrites the directory with the customer's
+// generated set.
+function snapshotIconsDir() {
+  if (!existsSync(APP_ICONS_DIR)) return null;
+  const snapshot = new Map();
+  for (const p of walkFiles(APP_ICONS_DIR)) {
+    try {
+      snapshot.set(p, readFileSync(p));
+    } catch {}
+  }
+  return snapshot;
+}
+
+function restoreIcons(snapshot) {
+  if (!snapshot) return;
+  if (!existsSync(APP_ICONS_DIR)) return;
+  // Remove any file currently present that wasn't in the snapshot
+  // (`tauri icon` may have created new platform shapes).
+  for (const p of walkFiles(APP_ICONS_DIR)) {
+    if (!snapshot.has(p)) {
+      try {
+        unlinkSync(p);
+      } catch {}
+    }
+  }
+  // Write each snapshotted file back, recreating parent dirs if
+  // tauri icon happened to delete them (it shouldn't, but defensive).
+  for (const [p, bytes] of snapshot) {
+    try {
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, bytes);
+    } catch (e) {
+      console.warn(`[brand] failed to restore icon ${p}: ${e.message}`);
+    }
+  }
+  // Clean up any empty subdirectory tauri icon may have left behind
+  // (e.g. an android/ or ios/ folder that wasn't in the original
+  // tree at all). Bottom-up so deeper dirs go first.
+  removeEmptyChildDirs(APP_ICONS_DIR);
+}
+
+function removeEmptyChildDirs(root) {
+  const dirs = [];
+  const stack = [root];
+  while (stack.length) {
+    const d = stack.pop();
+    dirs.push(d);
+    let entries;
+    try {
+      entries = readdirSync(d);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const p = join(d, name);
+      try {
+        if (statSync(p).isDirectory()) stack.push(p);
+      } catch {}
+    }
+  }
+  dirs.sort((a, b) => b.length - a.length);
+  for (const d of dirs) {
+    if (d === root) continue;
+    try {
+      if (readdirSync(d).length === 0) rmdirSync(d);
+    } catch {}
+  }
+}
+
+// Run `tauri icon <master>` to populate src-tauri/icons/ with the
+// customer's full platform-specific icon set. Snapshots the
+// directory first so restore can revert; throws if tauri icon
+// fails so the caller can short-circuit the rest of the build.
+function regenerateAppIcons(cfg, brandConfigPath) {
+  if (!cfg.icon_source || !brandConfigPath) return null;
+  const bundleDir = dirname(resolve(brandConfigPath));
+  const masterPath = join(bundleDir, cfg.icon_source);
+  if (!existsSync(masterPath)) {
+    console.warn(
+      `[brand] icon_source not found at ${masterPath}; skipping app-icon regen`,
+    );
+    return null;
+  }
+  console.log(`[brand] regenerating app icons from ${masterPath}`);
+  const snapshot = snapshotIconsDir();
+  const r = spawnSync("npx", ["tauri", "icon", masterPath], {
+    stdio: "inherit",
+    shell: true,
+    cwd: repoRoot,
+  });
+  if (r.status !== 0) {
+    // Restore immediately so a partial-overwrite state never
+    // leaks into the rest of the build path.
+    restoreIcons(snapshot);
+    throw new Error(`[brand] tauri icon failed (exit ${r.status})`);
+  }
+  return snapshot;
+}
+
 function cleanupInstallerAssets(state) {
   if (!state) return;
   for (const path of state.copied) {
@@ -329,14 +472,16 @@ function cleanupInstallerAssets(state) {
 export async function withBrand(callback) {
   const cfg = loadConfig();
   if (!cfg) return await callback();
-  ensureClean();
+  ensureClean(cfg);
   console.log(`[brand] applying overrides for "${cfg.name}"`);
   const backups = applySubs(cfg);
   applyJsonPatches(cfg, backups);
   const assets = stageInstallerAssets(cfg, process.env.BRAND_CONFIG);
+  const iconSnapshot = regenerateAppIcons(cfg, process.env.BRAND_CONFIG);
   const restore = () => {
     restoreFiles(backups);
     cleanupInstallerAssets(assets);
+    restoreIcons(iconSnapshot);
   };
   const onSignal = (sig, code) => {
     restore();

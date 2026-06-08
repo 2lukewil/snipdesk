@@ -1982,13 +1982,29 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // could swallow a click as a drag start. Splitting caret out
     // means the caret's click handler is the ONLY listener for
     // that span's click event.
+    // Inner link does NOT carry draggable="false". The previous
+    // revision set that to suppress the browser's default
+    // link-drag behaviour, but it had the side effect of
+    // disabling ANY drag-initiation from clicks inside the link
+    // area - which is most of the row width. The result: only
+    // rows where the user happened to mousedown on the tiny
+    // caret/spacer slot started a drag, which manifested as
+    // "only the topmost folder is draggable" (the visually
+    // obvious caret) and looked broken for the rest.
+    //
+    // Without draggable="false", clicking the link mousedown +
+    // moving the pointer initiates a drag - browser sees the
+    // <a> as draggable by default, our body-level dragstart
+    // listener walks closest() to the row, treats it as a row
+    // drag, and overrides dataTransfer with our payload. Plain
+    // clicks (mousedown + mouseup with no movement) still
+    // navigate as expected.
     format!(
         "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
             {drop_attrs} {drag_attrs}{style}>\
            {caret}{glyph}\
-           <a class=\"lib-folder-link\" href=\"/dashboard/library?folder={href}\" \
-              draggable=\"false\">\
+           <a class=\"lib-folder-link\" href=\"/dashboard/library?folder={href}\">\
              <span class=\"label\">{label_safe}</span>\
              <span class=\"count\">{count}</span>\
            </a>\

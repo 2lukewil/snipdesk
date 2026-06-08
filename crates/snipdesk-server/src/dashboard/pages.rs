@@ -1714,24 +1714,69 @@ fn filter_library_rows<'a>(rows: &'a [LibraryRow], selected: &str) -> Vec<&'a Li
         .collect()
 }
 
-/// Build the sidebar folder list. Top three pseudo-nodes are All,
-/// Unfiled, then the actual folders sorted alphabetically. Each node
-/// carries `data-folder-path` so the drag-and-drop JS can wire up
-/// drop targets. Counts shown inline are direct (not recursive) so
-/// "Billing" shows snippets right at /Billing not under
-/// /Billing/Refunds - matches the desktop client's behaviour.
+/// Build the sidebar folder list as a nested tree. Pseudo-nodes
+/// All + Unfiled live at the top; the actual folders render in
+/// hierarchical order with indentation per slash-depth. Missing
+/// parents are synthesised (so "A/B/C" implies A and A/B nodes
+/// even if no snippet sits directly in them).
+///
+/// Counts are recursive: clicking a parent surfaces every
+/// descendant's snippets (the filter at `filter_library_rows`
+/// already matches `path` OR `path/...`), so the number we show
+/// is the same number the user will see in the card list. The
+/// previous "direct count" was confusing because the visible
+/// total didn't match.
+///
+/// Each folder node carries:
+///   - `data-folder-path` (full path) so snippet-drop knows where
+///     to land
+///   - `data-folder-source="1"` (full path again) so the folder
+///     can itself be dragged for nest/unnest operations
+///
+/// A leading "root" drop zone lets the user drop a nested folder
+/// onto it to lift it back to the top level.
 fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
-    // Direct counts per folder, plus the running total.
-    let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    // Collect every distinct folder_path that has at least one
+    // snippet, plus every ancestor segment. BTreeSet keeps the
+    // final iteration alphabetical, which is what the tree walk
+    // wants.
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut unfiled = 0i64;
     let mut all = 0i64;
     for r in rows {
         all += 1;
         match r.folder_path.as_deref() {
             None | Some("") => unfiled += 1,
-            Some(fp) => *counts.entry(fp.to_string()).or_insert(0) += 1,
+            Some(fp) => {
+                // Add the path itself + every ancestor segment so
+                // a deeply nested snippet brings its whole branch
+                // into the sidebar even if mid-tree folders are
+                // empty.
+                let mut cursor = String::new();
+                for seg in fp.split('/').filter(|s| !s.is_empty()) {
+                    if !cursor.is_empty() {
+                        cursor.push('/');
+                    }
+                    cursor.push_str(seg);
+                    paths.insert(cursor.clone());
+                }
+            }
         }
     }
+
+    // Recursive count = "snippets that show up if you click this
+    // folder", matching the filter semantics. Cheap to compute:
+    // for each path P, count rows where folder_path == P or
+    // starts_with("P/").
+    let count_for = |path: &str| -> i64 {
+        rows.iter()
+            .filter(|r| match r.folder_path.as_deref() {
+                Some(fp) if !fp.is_empty() => fp == path || fp.starts_with(&format!("{path}/")),
+                _ => false,
+            })
+            .count() as i64
+    };
+
     let mut out = String::new();
     out.push_str("<div class=\"lib-folder-header\">Folders</div>");
     out.push_str(&render_lib_folder_node(
@@ -1739,25 +1784,53 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
         "All snippets",
         all,
         selected == FOLDER_ALL,
-        false,
+        FolderNodeKind::Special,
+        0,
     ));
     out.push_str(&render_lib_folder_node(
         FOLDER_UNFILED,
         "Unfiled",
         unfiled,
         selected == FOLDER_UNFILED,
-        false,
+        FolderNodeKind::Unfiled,
+        0,
     ));
-    for (path, count) in counts {
+    // The root drop zone: dropping a folder here lifts it back to
+    // top level. Drawn as a thin band between Unfiled and the
+    // actual folders so it's discoverable without dominating.
+    out.push_str(
+        "<div class=\"lib-folder-root-drop\" data-folder-root-drop=\"1\">\
+           <span class=\"label muted small\">drop here to un-nest</span>\
+         </div>",
+    );
+
+    // Tree walk: each path renders at indent = depth (number of '/' segments).
+    // BTreeSet iteration is alphabetical, which naturally yields
+    // parents before children for any given branch.
+    for path in &paths {
+        let depth = path.matches('/').count();
+        let label = path.rsplit('/').next().unwrap_or(path);
         out.push_str(&render_lib_folder_node(
-            &path,
-            &path,
-            count,
-            selected == path,
-            true,
+            path,
+            label,
+            count_for(path),
+            selected == path.as_str(),
+            FolderNodeKind::Real,
+            depth,
         ));
     }
     out
+}
+
+/// What kind of pseudo-node we're rendering. Affects droppability
+/// (Special isn't a drop target; Unfiled accepts only snippet
+/// drops; Real accepts both snippet drops and folder-DnD drops)
+/// and draggability (only Real folders can themselves be dragged).
+#[derive(Copy, Clone)]
+enum FolderNodeKind {
+    Special, // All-snippets pseudo-node, not droppable
+    Unfiled, // Special drop target that maps to "" folder_path
+    Real,    // A real folder path; full DnD on both axes
 }
 
 fn render_lib_folder_node(
@@ -1765,22 +1838,32 @@ fn render_lib_folder_node(
     label: &str,
     count: i64,
     active: bool,
-    droppable: bool,
+    kind: FolderNodeKind,
+    depth: usize,
 ) -> String {
     let active_class = if active { " active" } else { "" };
-    let drop_attrs = if droppable {
-        "data-droppable=\"1\""
-    } else if path == FOLDER_UNFILED {
-        // Unfiled is also a valid drop target: dragging a card here
-        // means "clear this snippet's folder_path".
-        "data-droppable=\"1\" data-unfiled=\"1\""
+    // CSS reads --depth to compute padding-left; keeps the rule
+    // simple instead of generating a class per depth level.
+    let style = if depth > 0 {
+        format!(" style=\"--depth: {depth};\"")
     } else {
-        ""
+        String::new()
+    };
+    let (drop_attrs, drag_attrs) = match kind {
+        FolderNodeKind::Special => ("", ""),
+        FolderNodeKind::Unfiled => ("data-droppable=\"1\" data-unfiled=\"1\"", ""),
+        FolderNodeKind::Real => (
+            "data-droppable=\"1\"",
+            // Folders are themselves draggable so a folder-drop
+            // can pick them up for nest / unnest moves. The path
+            // doubles as the source id.
+            "draggable=\"true\" data-folder-source=\"1\"",
+        ),
     };
     format!(
         "<a class=\"lib-folder-node{active_class}\" \
             href=\"/dashboard/library?folder={href}\" \
-            data-folder-path=\"{path_attr}\" {drop_attrs}>\
+            data-folder-path=\"{path_attr}\" {drop_attrs} {drag_attrs}{style}>\
            <span class=\"label\">{label_safe}</span>\
            <span class=\"count\">{count}</span>\
          </a>",
@@ -2066,60 +2149,153 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     ta.focus();
   });
 
-  // ---- Drag-drop: move snippet into a folder ----
-  var dragging = null;
+  // ---- Drag-drop: snippets into folders, AND folders onto folders ----
+  //
+  // Two independent drag types coexist on this page:
+  //   1. A library-card being dragged onto a folder node = snippet move.
+  //   2. A folder node being dragged onto another folder node OR the
+  //      root drop zone = folder rename / nest / unnest.
+  //
+  // We disambiguate at dragstart by inspecting which element the
+  // browser handed us. `draggingKind` is "snippet" or "folder";
+  // `draggingId` is the snippet id or source folder path.
+  var draggingKind = null;
+  var draggingId = null;
+
+  function clearDropHighlights() {
+    document.querySelectorAll(
+      ".lib-folder-node.drop-target, .lib-folder-root-drop.drop-target"
+    ).forEach(function (n) { n.classList.remove("drop-target"); });
+  }
+
   document.body.addEventListener("dragstart", function (e) {
+    var folderSrc = e.target.closest &&
+      e.target.closest(".lib-folder-node[data-folder-source]");
+    if (folderSrc) {
+      draggingKind = "folder";
+      draggingId = folderSrc.getAttribute("data-folder-path") || "";
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", "folder:" + draggingId);
+      folderSrc.classList.add("dragging");
+      return;
+    }
     var card = e.target.closest && e.target.closest(".library-card[data-snippet-id]");
-    if (!card) return;
-    dragging = card.getAttribute("data-snippet-id");
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", dragging);
-    card.classList.add("dragging");
+    if (card) {
+      draggingKind = "snippet";
+      draggingId = card.getAttribute("data-snippet-id");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", draggingId);
+      card.classList.add("dragging");
+    }
   });
   document.body.addEventListener("dragend", function (e) {
-    var card = e.target.closest && e.target.closest(".library-card");
-    if (card) card.classList.remove("dragging");
-    dragging = null;
-    document.querySelectorAll(".lib-folder-node.drop-target").forEach(function (n) {
-      n.classList.remove("drop-target");
-    });
+    var dragged = e.target.closest &&
+      e.target.closest(".library-card, .lib-folder-node");
+    if (dragged) dragged.classList.remove("dragging");
+    draggingKind = null;
+    draggingId = null;
+    clearDropHighlights();
   });
   document.body.addEventListener("dragover", function (e) {
+    var rootDrop = e.target.closest && e.target.closest(".lib-folder-root-drop");
+    // Root drop only accepts folder drags. Snippets dropped on the
+    // root zone would mean "unfile" - but Unfiled already serves
+    // that purpose, so we don't double up.
+    if (rootDrop && draggingKind === "folder") {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      rootDrop.classList.add("drop-target");
+      return;
+    }
     var node = e.target.closest && e.target.closest(".lib-folder-node[data-droppable]");
     if (!node) return;
+    // A folder can't be dropped on itself or on its own descendants.
+    if (draggingKind === "folder") {
+      var target = node.getAttribute("data-folder-path") || "";
+      if (target === draggingId || target.indexOf(draggingId + "/") === 0) {
+        return;
+      }
+    }
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     node.classList.add("drop-target");
   });
   document.body.addEventListener("dragleave", function (e) {
-    var node = e.target.closest && e.target.closest(".lib-folder-node");
+    var node = e.target.closest && e.target.closest(
+      ".lib-folder-node, .lib-folder-root-drop"
+    );
     if (node) node.classList.remove("drop-target");
   });
   document.body.addEventListener("drop", function (e) {
+    var rootDrop = e.target.closest && e.target.closest(".lib-folder-root-drop");
+    if (rootDrop && draggingKind === "folder" && draggingId) {
+      e.preventDefault();
+      clearDropHighlights();
+      // Un-nest: drop on the root zone. Server treats empty `new`
+      // as "lift to root" and recomputes descendant paths.
+      var leaf = draggingId.split("/").pop();
+      submitFolderMove(draggingId, leaf || "");
+      return;
+    }
     var node = e.target.closest && e.target.closest(".lib-folder-node[data-droppable]");
-    if (!node || !dragging) return;
+    if (!node) return;
     e.preventDefault();
-    node.classList.remove("drop-target");
+    clearDropHighlights();
     var target = node.getAttribute("data-folder-path") || "";
-    // "Unfiled" maps to empty folder_path on the server side.
-    var folder = node.hasAttribute("data-unfiled") ? "" : target;
+    if (draggingKind === "snippet" && draggingId) {
+      // "Unfiled" maps to empty folder_path on the server side.
+      var folder = node.hasAttribute("data-unfiled") ? "" : target;
+      var fd = new FormData();
+      fd.append("folder_path", folder);
+      fetch("/dashboard/library/" + encodeURIComponent(draggingId) + "/move", {
+        method: "PUT",
+        body: fd,
+      }).then(function (r) {
+        if (!r.ok) { console.warn("snippet move failed", r.status); return; }
+        refreshLibrary();
+      });
+    } else if (draggingKind === "folder" && draggingId) {
+      // Nest: source becomes a child of target.
+      // The path-equal and descendant cases are already filtered in
+      // dragover (no preventDefault, so drop won't fire), but a
+      // defence-in-depth check here keeps a buggy listener from
+      // turning into a real bad request.
+      if (!target || target === draggingId || target.indexOf(draggingId + "/") === 0) {
+        return;
+      }
+      // Unfiled is a snippet-only target; folder-drop onto Unfiled
+      // is a no-op for folders.
+      if (node.hasAttribute("data-unfiled")) return;
+      var leaf = draggingId.split("/").pop();
+      submitFolderMove(draggingId, target + "/" + leaf);
+    }
+  });
+
+  function submitFolderMove(oldPath, newPath) {
     var fd = new FormData();
-    fd.append("folder_path", folder);
-    fetch("/dashboard/library/" + encodeURIComponent(dragging) + "/move", {
-      method: "PUT",
+    fd.append("old", oldPath);
+    fd.append("new", newPath);
+    fetch("/dashboard/library/folders/move", {
+      method: "POST",
       body: fd,
     }).then(function (r) {
-      if (!r.ok) { console.warn("move failed", r.status); return; }
-      // Re-fetch the cards + sidebar so the moved snippet relocates
-      // visually and the counts redraw.
-      if (window.htmx) {
-        var list = document.getElementById("library-list");
-        var sidebar = document.getElementById("library-sidebar");
-        if (list) window.htmx.trigger(list, "refresh-now");
-        if (sidebar) window.htmx.trigger(sidebar, "refresh-now");
+      if (!r.ok) {
+        r.text().then(function (msg) {
+          console.warn("folder move failed", r.status, msg);
+        });
+        return;
       }
+      refreshLibrary();
     });
-  });
+  }
+
+  function refreshLibrary() {
+    if (!window.htmx) return;
+    var list = document.getElementById("library-list");
+    var sidebar = document.getElementById("library-sidebar");
+    if (list) window.htmx.trigger(list, "refresh-now");
+    if (sidebar) window.htmx.trigger(sidebar, "refresh-now");
+  }
 
   // htmx custom trigger so the JS above can ask the polling
   // endpoints to fire on demand without waiting for the 5s tick.
@@ -2507,6 +2683,164 @@ pub async fn library_move(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct FolderMoveForm {
+    /// The folder being moved, e.g. "Replies/Billing".
+    pub old: String,
+    /// Destination path. Either a top-level name ("Outreach") or a
+    /// new parent slash-path ("Sales/Outreach"). Empty string means
+    /// "move to root" (un-nest).
+    pub new: String,
+}
+
+/// POST /dashboard/library/folders/move - nest/unnest/rename a
+/// whole folder by rewriting `folder_path` for every snippet whose
+/// path equals `old` or starts with `old/`. One audit row per
+/// move (not per affected snippet) so the log stays readable for
+/// big mass-rename operations.
+pub async fn library_folder_move(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(body): Form<FolderMoveForm>,
+) -> Response {
+    let old = body.old.trim().trim_matches('/');
+    let new = body.new.trim().trim_matches('/');
+
+    // Reject empty source - "drop nothing" isn't a real op and we
+    // don't want a typo turning into "rename root to <something>".
+    if old.is_empty() {
+        return (StatusCode::BAD_REQUEST, "old path required").into_response();
+    }
+    // Sanitise the destination. Empty is fine (means root); otherwise
+    // reject paths with double-slash or non-printable junk.
+    if !new.is_empty() && (new.contains("//") || new.contains('\n') || new.contains('\r')) {
+        return (StatusCode::BAD_REQUEST, "invalid new path").into_response();
+    }
+    // Detect the "rename a folder into itself or its descendant"
+    // case. Without this, dragging Billing onto Billing/Refunds
+    // would generate Billing/Refunds/Billing/Refunds/... in a loop
+    // that the LIKE prefix UPDATE would then mangle.
+    if !new.is_empty() && (new == old || new.starts_with(&format!("{old}/"))) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "can't move a folder into itself or one of its descendants",
+        )
+            .into_response();
+    }
+
+    // Compute every snippet that this rename touches in one read,
+    // then UPDATE one by one so each row gets a unique version
+    // bump in the global library-version stream. Doing the bumps
+    // off a pre-fetched MAX(version) avoids re-scanning the table
+    // N times.
+    let prefix = format!("{old}/");
+    let like_pattern = format!("{prefix}%");
+    let mut tx = match state.pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response();
+        }
+    };
+    let affected: Vec<(String, String)> = match sqlx::query_as(
+        "SELECT id, folder_path FROM library_snippets \
+         WHERE is_deleted = 0 \
+           AND (folder_path = ?1 OR folder_path LIKE ?2) \
+         ORDER BY id",
+    )
+    .bind(old)
+    .bind(&like_pattern)
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("select: {e}")).into_response();
+        }
+    };
+    if affected.is_empty() {
+        // Empty source folder = noop success. Lets the JS treat it
+        // as "we moved nothing" rather than 404.
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let base_version: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM library_snippets")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap_or(0);
+    let now = Utc::now().timestamp();
+
+    for (i, (id, current)) in affected.iter().enumerate() {
+        let new_path = if current == old {
+            // The folder itself: empty `new` means "move to root"
+            // (no folder); anything else becomes the literal new
+            // path.
+            new.to_string()
+        } else {
+            // Descendant: peel off the old prefix, glue on the new
+            // one. When new is empty (un-nest to root), drop the
+            // prefix and keep the suffix as the new top-level path.
+            let suffix = &current[prefix.len()..];
+            if new.is_empty() {
+                suffix.to_string()
+            } else {
+                format!("{new}/{suffix}")
+            }
+        };
+        let folder_value: Option<&str> = if new_path.is_empty() {
+            None
+        } else {
+            Some(new_path.as_str())
+        };
+        let v = base_version + 1 + i as i64;
+        if let Err(e) = sqlx::query(
+            "UPDATE library_snippets \
+             SET folder_path = ?1, version = ?2, updated_at = ?3 \
+             WHERE id = ?4",
+        )
+        .bind(folder_value)
+        .bind(v)
+        .bind(now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("update: {e}")).into_response();
+        }
+    }
+    if let Err(e) = tx.commit().await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {e}")).into_response();
+    }
+
+    // One audit row per folder move (not per snippet), with the
+    // count so an admin can sanity-check what was touched.
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: admin.user_id(),
+            actor_email: &actor_email,
+            action: "library.folder.move",
+            target_kind: Some("folder"),
+            target_id: Some(old),
+            details: Some(serde_json::json!({
+                "from": old,
+                "to": new,
+                "snippets_moved": affected.len(),
+            })),
+        },
+    )
+    .await;
+
+    (
+        StatusCode::NO_CONTENT,
+        [(
+            header::HeaderName::from_static("hx-trigger"),
+            "libraryChanged",
+        )],
+    )
+        .into_response()
+}
+
 pub async fn library_delete(
     State(state): State<AppState>,
     admin: DashboardAdmin,
@@ -2680,9 +3014,7 @@ pub async fn audit_page(
     for choice in AUDIT_PAGE_CHOICES {
         let selected = if *choice == per_page { " selected" } else { "" };
         body.push_str(&format!(
-            "<option value=\"{c}\"{sel}>{c}</option>",
-            c = choice,
-            sel = selected,
+            "<option value=\"{choice}\"{selected}>{choice}</option>"
         ));
     }
     body.push_str(

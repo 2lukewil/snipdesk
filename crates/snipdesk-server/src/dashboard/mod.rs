@@ -72,6 +72,14 @@ pub fn routes() -> Router<AppState> {
             get(pages::library_card_fragment),
         )
         .route("/dashboard/library/:id/move", put(pages::library_move))
+        // Folder rename / nest / unnest. POST not PUT because it
+        // operates on a folder name (form data) rather than a
+        // single snippet id in the path. Validates internally and
+        // mass-bumps every affected snippet's version.
+        .route(
+            "/dashboard/library/folders/move",
+            post(pages::library_folder_move),
+        )
         // Per-user detail + stats. Detail uses the same /users/:id
         // path as the JSON PUT/DELETE because GET there is unused;
         // axum routes on (path, method) so the methods coexist.

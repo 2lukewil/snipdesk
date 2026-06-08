@@ -604,3 +604,37 @@ textarea {
   color: var(--fg-dim);
 }
 .audit-perpage select { font: inherit; }
+
+/* --- Library folder tree --- */
+
+/* Indentation per slash-depth via a CSS custom property the Rust
+   side sets inline (style="--depth: 2"). Keeps the rule self-
+   contained instead of generating a class per level. */
+.lib-folder-node[style*="--depth"] {
+  padding-left: calc(8px + 14px * var(--depth, 0));
+}
+.lib-folder-node[data-folder-source] {
+  cursor: grab;
+}
+.lib-folder-node[data-folder-source].dragging {
+  opacity: 0.5;
+}
+
+/* Root drop zone for un-nesting. Subtle by default so it doesn't
+   shout; lights up when a folder drag enters. */
+.lib-folder-root-drop {
+  padding: 4px 10px;
+  margin: 2px 4px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: 11px;
+  user-select: none;
+}
+.lib-folder-root-drop.drop-target {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--bg-elev);
+  color: var(--fg);
+}

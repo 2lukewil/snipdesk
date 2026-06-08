@@ -53,6 +53,11 @@ pub struct AppState {
     /// (default) means no CORS layer is mounted at all. Read by
     /// `router()` at construction; not used by individual handlers.
     pub cors_allowed_origins: Vec<String>,
+    /// Brand name surfaced in the dashboard chrome (browser title,
+    /// nav header, login card, member-blocked page). Defaults to
+    /// "SnipDesk" via BrandConfig; deployments override via
+    /// `[brand].name` in the server TOML.
+    pub brand_name: String,
 }
 
 /// Per-route body caps, sized to the realistic payload for each

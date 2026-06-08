@@ -85,3 +85,12 @@ master_key = ""
 # required_hd = "yourcompany.com"
 # # Softer fallback: allow any email whose domain matches one of these.
 # allowed_email_domains = ["yourcompany.com"]
+
+# Brand label shown in the dashboard chrome (browser title, nav
+# header, login card, member-blocked page). Optional; defaults to
+# "SnipDesk" so an existing deployment keeps its stock name when
+# this block isn't set. Useful when the server backs a redeployment
+# that uses a different product name.
+#
+# [brand]
+# name = "Acme Snippets"

@@ -104,6 +104,7 @@ async fn render_page(
         LAYOUT,
         &[
             ("TITLE", title),
+            ("BRAND_NAME", &escape_html(&state.brand_name)),
             (
                 "USERS_ACTIVE",
                 if matches!(active, NavTab::Users) {
@@ -169,7 +170,7 @@ pub struct IndexQuery {
 }
 
 pub async fn index(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(q): Query<IndexQuery>,
     jar: CookieJar,
 ) -> Response {
@@ -196,6 +197,7 @@ pub async fn index(
         LOGIN,
         &[
             ("BANNER", banner),
+            ("BRAND_NAME", &escape_html(&state.brand_name)),
             (
                 "REDIRECT_TO",
                 &escape_html(&safe_next(q.redirect_to.as_deref())),

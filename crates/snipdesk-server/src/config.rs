@@ -92,6 +92,37 @@ pub struct Config {
     /// from the server.
     #[serde(default)]
     pub fx: Option<FxConfig>,
+
+    /// Dashboard brand strings. Lets a redeployment label its
+    /// admin dashboard with the operator's own product name
+    /// instead of "SnipDesk". Server-side branding is intentionally
+    /// minimal - just the visible labels in the layout / login /
+    /// member-blocked templates - so the binary stays reusable
+    /// across deployments.
+    #[serde(default)]
+    pub brand: BrandConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct BrandConfig {
+    /// Shown in the browser title, nav header, and login card.
+    /// Defaults to "SnipDesk" so an existing deployment that
+    /// doesn't ship a `[brand]` block continues to display the
+    /// stock name.
+    #[serde(default = "default_brand_name")]
+    pub name: String,
+}
+
+impl Default for BrandConfig {
+    fn default() -> Self {
+        Self {
+            name: default_brand_name(),
+        }
+    }
+}
+
+fn default_brand_name() -> String {
+    "SnipDesk".to_string()
 }
 
 /// Live FX feed configuration. Optional; absence keeps the server

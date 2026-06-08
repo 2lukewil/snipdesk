@@ -151,6 +151,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         stats: cfg.stats.clone(),
         fx_cache,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
+        brand_name: cfg.brand.name.clone(),
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(

@@ -117,7 +117,7 @@ impl FromRequestParts<AppState> for DashboardAdmin {
             .await
             .map_err(|r| r.into_response())?;
         if session.claims.role != "admin" {
-            return Err(member_blocked_page().into_response());
+            return Err(member_blocked_page(&state.brand_name).into_response());
         }
         Ok(Self {
             claims: session.claims,
@@ -125,8 +125,12 @@ impl FromRequestParts<AppState> for DashboardAdmin {
     }
 }
 
-fn member_blocked_page() -> impl IntoResponse {
-    let body = include_str!("templates/member_blocked.html");
+/// Substitute the brand placeholder into the static template body.
+/// Two replacements per page render is cheap and saves wiring an
+/// HTML escaper for a string we already validated as a config-time
+/// value.
+fn member_blocked_page(brand_name: &str) -> impl IntoResponse {
+    let body = include_str!("templates/member_blocked.html").replace("{{BRAND_NAME}}", brand_name);
     (
         StatusCode::FORBIDDEN,
         [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],

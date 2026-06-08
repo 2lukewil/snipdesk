@@ -12,11 +12,22 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 import { loadEnv } from "./load-env.mjs";
-import { withBrand } from "./brand.mjs";
+import { withBrand, parseBrandFlag } from "./brand.mjs";
 
 loadEnv();
 
-const extraArgs = process.argv.slice(2);
+// Lift --whitelabel=<slug|path> out of the forwarded args. When
+// present, BRAND_CONFIG gets pointed at the resolved bundle and
+// the leftover args travel on to tauri. Either of these works:
+//   npm run tauri:build -- --whitelabel=acme
+//   npm run tauri:build -- --whitelabel=acme --bundles nsis
+//   BRAND_CONFIG=brands/acme/brand.json npm run tauri:build
+const { brandConfigPath, remainingArgs } = parseBrandFlag(process.argv.slice(2));
+if (brandConfigPath) {
+  process.env.BRAND_CONFIG = brandConfigPath;
+  console.log(`[brand] using bundle: ${brandConfigPath}`);
+}
+const extraArgs = remainingArgs;
 
 const code = await withBrand(() => {
   const r = spawnSync("npx", ["tauri", "build", ...extraArgs], {

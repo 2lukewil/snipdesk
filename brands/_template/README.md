@@ -61,16 +61,33 @@ e.g. `magick in.png -type truecolor -depth 24 out.bmp`.
 ## Build locally
 
 ```bash
-BRAND_CONFIG=brands/acme/brand.json npm run tauri:build
+npm run tauri:build -- --whitelabel=acme
+npm run tauri:build:teams -- --whitelabel=acme
+```
+
+`--whitelabel=<slug>` resolves to `brands/<slug>/brand.json`. You
+can also pass a full path (`--whitelabel=/abs/path/brand.json` or
+a relative one with a slash in it) when the bundle lives outside
+`brands/`. The short alias `--wl=acme` works too. The build script
+itself runs vanilla when the flag is omitted.
+
+If you'd rather set the environment variable directly (useful in
+CI / scripts), the older form still works:
+
+```bash
+# PowerShell
+$env:BRAND_CONFIG = "brands/acme/brand.json"; npm run tauri:build:teams
+
+# bash / zsh
 BRAND_CONFIG=brands/acme/brand.json npm run tauri:build:teams
 ```
 
-`scripts/brand.mjs` substitutes the brand strings, runs
-`tauri icon` against `icon.png` to expand the platform-specific
-app-icon set, copies the present installer assets into
-`src-tauri/installer-assets/`, JSON-patches `tauri.conf.json`,
-runs the build, then restores everything. `git status` is clean
-before and after.
+Either way, `scripts/brand.mjs` substitutes the brand strings,
+runs `tauri icon` against `icon.png` to expand the
+platform-specific app-icon set, copies the present installer
+assets into `src-tauri/installer-assets/`, JSON-patches
+`tauri.conf.json`, runs the build, then restores everything.
+`git status` is clean before and after.
 
 ## Ship to CI
 

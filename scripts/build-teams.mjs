@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { readdirSync, renameSync, existsSync, readFileSync } from "node:fs";
 
 import { loadEnv } from "./load-env.mjs";
-import { withBrand } from "./brand.mjs";
+import { withBrand, parseBrandFlag } from "./brand.mjs";
 
 // Resolve the brand-derived names this build will produce. Reads
 // $BRAND_CONFIG up front (before withBrand restores) so the
@@ -47,9 +47,19 @@ loadEnv();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
+
+// Lift --whitelabel=<slug|path> out of the forwarded args. When
+// present, BRAND_CONFIG gets pointed at the resolved bundle and
+// the leftover args travel on to tauri. See tauri-build.mjs for
+// usage examples.
+const { brandConfigPath, remainingArgs } = parseBrandFlag(process.argv.slice(2));
+if (brandConfigPath) {
+  process.env.BRAND_CONFIG = brandConfigPath;
+  console.log(`[build-teams] [brand] using bundle: ${brandConfigPath}`);
+}
 // Extra args after `--` (e.g. `npm run tauri:build:teams -- --bundles nsis`)
 // are forwarded to `tauri build` so CI can scope the build to NSIS.
-const extraArgs = process.argv.slice(2);
+const extraArgs = remainingArgs;
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 

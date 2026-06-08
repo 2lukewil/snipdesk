@@ -14,13 +14,19 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadEnv } from "./load-env.mjs";
-import { withBrand } from "./brand.mjs";
+import { withBrand, parseBrandFlag } from "./brand.mjs";
 
 loadEnv();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
-const extraArgs = process.argv.slice(2);
+
+const { brandConfigPath, remainingArgs } = parseBrandFlag(process.argv.slice(2));
+if (brandConfigPath) {
+  process.env.BRAND_CONFIG = brandConfigPath;
+  console.log(`[dev-teams] [brand] using bundle: ${brandConfigPath}`);
+}
+const extraArgs = remainingArgs;
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 

@@ -137,6 +137,79 @@ function rustStringLiteral(s) {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+// Parse `--whitelabel=<ref>` / `--wl=<ref>` (and the
+// space-separated forms) out of the argv tail that npm forwards
+// after `--`. Returns the remaining args + the resolved absolute
+// path, so the wrapper can:
+//
+//   1. set $BRAND_CONFIG to the resolved path
+//   2. forward the leftover args to tauri (filter out the flag)
+//
+// `<ref>` can be either:
+//   - a bare slug like "acme" -> resolves to brands/acme/brand.json
+//   - a path containing a slash or ending in .json -> used as-is
+//
+// Missing bundle = hard exit with a list of available slugs so a
+// typo doesn't silently fall back to a vanilla build.
+export function parseBrandFlag(args) {
+  const remaining = [];
+  let resolved = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    let value = null;
+    if (a.startsWith("--whitelabel=") || a.startsWith("--wl=") || a.startsWith("--brand=")) {
+      value = a.split("=").slice(1).join("=");
+    } else if (a === "--whitelabel" || a === "--wl" || a === "--brand") {
+      value = args[i + 1];
+      i++;
+    } else {
+      remaining.push(a);
+      continue;
+    }
+    if (!value) {
+      console.error("[brand] --whitelabel needs a value (slug or path to brand.json)");
+      process.exit(1);
+    }
+    resolved = resolveBrandRef(value);
+  }
+  return { brandConfigPath: resolved, remainingArgs: remaining };
+}
+
+function resolveBrandRef(ref) {
+  const looksLikePath =
+    ref.includes("/") || ref.includes("\\") || ref.toLowerCase().endsWith(".json");
+  if (looksLikePath) {
+    if (!existsSync(ref)) {
+      console.error(`[brand] --whitelabel path doesn't exist: ${ref}`);
+      process.exit(1);
+    }
+    return resolve(ref);
+  }
+  const bundlePath = join(repoRoot, "brands", ref, "brand.json");
+  if (existsSync(bundlePath)) return bundlePath;
+  console.error(`[brand] no bundle at brands/${ref}/brand.json`);
+  const brandsDir = join(repoRoot, "brands");
+  if (existsSync(brandsDir)) {
+    let entries = [];
+    try {
+      entries = readdirSync(brandsDir).filter((name) => {
+        if (name === "_template") return false;
+        try {
+          return statSync(join(brandsDir, name)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+    } catch {}
+    if (entries.length > 0) {
+      console.error(`  available bundles under brands/: ${entries.join(", ")}`);
+    } else {
+      console.error("  no bundles found under brands/ (only the _template stub)");
+    }
+  }
+  process.exit(1);
+}
+
 function loadConfig() {
   const path = process.env.BRAND_CONFIG;
   if (!path) return null;

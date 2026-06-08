@@ -595,3 +595,12 @@ textarea {
   gap: 8px;
   font-size: 12px;
 }
+.audit-perpage {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.audit-perpage select { font: inherit; }

@@ -1916,13 +1916,19 @@ fn render_library_card(r: &LibraryRow) -> String {
     } else {
         String::new()
     };
+    // Version (`r.version`) is the optimistic-concurrency counter the
+    // wire protocol uses to reject stale PUTs. It's plumbed into the
+    // hidden expected_version form input on the edit form (the
+    // mechanism that actually matters), so the admin-facing card
+    // doesn't need to display it - it was leaking an internal
+    // mechanic into the operator's reading task.
     format!(
         "<div class=\"library-card\" id=\"lib-{id_attr}\" \
              draggable=\"true\" data-snippet-id=\"{id_attr}\">\
            <div class=\"card-head\">\
              <span class=\"drag-handle\" title=\"Drag to move\">::</span>\
              <span class=\"title\">{title}</span>{folder}{tags}{usage_pill}\
-             <span class=\"meta\">v{ver} | updated {when}</span>\
+             <span class=\"meta\">updated {when}</span>\
            </div>\
            <pre class=\"body\">{body}</pre>\
            <div class=\"card-actions\">\
@@ -1939,7 +1945,6 @@ fn render_library_card(r: &LibraryRow) -> String {
         title = escape_html(&r.title),
         title_attr = escape_html(&r.title),
         body = escape_html(&r.body),
-        ver = r.version,
         when = format_relative(r.updated_at),
         tags = tags_html,
         folder = folder,
@@ -2541,23 +2546,37 @@ pub async fn library_delete(
 
 #[derive(Debug, Deserialize)]
 pub struct AuditPageQuery {
-    /// Zero-based page index. Each page shows AUDIT_PAGE_SIZE entries
-    /// in reverse-chronological order. Capped so a runaway URL like
-    /// `?page=999999` doesn't waste a SELECT against the index.
+    /// Zero-based page index. Each page shows `per_page` entries in
+    /// reverse-chronological order. Capped to AUDIT_MAX_PAGES so a
+    /// runaway URL doesn't waste a SELECT against the index.
     #[serde(default)]
     pub page: Option<i64>,
+    /// Per-page size. Allowlisted to AUDIT_PAGE_CHOICES so the URL
+    /// parameter can't ask for a 10000-row dump; anything outside
+    /// the list falls back to AUDIT_DEFAULT_PAGE_SIZE.
+    #[serde(default)]
+    pub per_page: Option<i64>,
 }
 
-/// 25 fits comfortably on a single screen for the typical desktop
-/// monitor and makes pagination easy to test (10-20 audit events is
-/// already enough to exercise the second page). The old 50 was
-/// inherited from the API list cap; for a human-skim view 25 is
-/// the right shape.
-const AUDIT_PAGE_SIZE: i64 = 25;
+/// Choices we let the admin pick from in the dropdown. Defaulting
+/// to 25 keeps the page short on first load; an operator combing
+/// recent activity can bump to 100 in one click.
+const AUDIT_PAGE_CHOICES: &[i64] = &[25, 50, 100, 200];
+const AUDIT_DEFAULT_PAGE_SIZE: i64 = 25;
 /// Hard cap so a runaway `?page=99999` doesn't blow time on a
 /// pointless OFFSET. The dashboard never advertises a page above
-/// (total / AUDIT_PAGE_SIZE); this just shields the SELECT.
+/// (total / per_page); this just shields the SELECT.
 const AUDIT_MAX_PAGES: i64 = 200;
+
+/// Clamp a user-supplied per_page to the allowlist. Anything not
+/// on the list (or absent) collapses to the default. Centralised
+/// so the validator can't disagree with the dropdown.
+fn audit_page_size(req: Option<i64>) -> i64 {
+    match req {
+        Some(n) if AUDIT_PAGE_CHOICES.contains(&n) => n,
+        _ => AUDIT_DEFAULT_PAGE_SIZE,
+    }
+}
 
 pub async fn audit_page(
     State(state): State<AppState>,
@@ -2567,8 +2586,9 @@ pub async fn audit_page(
     let session = DashboardSession {
         claims: admin.claims.clone(),
     };
+    let per_page = audit_page_size(q.per_page);
     let page = q.page.unwrap_or(0).clamp(0, AUDIT_MAX_PAGES);
-    let offset = page * AUDIT_PAGE_SIZE;
+    let offset = page * per_page;
     // Total + page count drive both the "page N of M" display and
     // the next-link condition. The old `rows.len() == PAGE_SIZE`
     // heuristic only worked once the first page was completely
@@ -2580,9 +2600,9 @@ pub async fn audit_page(
     let total_pages = if total == 0 {
         1
     } else {
-        ((total + AUDIT_PAGE_SIZE - 1) / AUDIT_PAGE_SIZE).min(AUDIT_MAX_PAGES + 1)
+        ((total + per_page - 1) / per_page).min(AUDIT_MAX_PAGES + 1)
     };
-    let rows = crate::audit::list_recent(&state.pool, AUDIT_PAGE_SIZE, offset).await;
+    let rows = crate::audit::list_recent(&state.pool, per_page, offset).await;
 
     let mut body = String::new();
     body.push_str("<h1>Audit log</h1>");
@@ -2622,8 +2642,9 @@ pub async fn audit_page(
     body.push_str("<div class=\"audit-pager\">");
     if page > 0 {
         body.push_str(&format!(
-            "<a href=\"/dashboard/audit?page={}\">&larr; Newer</a>",
-            page - 1
+            "<a href=\"/dashboard/audit?page={}&per_page={}\">&larr; Newer</a>",
+            page - 1,
+            per_page,
         ));
     } else {
         body.push_str("<span class=\"muted\">&larr; Newer</span>");
@@ -2638,12 +2659,38 @@ pub async fn audit_page(
     let has_next = (page + 1) < total_pages && page < AUDIT_MAX_PAGES;
     if has_next {
         body.push_str(&format!(
-            "<a href=\"/dashboard/audit?page={}\">Older &rarr;</a>",
-            page + 1
+            "<a href=\"/dashboard/audit?page={}&per_page={}\">Older &rarr;</a>",
+            page + 1,
+            per_page,
         ));
     } else {
         body.push_str("<span class=\"muted\">Older &rarr;</span>");
     }
+    // Per-page picker. Inline form so changing the value reloads
+    // the page at p=0 with the new size (jumping back to the
+    // newest entries because the old offset wouldn't make sense
+    // at the new page size). No JS required - the browser's
+    // native form submit handles it.
+    body.push_str(
+        "<form method=\"get\" action=\"/dashboard/audit\" class=\"audit-perpage\">\
+           <label for=\"audit-perpage-select\">Per page:</label>\
+           <select id=\"audit-perpage-select\" name=\"per_page\" \
+                   onchange=\"this.form.submit()\">",
+    );
+    for choice in AUDIT_PAGE_CHOICES {
+        let selected = if *choice == per_page { " selected" } else { "" };
+        body.push_str(&format!(
+            "<option value=\"{c}\"{sel}>{c}</option>",
+            c = choice,
+            sel = selected,
+        ));
+    }
+    body.push_str(
+        "</select>\
+           <input type=\"hidden\" name=\"page\" value=\"0\" />\
+           <noscript><button type=\"submit\" class=\"btn\">Apply</button></noscript>\
+         </form>",
+    );
     body.push_str("</div>");
 
     render_page(&state, &session, "Audit", NavTab::Audit, &body)

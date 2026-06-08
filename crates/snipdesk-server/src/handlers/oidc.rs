@@ -79,17 +79,59 @@ fn prune_pending(now: i64) {
     }
 }
 
-/// Build the openidconnect Client for Google. Discovery hits
-/// https://accounts.google.com/.well-known/openid-configuration once
-/// per request (the crate doesn't cache); fine for our v1 traffic
-/// shape. A multi-instance / high-RPS deploy would want a cached
-/// metadata document.
-async fn google_client(cfg: &GoogleOidcConfig) -> Result<CoreClient, ApiError> {
+/// Cached provider metadata + the JWKS bundled with it. Saves the
+/// ~150 ms discovery round-trip on every sign-in. The TTL is
+/// deliberately conservative (1 hour) - Google rotates JWKS roughly
+/// daily and the openidconnect crate validates against whatever
+/// metadata we hand the client, so a stale cache could reject a
+/// freshly-rotated key. 1 hour bounds that window without paying
+/// the discovery cost every single login.
+const METADATA_TTL_SECS: i64 = 3600;
+
+struct CachedMetadata {
+    metadata: CoreProviderMetadata,
+    expires_at: i64,
+}
+
+fn metadata_cache() -> &'static Mutex<Option<CachedMetadata>> {
+    static CACHE: Lazy<Mutex<Option<CachedMetadata>>> = Lazy::new(|| Mutex::new(None));
+    &CACHE
+}
+
+/// Return Google's provider metadata, fetching only when the cache
+/// is empty or expired. Releases the lock before any await so we
+/// can't deadlock by holding a std::sync::Mutex across `.await`.
+async fn cached_google_metadata() -> Result<CoreProviderMetadata, ApiError> {
+    let now = Utc::now().timestamp();
+    {
+        let cache = metadata_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = cache.as_ref() {
+            if c.expires_at > now {
+                return Ok(c.metadata.clone());
+            }
+        }
+    }
     let issuer = IssuerUrl::new("https://accounts.google.com".to_string())
         .map_err(|e| ApiError::internal(format!("oidc issuer url: {e}")))?;
     let metadata = CoreProviderMetadata::discover_async(issuer, async_http_client)
         .await
         .map_err(|e| ApiError::internal(format!("oidc discovery: {e}")))?;
+    {
+        let mut cache = metadata_cache().lock().unwrap_or_else(|e| e.into_inner());
+        *cache = Some(CachedMetadata {
+            metadata: metadata.clone(),
+            expires_at: now + METADATA_TTL_SECS,
+        });
+    }
+    Ok(metadata)
+}
+
+/// Build the openidconnect Client for Google. Provider metadata is
+/// served from a 1-hour in-process cache so steady-state sign-ins
+/// don't pay the discovery round-trip. Cold start (or after
+/// expiry) is the only fetch.
+async fn google_client(cfg: &GoogleOidcConfig) -> Result<CoreClient, ApiError> {
+    let metadata = cached_google_metadata().await?;
     let redirect = RedirectUrl::new(cfg.redirect_uri.clone())
         .map_err(|e| ApiError::internal(format!("oidc redirect url: {e}")))?;
     let client = CoreClient::from_provider_metadata(

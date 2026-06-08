@@ -15,14 +15,16 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::audit::{self, action as audit_action, AuditEvent};
 use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::http::AppState;
 
 /// One row in the admin users list. `snippet_count` is computed live
-/// against personal_snippets (excluding tombstones) - the user_activity
-/// pre-aggregation table was scoped for v1.1 but isn't wired yet; this
-/// query is fine for tens of thousands of users on the SQLite backend.
+/// against personal_snippets (excluding tombstones); the query is
+/// fine for tens of thousands of users on the SQLite backend. A
+/// pre-aggregated table existed in 0001 but was dropped in 0006
+/// after a v1.0 audit decided live counts were the right shape.
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AdminUserView {
     pub id: String,
@@ -129,13 +131,19 @@ pub async fn update_user(
     }
 
     let mut tx = state.pool.begin().await?;
-    let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    if exists.is_none() {
-        return Err(ApiError::not_found("not_found", "user not found"));
-    }
+    // Capture the BEFORE state so the audit log can show role/disabled
+    // transitions ("from member to admin") rather than just the new
+    // value. Combined with the AFTER read at the end, the details
+    // JSON ends up with a {"role": {"from": "...", "to": "..."}} shape.
+    let pre: Option<(String, String, i64)> =
+        sqlx::query_as("SELECT email, role, is_disabled FROM users WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (target_email_before, role_before, disabled_before) = match pre {
+        Some(t) => t,
+        None => return Err(ApiError::not_found("not_found", "user not found")),
+    };
 
     if let Some(role) = &body.role {
         // Prevent demoting the last remaining admin. If the caller is
@@ -186,6 +194,47 @@ pub async fn update_user(
     .fetch_one(&state.pool)
     .await?;
 
+    // Build the audit details JSON only for fields that actually
+    // changed. Audit entries for "PUT but nothing changed" still
+    // record the call (so admin probing is visible) but the
+    // details object stays empty.
+    let mut details = serde_json::Map::new();
+    if let Some(r) = &body.role {
+        if r != &role_before {
+            details.insert(
+                "role".into(),
+                serde_json::json!({"from": role_before, "to": r}),
+            );
+        }
+    }
+    if let Some(d) = body.is_disabled {
+        let to_int = if d { 1 } else { 0 };
+        if to_int != disabled_before {
+            details.insert(
+                "is_disabled".into(),
+                serde_json::json!({"from": disabled_before != 0, "to": d}),
+            );
+        }
+    }
+    let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: &auth.0.sub,
+            actor_email: &actor_email,
+            action: audit_action::USER_UPDATE,
+            target_kind: Some("user"),
+            target_id: Some(&id),
+            details: Some(serde_json::Value::Object(details)),
+        },
+    )
+    .await;
+    // Suppress an unused-variable warning when no audit work
+    // referenced the pre-change email - the binding above
+    // documents intent (we captured it on purpose) but the
+    // current details JSON doesn't need it. Drop it explicitly.
+    let _ = target_email_before;
+
     Ok(Json(AdminUserView {
         id: row.id,
         email: row.email,
@@ -212,6 +261,14 @@ pub async fn delete_user(
         ));
     }
 
+    // Capture the target's email BEFORE the delete so the audit
+    // entry stays readable. After cascade, the row is gone and we
+    // can't look it up.
+    let target_email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await?;
+
     // Hard delete cascades to personal_snippets via the FK ON DELETE
     // CASCADE in 0001. Tombstones aren't necessary because no client
     // syncs as this user any more - when they next sign in (they can't)
@@ -223,6 +280,20 @@ pub async fn delete_user(
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("not_found", "user not found"));
     }
+
+    let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: &auth.0.sub,
+            actor_email: &actor_email,
+            action: audit_action::USER_DELETE,
+            target_kind: Some("user"),
+            target_id: Some(&id),
+            details: target_email.map(|e| serde_json::json!({"email": e})),
+        },
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

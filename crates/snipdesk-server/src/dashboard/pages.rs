@@ -128,6 +128,14 @@ async fn render_page(
                     ""
                 },
             ),
+            (
+                "AUDIT_ACTIVE",
+                if matches!(active, NavTab::Audit) {
+                    "active"
+                } else {
+                    ""
+                },
+            ),
             ("NAV_USER", &escape_html(&display)),
             ("NAV_ROLE", &escape_html(&role)),
             ("CONTENT", content),
@@ -144,6 +152,7 @@ enum NavTab {
     Users,
     Library,
     Stats,
+    Audit,
     None,
 }
 
@@ -1415,7 +1424,7 @@ pub struct CreateUserForm {
 
 pub async fn user_create_row(
     State(state): State<AppState>,
-    _admin: DashboardAdmin,
+    admin: DashboardAdmin,
     Form(body): Form<CreateUserForm>,
 ) -> Response {
     let email = body.email.trim().to_lowercase();
@@ -1472,15 +1481,37 @@ pub async fn user_create_row(
     }
 
     let view = crate::handlers::admin::AdminUserView {
-        id,
-        email,
-        display_name,
+        id: id.clone(),
+        email: email.clone(),
+        display_name: display_name.clone(),
         role: role.to_string(),
         is_disabled: false,
         created_at: now,
         last_seen_at: None,
         snippet_count: 0,
     };
+
+    // Audit the admin-created account so an operator can later see
+    // which admin added a teammate. The signup JSON endpoint isn't
+    // audited (it's the self-service path), so we record here, not
+    // in handlers::auth::signup.
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: admin.user_id(),
+            actor_email: &actor_email,
+            action: crate::audit::action::USER_CREATE,
+            target_kind: Some("user"),
+            target_id: Some(&id),
+            details: Some(serde_json::json!({
+                "email": email,
+                "role": role,
+            })),
+        },
+    )
+    .await;
+
     (
         StatusCode::CREATED,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -2504,4 +2535,102 @@ pub async fn library_delete(
         )
             .into_response(),
     }
+}
+
+// ---- /dashboard/audit (admin activity log) ----
+
+#[derive(Debug, Deserialize)]
+pub struct AuditPageQuery {
+    /// Zero-based page index. Each page shows AUDIT_PAGE_SIZE entries
+    /// in reverse-chronological order. Capped so a runaway URL like
+    /// `?page=999999` doesn't waste a SELECT against the index.
+    #[serde(default)]
+    pub page: Option<i64>,
+}
+
+/// Hard cap on page count for the audit list. Bounded so a runaway
+/// URL can't waste indefinite SELECTs against the index.
+const AUDIT_PAGE_SIZE: i64 = 50;
+const AUDIT_MAX_PAGES: i64 = 200;
+
+pub async fn audit_page(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    axum::extract::Query(q): axum::extract::Query<AuditPageQuery>,
+) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+    let page = q.page.unwrap_or(0).clamp(0, AUDIT_MAX_PAGES);
+    let offset = page * AUDIT_PAGE_SIZE;
+    let rows = crate::audit::list_recent(&state.pool, AUDIT_PAGE_SIZE, offset).await;
+
+    let mut body = String::new();
+    body.push_str("<h1>Audit log</h1>");
+    body.push_str(
+        "<p class=\"muted\">Every admin mutation (user + library writes) is recorded here. \
+         Append-only; entries don't expire. Sorted newest first.</p>",
+    );
+
+    if rows.is_empty() {
+        body.push_str("<p class=\"muted\">No audit entries on this page.</p>");
+    } else {
+        body.push_str("<table class=\"audit-table\"><thead><tr>");
+        body.push_str("<th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th>");
+        body.push_str("</tr></thead><tbody>");
+        for r in &rows {
+            let details_html = r
+                .details
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(|s| format!("<code>{}</code>", escape_html(s)))
+                .unwrap_or_else(|| "<span class=\"muted\">-</span>".to_string());
+            let target = match (r.target_kind.as_deref(), r.target_id.as_deref()) {
+                (Some(k), Some(i)) => format!("{}:{}", escape_html(k), escape_html(i)),
+                _ => "-".to_string(),
+            };
+            body.push_str(&format!(
+                "<tr>\
+                   <td class=\"audit-when\">{when}</td>\
+                   <td>{actor}</td>\
+                   <td><code>{action}</code></td>\
+                   <td>{target}</td>\
+                   <td class=\"audit-details\">{details}</td>\
+                 </tr>",
+                when = format_relative(r.at),
+                actor = escape_html(&r.actor_email),
+                action = escape_html(&r.action),
+                target = target,
+                details = details_html,
+            ));
+        }
+        body.push_str("</tbody></table>");
+    }
+
+    body.push_str("<div class=\"audit-pager\">");
+    if page > 0 {
+        body.push_str(&format!(
+            "<a href=\"/dashboard/audit?page={}\">&larr; Newer</a>",
+            page - 1
+        ));
+    } else {
+        body.push_str("<span class=\"muted\">&larr; Newer</span>");
+    }
+    body.push_str(&format!(
+        " <span class=\"muted small\">page {}</span> ",
+        page + 1,
+    ));
+    if rows.len() as i64 == AUDIT_PAGE_SIZE && page < AUDIT_MAX_PAGES {
+        body.push_str(&format!(
+            "<a href=\"/dashboard/audit?page={}\">Older &rarr;</a>",
+            page + 1
+        ));
+    } else {
+        body.push_str("<span class=\"muted\">Older &rarr;</span>");
+    }
+    body.push_str("</div>");
+
+    render_page(&state, &session, "Audit", NavTab::Audit, &body)
+        .await
+        .into_response()
 }

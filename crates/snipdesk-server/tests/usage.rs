@@ -36,6 +36,7 @@ async fn make_state() -> (axum::Router, sqlx::SqlitePool) {
         secure_cookies: false,
         stats: snipdesk_server::config::StatsConfig::default(),
         fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
+        cors_allowed_origins: Vec::new(),
     };
     (router(state), pool)
 }

@@ -24,10 +24,11 @@ pub mod assets;
 pub mod pages;
 pub mod session;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 
-use crate::http::AppState;
+use crate::http::{AppState, BODY_LIMIT_LARGE};
 
 /// Mount every dashboard route onto the shared Axum router. Called from
 /// `http::router` so the dashboard and `/api/*` share the same listener,
@@ -53,8 +54,14 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard/users/:id", put(pages::user_update_row))
         .route("/dashboard/users/:id", delete(pages::user_delete_row))
         .route("/dashboard/library", get(pages::library_page))
-        .route("/dashboard/library", post(pages::library_create))
-        .route("/dashboard/library/:id", put(pages::library_update))
+        .route(
+            "/dashboard/library",
+            post(pages::library_create).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+        )
+        .route(
+            "/dashboard/library/:id",
+            put(pages::library_update).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+        )
         .route("/dashboard/library/:id", delete(pages::library_delete))
         // Inline edit: GET returns the edit form fragment, /card
         // returns the read-only card (for cancel), /move is the
@@ -70,6 +77,7 @@ pub fn routes() -> Router<AppState> {
         // axum routes on (path, method) so the methods coexist.
         .route("/dashboard/users/:id", get(pages::user_detail_page))
         .route("/dashboard/stats", get(pages::stats_page))
+        .route("/dashboard/audit", get(pages::audit_page))
         // Static assets - vendored htmx + a small CSS file. Served as
         // raw bytes via plain handlers (no fs reads at runtime; the
         // bytes are baked into the binary by include_str!).

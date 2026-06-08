@@ -2,6 +2,7 @@
 //! handler modules without going through `main.rs`. The binary entrypoint
 //! (`src/main.rs`) still drives the production build via `clap`.
 
+pub mod audit;
 pub mod auth;
 pub mod cli;
 pub mod config;

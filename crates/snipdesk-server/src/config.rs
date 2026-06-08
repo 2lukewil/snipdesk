@@ -65,6 +65,19 @@ pub struct Config {
     #[serde(default)]
     pub secure_cookies: bool,
 
+    /// Origins allowed to make cross-origin JSON-API requests. Empty
+    /// (default) means no CORS layer at all - same-origin only, which
+    /// matches the v1 desktop-client + dashboard topology where both
+    /// hit the server on its own host. Populate this when a separate
+    /// web frontend lands and needs to talk to `/api/*`. Each origin
+    /// must include scheme and (if non-default) port, e.g.
+    /// `["https://app.example.com", "http://localhost:5173"]`.
+    /// Credentials are always allowed on the listed origins (the
+    /// JSON API uses `Authorization: Bearer ...`, not cookies, but
+    /// it's the sane default for the dashboard cookie case too).
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
+
     /// Knobs the stats page uses to translate snippet usage into
     /// time / money saved. Defaults are AUD-denominated since we
     /// normalise all displayed money to AUD on the dashboard.

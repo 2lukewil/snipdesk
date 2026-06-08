@@ -551,3 +551,47 @@ textarea {
 }
 .recent-list li:last-child { border-bottom: none; }
 .muted.small { font-size: 11px; color: var(--fg-dim); }
+
+/* --- Audit log --- */
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12.5px;
+}
+.audit-table th,
+.audit-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.audit-table th {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.audit-table tbody tr:last-child td { border-bottom: 0; }
+.audit-when { color: var(--fg-dim); white-space: nowrap; }
+.audit-details code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  word-break: break-all;
+}
+.audit-pager {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}

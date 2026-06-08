@@ -15,6 +15,13 @@ data_dir = "./data"
 # Leave blank until auth lands.
 jwt_secret = ""
 
+# Origins allowed to make cross-origin requests to /api/*. Empty
+# (default) = same-origin only; no CORS layer mounted. Populate when
+# a separate web frontend needs to talk to the API. Each entry must
+# include scheme + (if non-default) port.
+#
+# cors_allowed_origins = ["https://app.example.com", "http://localhost:5173"]
+
 # Dashboard stats-page knobs. Optional; the defaults estimate using
 # 80 wpm at AUD $25/hr. Per-user wpm/wage/currency overrides set via
 # PATCH /api/me (from the desktop Settings panel) take precedence

@@ -24,6 +24,7 @@ use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::audit::{self, action as audit_action, AuditEvent};
 use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::http::AppState;
@@ -237,6 +238,23 @@ pub async fn create(
         "library_snippet created"
     );
 
+    let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: &auth.0.sub,
+            actor_email: &actor_email,
+            action: audit_action::LIBRARY_CREATE,
+            target_kind: Some("library"),
+            target_id: Some(&body.id),
+            details: Some(serde_json::json!({
+                "title": body.payload.title,
+                "folder_path": body.payload.folder_path,
+            })),
+        },
+    )
+    .await;
+
     Ok((
         StatusCode::CREATED,
         Json(WriteResponse {
@@ -302,6 +320,24 @@ pub async fn update(
     .await?;
     tx.commit().await?;
 
+    let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: &auth.0.sub,
+            actor_email: &actor_email,
+            action: audit_action::LIBRARY_UPDATE,
+            target_kind: Some("library"),
+            target_id: Some(&id),
+            details: Some(serde_json::json!({
+                "title": body.payload.title,
+                "folder_path": body.payload.folder_path,
+                "to_version": new_version,
+            })),
+        },
+    )
+    .await;
+
     Ok(Json(WriteResponse {
         id,
         version: new_version,
@@ -345,6 +381,20 @@ pub async fn delete(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: &auth.0.sub,
+            actor_email: &actor_email,
+            action: audit_action::LIBRARY_DELETE,
+            target_kind: Some("library"),
+            target_id: Some(&id),
+            details: None,
+        },
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }

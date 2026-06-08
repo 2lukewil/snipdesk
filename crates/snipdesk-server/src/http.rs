@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use axum::{
     extract::{DefaultBodyLimit, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, post, put},
     Json, Router,
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::{GoogleOidcConfig, MasterKey, StatsConfig};
@@ -48,9 +49,85 @@ pub struct AppState {
     /// which falls through to `stats.aud_rates` when the live
     /// cache misses a code.
     pub fx_cache: Arc<FxCache>,
+    /// Origins that may make cross-origin JSON-API requests. Empty
+    /// (default) means no CORS layer is mounted at all. Read by
+    /// `router()` at construction; not used by individual handlers.
+    pub cors_allowed_origins: Vec<String>,
 }
 
+/// Per-route body caps, sized to the realistic payload for each
+/// endpoint. The router defaults to the tight cap (BODY_LIMIT_SMALL);
+/// routes that carry user content (snippets, library, dashboard
+/// forms) override upward via `.route_layer(DefaultBodyLimit::max(...))`.
+///
+/// Single global cap was the v1.0 default - one number was simpler -
+/// but it meant a 2 MiB request could land on /api/me (which accepts
+/// at most ~50 bytes of JSON). Per-route caps shrink the blast radius
+/// of a misbehaved client or an attacker probing the surface.
+const BODY_LIMIT_SMALL: usize = 32 * 1024; // 32 KiB - auth, admin mutations, /api/me
+const BODY_LIMIT_MEDIUM: usize = 256 * 1024; // 256 KiB - usage telemetry batches
+/// 2 MiB - snippet + library bodies. Public so the dashboard module
+/// can reuse the same constant for its library-form posts.
+pub const BODY_LIMIT_LARGE: usize = 2 * 1024 * 1024;
+
 pub fn router(state: AppState) -> Router {
+    // Build the CORS layer when origins are configured; otherwise
+    // skip mounting CORS entirely. The default empty list matches
+    // v1 behaviour (same-origin only).
+    let cors_layer = build_cors_layer(&state.cors_allowed_origins);
+    let mut router = build_inner_router();
+    if let Some(layer) = cors_layer {
+        router = router.layer(layer);
+    }
+    router
+        .layer(TraceLayer::new_for_http())
+        // Global default for any route that didn't opt up. Tight by
+        // intent: most endpoints (auth, /api/me, admin user updates)
+        // accept tiny JSON payloads. The big-content routes
+        // (snippets, library, dashboard form posts) override upward
+        // via `.layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE))` per
+        // route. A new endpoint added without an explicit override
+        // inherits this floor - fail-tight rather than fail-loose.
+        .layer(DefaultBodyLimit::max(BODY_LIMIT_SMALL))
+        .with_state(state)
+}
+
+/// Build the CORS layer if any origins are configured. Returns
+/// `None` when the list is empty - no layer is mounted at all in
+/// that case, preserving the v1 same-origin-only behaviour.
+///
+/// Invalid origin strings are dropped with a warn log rather than
+/// rejected. Mis-typing one origin shouldn't take down the whole
+/// CORS configuration.
+fn build_cors_layer(origins: &[String]) -> Option<CorsLayer> {
+    if origins.is_empty() {
+        return None;
+    }
+    let parsed: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| match HeaderValue::from_str(o) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("cors: ignoring invalid origin {o:?}: {e}");
+                None
+            }
+        })
+        .collect();
+    if parsed.is_empty() {
+        tracing::warn!("cors: all configured origins failed to parse; CORS layer not mounted");
+        return None;
+    }
+    tracing::info!(origins = parsed.len(), "cors: layer enabled");
+    Some(
+        CorsLayer::new()
+            .allow_origin(parsed)
+            .allow_methods(tower_http::cors::AllowMethods::any())
+            .allow_headers(tower_http::cors::AllowHeaders::any())
+            .allow_credentials(true),
+    )
+}
+
+fn build_inner_router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/signup", post(handlers::auth::signup))
@@ -69,11 +146,15 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/oidc/callback", get(handlers::oidc::callback))
         .route(
             "/api/snippets",
-            post(handlers::snippets::create).get(handlers::snippets::list),
+            post(handlers::snippets::create)
+                .get(handlers::snippets::list)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
         )
         .route(
             "/api/snippets/:id",
-            put(handlers::snippets::update).delete(handlers::snippets::delete),
+            put(handlers::snippets::update)
+                .delete(handlers::snippets::delete)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
         )
         // Trash view + restore: the dashboard / desktop client read
         // these to show soft-deleted snippets and bring them back.
@@ -90,17 +171,25 @@ pub fn router(state: AppState) -> Router {
         // write handlers gate on `auth.require_admin()` internally.
         .route(
             "/api/library",
-            post(handlers::library::create).get(handlers::library::list),
+            post(handlers::library::create)
+                .get(handlers::library::list)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
         )
         .route(
             "/api/library/:id",
-            put(handlers::library::update).delete(handlers::library::delete),
+            put(handlers::library::update)
+                .delete(handlers::library::delete)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
         )
         // Paste telemetry. Auth-required; the desktop client posts
         // delta packets every sync tick. Folded into the per-user +
         // per-snippet counters used by the stats page and library
-        // page.
-        .route("/api/usage/report", post(handlers::usage::report))
+        // page. Medium cap fits a batch of a few hundred deltas
+        // without being a 2 MiB DoS surface.
+        .route(
+            "/api/usage/report",
+            post(handlers::usage::report).layer(DefaultBodyLimit::max(BODY_LIMIT_MEDIUM)),
+        )
         // Admin user management - JSON API; the htmx dashboard uses
         // these handlers directly (not over HTTP) but mounting them
         // here keeps a single source of truth and exposes the surface
@@ -114,13 +203,6 @@ pub fn router(state: AppState) -> Router {
         // listener so a single binary serves both the JSON API and the
         // admin UI. Cookie-gated; non-admins see a bounce page.
         .merge(crate::dashboard::routes())
-        .layer(TraceLayer::new_for_http())
-        // 2 MiB body cap. Snippet bodies in practice run to a few KB;
-        // anything past this is either a misuse (someone POSTing a
-        // large file body) or an attempted DoS. Set at the router
-        // level so it covers JSON API + dashboard form posts alike.
-        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
-        .with_state(state)
 }
 
 #[derive(Serialize)]

@@ -15,6 +15,16 @@ import { loadEnv } from "./load-env.mjs";
 
 loadEnv();
 
+// Regenerate brand constants + restore-and-patch the Tauri configs
+// before the build. Idempotent: stock builds get stock defaults,
+// customer builds pick up $WHITELABEL_CONFIG.
+const wl = spawnSync("node", ["scripts/whitelabel.mjs"], {
+  stdio: "inherit",
+  env: process.env,
+  shell: true,
+});
+if (wl.status !== 0) process.exit(wl.status ?? 1);
+
 const extraArgs = process.argv.slice(2);
 
 const r = spawnSync("npx", ["tauri", "build", ...extraArgs], {

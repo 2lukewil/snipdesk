@@ -9,7 +9,7 @@
 // or `$env:X = "1"; ...`. This script sets it in the spawned process's
 // env so it propagates to tauri AND down to its vite child.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,16 @@ const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
 const extraArgs = process.argv.slice(2);
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
+
+// Regenerate brand constants + restore-and-patch the Tauri configs.
+// Required to bring the gitignored configs into existence on a
+// fresh clone (the --config path below would otherwise miss).
+const wl = spawnSync("node", ["scripts/whitelabel.mjs"], {
+  stdio: "inherit",
+  env: childEnv,
+  shell: true,
+});
+if (wl.status !== 0) process.exit(wl.status ?? 1);
 
 console.log(
   `[dev-teams] tauri dev --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,

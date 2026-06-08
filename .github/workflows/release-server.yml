@@ -48,7 +48,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push
+      - name: Build + push vanilla image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -61,6 +61,69 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ---- Whitelabel image (optional) ----
+      # When BRAND_BUNDLE_WHITELABEL secret is set (same base64
+      # tarball the desktop release.yml consumes), build a second
+      # image with the customer's brand + scheme baked in via
+      # Dockerfile build-args. Tagged
+      # snipdesk-server-<slug>:<version> + :latest so a customer
+      # whose compose pins `snipdesk-server-acme:latest` keeps
+      # their branding through every docker pull / Watchtower
+      # update without ever editing config on their end.
+      - name: Decode whitelabel bundle
+        id: wl
+        shell: bash
+        env:
+          BRAND_BUNDLE_VALUE: ${{ secrets.BRAND_BUNDLE_WHITELABEL }}
+        run: |
+          if [ -z "$BRAND_BUNDLE_VALUE" ]; then
+            echo "No BRAND_BUNDLE_WHITELABEL secret; skipping whitelabel image."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tmp_tgz=$(mktemp)
+          echo "$BRAND_BUNDLE_VALUE" | tr -d '\n' | base64 -d > "$tmp_tgz"
+          bundle_dir=$(mktemp -d)
+          tar -xzf "$tmp_tgz" -C "$bundle_dir"
+          brand_json="$bundle_dir/brand.json"
+          if [ ! -f "$brand_json" ]; then
+            echo "Bundle missing brand.json"
+            exit 1
+          fi
+          # Extract the three fields the server image cares about.
+          # jq is preinstalled on ubuntu-latest runners.
+          name=$(jq -r '.name' "$brand_json")
+          slug=$(jq -r '.slug // (.name | gsub("[^A-Za-z0-9]"; "") | ascii_downcase)' "$brand_json")
+          # deep_link_scheme is optional; default to "snipdesk" so a
+          # bundle that doesn't customise the scheme still produces
+          # a valid image (its allowlist will accept snipdesk://).
+          scheme=$(jq -r '.deep_link_scheme // "snipdesk"' "$brand_json")
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "brand_name=$name" >> "$GITHUB_OUTPUT"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "schemes=$scheme" >> "$GITHUB_OUTPUT"
+          echo "Whitelabel image: brand='$name' slug='$slug' schemes='$scheme'"
+
+      - name: Build + push whitelabel image
+        if: steps.wl.outputs.configured == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            BRAND_NAME=${{ steps.wl.outputs.brand_name }}
+            DEEP_LINK_SCHEMES=${{ steps.wl.outputs.schemes }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ steps.wl.outputs.slug }}:${{ steps.version.outputs.VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ steps.wl.outputs.slug }}:latest
+          # Share the cache with the vanilla build above so the
+          # second image piggybacks on whatever the first one
+          # populated. The compiled binary itself is identical
+          # across the two; only the ENV directives differ.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -68,8 +131,9 @@ jobs:
           name: snipdesk-server ${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           body: |
-            Docker image published:
+            Docker images published:
 
                 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+            ${{ steps.wl.outputs.configured == 'true' && format('    docker pull {0}/{1}-{2}:{3}', env.REGISTRY, env.IMAGE_NAME, steps.wl.outputs.slug, steps.version.outputs.VERSION) || '' }}
 
             See `docs/server-design.md` for the deployment guide.

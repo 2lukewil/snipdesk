@@ -392,10 +392,51 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("read config {}", path.display()))?;
-        let cfg: Config =
+        let mut cfg: Config =
             toml::from_str(&raw).with_context(|| format!("parse config {}", path.display()))?;
+        cfg.apply_env_overrides();
         Ok(cfg)
     }
+
+    /// Apply env-var overlays for the small set of fields a Docker
+    /// image baker is likely to want pinned at image-build time
+    /// (whitelabel branding, OIDC scheme allowlist). Mirrors the
+    /// env > TOML > default precedence used by `SNIPDESK_MASTER_KEY`
+    /// in `load_master_key` so operators learn one convention.
+    ///
+    /// The intended flow for a per-customer Docker image:
+    ///   - Dockerfile sets `ENV SNIPDESK_BRAND_NAME=...` and
+    ///     `ENV SNIPDESK_OIDC_ALLOWED_SCHEMES=...` from build-args
+    ///   - Operator pulls the customer's image; brand is baked in
+    ///   - Operator's mounted TOML carries only the secrets and
+    ///     deployment-specific knobs - brand fields can be omitted
+    ///   - `docker pull` for an update preserves the env (it lives
+    ///     on the image), so the brand never reverts to stock
+    fn apply_env_overrides(&mut self) {
+        if let Some(v) = env_string("SNIPDESK_BRAND_NAME") {
+            self.brand.name = v;
+        }
+        if let Some(v) = env_string("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
+            let schemes: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !schemes.is_empty() {
+                self.oidc.allowed_deep_link_schemes = schemes;
+            }
+        }
+    }
+}
+
+/// Helper: env var as Some(trimmed) when set + non-empty, None
+/// otherwise. Keeps the override checks above readable and
+/// consistent about "empty string means unset".
+fn env_string(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// 32-byte master key for AES-256-GCM. Wrapped so we never accidentally
@@ -471,4 +512,106 @@ pub fn load_master_key(cfg: &CryptoConfig) -> Result<MasterKey> {
          - [crypto].master_key = \"<base64>\" (development only)\n\
          Generate a fresh key with: snipdesk-server gen-key"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_config() -> Config {
+        Config {
+            bind_addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            jwt_secret: None,
+            crypto: CryptoConfig::default(),
+            tombstone_retention_days: 0,
+            oidc: OidcConfig::default(),
+            secure_cookies: false,
+            cors_allowed_origins: Vec::new(),
+            stats: StatsConfig::default(),
+            fx: None,
+            brand: BrandConfig::default(),
+            updater: UpdaterConfig::default(),
+        }
+    }
+
+    /// Helper that wipes the env vars first so a parallel test or a
+    /// stray external value can't poison the result. Tests still
+    /// run serially via #[serial_test] would be ideal, but for two
+    /// vars in one process the wipe-then-set pattern is enough.
+    fn with_env(pairs: &[(&str, Option<&str>)], f: impl FnOnce()) {
+        for (k, _) in pairs {
+            std::env::remove_var(k);
+        }
+        for (k, v) in pairs {
+            if let Some(val) = v {
+                std::env::set_var(k, val);
+            }
+        }
+        f();
+        for (k, _) in pairs {
+            std::env::remove_var(k);
+        }
+    }
+
+    #[test]
+    fn env_brand_name_overrides_toml_value() {
+        with_env(&[("SNIPDESK_BRAND_NAME", Some("Acme Snippets"))], || {
+            let mut cfg = fresh_config();
+            cfg.brand.name = "SnipDesk".to_string();
+            cfg.apply_env_overrides();
+            assert_eq!(cfg.brand.name, "Acme Snippets");
+        });
+    }
+
+    #[test]
+    fn missing_env_leaves_toml_value_alone() {
+        with_env(&[("SNIPDESK_BRAND_NAME", None)], || {
+            let mut cfg = fresh_config();
+            cfg.brand.name = "Operator Override".to_string();
+            cfg.apply_env_overrides();
+            assert_eq!(cfg.brand.name, "Operator Override");
+        });
+    }
+
+    #[test]
+    fn env_oidc_schemes_parse_comma_separated() {
+        with_env(
+            &[("SNIPDESK_OIDC_ALLOWED_SCHEMES", Some("snipdesk, acme, foo "))],
+            || {
+                let mut cfg = fresh_config();
+                cfg.apply_env_overrides();
+                assert_eq!(
+                    cfg.oidc.allowed_deep_link_schemes,
+                    vec!["snipdesk".to_string(), "acme".to_string(), "foo".to_string()]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn empty_env_string_does_not_clobber_toml_schemes() {
+        with_env(&[("SNIPDESK_OIDC_ALLOWED_SCHEMES", Some(""))], || {
+            let mut cfg = fresh_config();
+            cfg.oidc.allowed_deep_link_schemes = vec!["snipdesk".to_string()];
+            cfg.apply_env_overrides();
+            assert_eq!(
+                cfg.oidc.allowed_deep_link_schemes,
+                vec!["snipdesk".to_string()]
+            );
+        });
+    }
+
+    #[test]
+    fn comma_only_env_string_leaves_toml_alone() {
+        with_env(&[("SNIPDESK_OIDC_ALLOWED_SCHEMES", Some(", , ,"))], || {
+            let mut cfg = fresh_config();
+            cfg.oidc.allowed_deep_link_schemes = vec!["snipdesk".to_string()];
+            cfg.apply_env_overrides();
+            assert_eq!(
+                cfg.oidc.allowed_deep_link_schemes,
+                vec!["snipdesk".to_string()]
+            );
+        });
+    }
 }

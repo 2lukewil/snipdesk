@@ -100,8 +100,19 @@ base64 -w0 bundle.tgz | wl-copy   # or write to a file and paste
 ```
 
 The release workflow auto-detects the secret on the next tag push
-and produces the customer's installers + signed update manifests
-alongside the vanilla artifacts in the same GitHub release.
+and produces:
+
+- **Desktop** (on a `v*` tag): customer-branded Lite + Teams
+  installers + signed update manifests alongside the vanilla
+  artifacts in the same GitHub release.
+- **Server** (on a `server-v*` tag): a per-customer Docker image
+  at `ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:<version>`
+  + `:latest` with the brand name + OIDC scheme baked in as env
+  vars. Customer's `docker-compose.yml` pulls that image and
+  never has to think about brand config; updates via Watchtower
+  or `docker compose pull` keep the brand intact because the env
+  lives on the image.
 
 Updating the customer = edit files here, re-tar + re-base64,
-paste over the secret value.
+paste over the secret value. Next tag push rebuilds everything
+with the new values.

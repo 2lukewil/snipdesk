@@ -55,6 +55,18 @@ RUN useradd --system --uid 10001 --user-group --shell /usr/sbin/nologin snipdesk
 
 COPY --from=builder /src/target/release/snipdesk-server /usr/local/bin/snipdesk-server
 
+# Whitelabel build args. Defaults produce the vanilla "SnipDesk"
+# image; per-customer image builds pass --build-arg to bake the
+# customer's brand + deep-link scheme allowlist into the image.
+# The server reads these at startup (see config::apply_env_overrides)
+# with env > TOML precedence, so the customer's mounted TOML can
+# focus on secrets + deployment knobs and brand fields stay baked
+# in across `docker pull`.
+ARG BRAND_NAME=SnipDesk
+ARG DEEP_LINK_SCHEMES=snipdesk
+ENV SNIPDESK_BRAND_NAME=$BRAND_NAME
+ENV SNIPDESK_OIDC_ALLOWED_SCHEMES=$DEEP_LINK_SCHEMES
+
 USER snipdesk
 WORKDIR /var/lib/snipdesk
 EXPOSE 8080

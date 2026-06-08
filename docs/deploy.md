@@ -359,10 +359,47 @@ for poking at things during incident response.
 ### Updates
 
 Tagged releases at `server-v*` publish a new image to
-`ghcr.io/2lukewil/snipdesk-server`. Migrations run automatically on
-boot. The checksum-repair logic in `db.rs` handles comment-only
-edits to applied migrations cleanly; real schema changes only land
-via new migration files.
+`ghcr.io/2lukewil/snipdesk-server`. When a whitelabel brand bundle
+is configured in CI (`BRAND_BUNDLE_WHITELABEL` secret), the same
+tag push also produces `ghcr.io/2lukewil/snipdesk-server-<slug>`
+with the customer's brand baked in via Dockerfile build-args -
+operators pulling the per-customer image get the right branding
+on every update without ever touching server config. Migrations
+run automatically on boot. The checksum-repair logic in `db.rs`
+handles comment-only edits to applied migrations cleanly; real
+schema changes only land via new migration files.
+
+#### Whitelabel: hands-off Docker deploy
+
+Per-customer images bake the brand name + OIDC deep-link scheme
+allowlist into `SNIPDESK_BRAND_NAME` and
+`SNIPDESK_OIDC_ALLOWED_SCHEMES` environment variables at image
+build time. The server reads them at startup with env > TOML
+precedence (mirroring `SNIPDESK_MASTER_KEY`), so the operator's
+mounted TOML only needs the deployment-specific knobs and
+secrets - never brand fields. A `docker pull` preserves the env
+because it lives on the image, so brand sticks across updates.
+
+Example `docker-compose.yml` for the customer:
+
+```yaml
+services:
+  snipdesk-server:
+    image: ghcr.io/2lukewil/snipdesk-server-acme:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/var/lib/snipdesk
+      - ./snipdesk-server.toml:/etc/snipdesk/config.toml:ro
+    environment:
+      SNIPDESK_MASTER_KEY: "${SNIPDESK_MASTER_KEY}"
+      RUST_LOG: "info,sqlx=warn,tower_http=info"
+```
+
+The mounted TOML can omit `[brand]` and `[oidc].allowed_deep_link_schemes`
+entirely; the image's env supplies them. Pair with Watchtower
+(section above) for fully hands-off updates.
 
 The running server polls the GitHub releases feed every 6 hours by
 default (configurable via `[updater]` in the TOML, off via

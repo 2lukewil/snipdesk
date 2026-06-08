@@ -248,6 +248,49 @@ server {
 flexible-SSL toggle to taste; `secure_cookies = true` in the server
 config is what really matters.)
 
+## 7a. Cross-origin web clients (CORS)
+
+The default v1 topology - desktop client + admin dashboard, both
+hitting the server on its own host - never needs CORS. Same-origin
+requests skip the preflight, the dashboard's htmx posts go through
+the cookie, and the desktop JSON API uses `Authorization: Bearer`.
+The server ships with CORS disabled and stays that way unless you
+opt in.
+
+Opt in when a separate web frontend (deployed on a different
+origin) needs to talk to `/api/*`. Add to the config:
+
+```toml
+cors_allowed_origins = [
+    "https://app.example.com",
+    "http://localhost:5173",   # dev only
+]
+```
+
+Each entry must include the scheme and (if non-default) the port.
+The server mounts a `tower_http::cors::CorsLayer` per entry:
+
+- Methods: all (GET, POST, PUT, PATCH, DELETE).
+- Headers: all (so `Authorization`, `Content-Type` etc. flow through).
+- Credentials: allowed. The JSON API uses bearer tokens not cookies,
+  but the dashboard's session cookie also wants this so a future
+  web frontend can hit `/dashboard/*` from the same origin set.
+
+Operational notes:
+
+- Restart the server to pick up changes; CORS is read at boot.
+- Bad origin strings (typos, missing scheme) are logged at WARN and
+  silently dropped from the list. If all origins fail to parse, the
+  CORS layer isn't mounted at all - the server logs that too.
+- Wildcard (`"*"`) is intentionally not special-cased. List every
+  origin you want; if you really need wildcard behaviour, set up a
+  reverse proxy that strips the `Origin` header and serves the API
+  same-origin via path-rewrite instead.
+
+Leave the list empty for any deployment that doesn't have a
+separate web client - empty is a hard "no CORS layer mounted,"
+matching v1's tighter security posture.
+
 ## 8. First boot + admin signup
 
 ```
@@ -326,6 +369,26 @@ docker compose up -d
 Migrations run automatically on boot. The checksum-repair logic in
 `db.rs` handles comment-only edits to applied migrations cleanly;
 real schema changes only land via new migration files.
+
+### Audit log
+
+Every admin mutation (user create/update/delete, library
+create/update/delete) lands in the `audit_log` table with the
+actor's id + email, the action, the target, and a small JSON
+details blob. View at `/dashboard/audit` (admins only); 50 entries
+per page, newest first.
+
+The table is append-only from the application side - no UPDATE or
+DELETE paths. Rows survive a `user.delete` because `actor_email`
+is denormalised (the FK has `ON DELETE SET NULL` for `actor_id`).
+If you need to prune for retention, do it out-of-band:
+
+```sh
+sqlite3 /var/lib/snipdesk/snipdesk.db \
+  "DELETE FROM audit_log WHERE at < strftime('%s', 'now', '-1 year');"
+```
+
+The app side won't notice; the dashboard just shows newer entries.
 
 ### Tombstone purge
 

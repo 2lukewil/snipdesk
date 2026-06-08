@@ -11,24 +11,21 @@
     "build:teams": "vite build --mode teams",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "node scripts/whitelabel.mjs && tauri dev",
+    "tauri:dev": "tauri dev",
     "tauri:dev:teams": "node scripts/dev-teams.mjs",
     "tauri:build": "node scripts/tauri-build.mjs",
-    "tauri:build:teams": "node scripts/build-teams.mjs",
-    "whitelabel": "node scripts/whitelabel.mjs",
-    "postinstall": "node scripts/whitelabel.mjs"
+    "tauri:build:teams": "node scripts/build-teams.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
-    "smol-toml": "^1.6.1",
     "vite": "^5.4.10"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-process": "^2.2.0",
-    "@tauri-apps/plugin-shell": "^2.2.0",
     "@tauri-apps/plugin-updater": "^2.3.0",
-    "@tauri-apps/plugin-window-state": "^2.2.0"
+    "@tauri-apps/plugin-window-state": "^2.2.0",
+    "@tauri-apps/plugin-shell": "^2.2.0"
   }
 }

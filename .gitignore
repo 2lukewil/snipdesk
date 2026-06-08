@@ -42,13 +42,3 @@ desktop.ini
 snipdesk-server.toml
 crates/snipdesk-server/snipdesk-server.toml
 crates/snipdesk-server/data/
-
-# White-label generated files. The .template counterparts are tracked;
-# scripts/whitelabel.mjs regenerates the live versions on every build
-# (and on postinstall for fresh clones). See docs/whitelabel.md for
-# the customer-config shape - those configs ALSO live outside this
-# repo (see scripts/whitelabel.example.toml for the shape).
-src-tauri/tauri.conf.json
-src-tauri/tauri.teams.conf.json
-src-tauri/src/whitelabel.rs
-src/whitelabel.js

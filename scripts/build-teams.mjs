@@ -32,21 +32,6 @@ const extraArgs = process.argv.slice(2);
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 
-// Regenerate brand constants + restore-and-patch the Tauri configs
-// before the build. Required even for stock builds because the
-// teams config path we forward below is gitignored - if it doesn't
-// exist yet on a fresh clone, tauri build dies on `--config <path>`.
-console.log("[build-teams] whitelabel prebuild");
-const wl = spawnSync("node", ["scripts/whitelabel.mjs"], {
-  stdio: "inherit",
-  env: childEnv,
-  shell: true,
-});
-if (wl.status !== 0) {
-  console.error("[build-teams] whitelabel prebuild failed");
-  process.exit(wl.status ?? 1);
-}
-
 console.log("[build-teams] vite build --mode teams");
 const vite = spawnSync(
   "npx",

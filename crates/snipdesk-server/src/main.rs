@@ -152,6 +152,20 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         fx_cache,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         brand_name: cfg.brand.name.clone(),
+        update_cache: {
+            let cache = Arc::new(snipdesk_server::updater::UpdateCache::default());
+            if cfg.updater.enabled {
+                tracing::info!(
+                    interval_hours = cfg.updater.check_interval_hours,
+                    feed = %cfg.updater.release_feed_url,
+                    "updater: poller enabled"
+                );
+                snipdesk_server::updater::spawn_poller(cfg.updater.clone(), cache.clone());
+            } else {
+                tracing::info!("updater: poller disabled via [updater].enabled = false");
+            }
+            cache
+        },
     };
     if state.jwt_secret.is_empty() {
         tracing::warn!(

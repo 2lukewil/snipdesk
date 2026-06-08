@@ -58,6 +58,10 @@ pub struct AppState {
     /// "SnipDesk" via BrandConfig; deployments override via
     /// `[brand].name` in the server TOML.
     pub brand_name: String,
+    /// Latest known server release vs. running version. Updated by
+    /// the background poller in `crate::updater`; the dashboard
+    /// renders a banner when `is_newer` flips true.
+    pub update_cache: Arc<crate::updater::UpdateCache>,
 }
 
 /// Per-route body caps, sized to the realistic payload for each

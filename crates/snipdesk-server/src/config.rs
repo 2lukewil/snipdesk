@@ -101,6 +101,73 @@ pub struct Config {
     /// across deployments.
     #[serde(default)]
     pub brand: BrandConfig,
+
+    /// Periodic check for newer server releases. Notification-only:
+    /// when a newer release is detected, a banner surfaces in the
+    /// dashboard and an info log fires; the binary is never
+    /// rewritten in-place. Container deployments roll forward via
+    /// image-tag updates; bare-metal operators swap the binary
+    /// during their maintenance window.
+    #[serde(default)]
+    pub updater: UpdaterConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct UpdaterConfig {
+    /// When false, the background poller never starts and the
+    /// dashboard banner stays hidden regardless of GitHub state.
+    /// Default on so a freshly-deployed server picks up release
+    /// announcements without any extra configuration.
+    #[serde(default = "default_updater_enabled")]
+    pub enabled: bool,
+    /// How often to re-check the release feed. Default 6h is
+    /// sub-quota for the unauthenticated GitHub API (60 req/hr per
+    /// IP) even with several instances behind one NAT, and
+    /// catches a release within half a day.
+    #[serde(default = "default_updater_interval")]
+    pub check_interval_hours: u32,
+    /// Release feed URL. Defaults to the public releases endpoint
+    /// for the upstream repo; an air-gapped mirror or a fork can
+    /// point this at its own endpoint serving the same JSON shape.
+    #[serde(default = "default_release_feed_url")]
+    pub release_feed_url: String,
+    /// Tag prefix used to filter the feed for server-only
+    /// releases (the desktop client and the server share one repo
+    /// but have separate tag streams). Default matches
+    /// release-server.yml's trigger.
+    #[serde(default = "default_updater_tag_prefix")]
+    pub tag_prefix: String,
+    /// Optional GitHub token to lift the rate-limit ceiling from
+    /// 60/hr (unauthenticated) to 5000/hr. Only needed if many
+    /// snipdesk-server instances share an outbound IP. A token
+    /// with no scopes is sufficient for public-repo reads.
+    #[serde(default)]
+    pub github_token: Option<String>,
+}
+
+impl Default for UpdaterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_updater_enabled(),
+            check_interval_hours: default_updater_interval(),
+            release_feed_url: default_release_feed_url(),
+            tag_prefix: default_updater_tag_prefix(),
+            github_token: None,
+        }
+    }
+}
+
+fn default_updater_enabled() -> bool {
+    true
+}
+fn default_updater_interval() -> u32 {
+    6
+}
+fn default_release_feed_url() -> String {
+    "https://api.github.com/repos/2lukewil/snipdesk/releases?per_page=20".to_string()
+}
+fn default_updater_tag_prefix() -> String {
+    "server-v".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -580,6 +580,29 @@ textarea {
 .recent-list li:last-child { border-bottom: none; }
 .muted.small { font-size: 11px; color: var(--fg-dim); }
 
+/* "Newer release available" banner under the top nav. Rendered by
+   render_update_banner when crate::updater detects a higher release
+   tag than the running binary; an empty banner string collapses
+   to no DOM at all. */
+.update-banner {
+  background: var(--accent-dim, #1f2a44);
+  border-bottom: 1px solid var(--accent, #4c9aff);
+  color: var(--fg);
+  padding: 8px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.update-banner a {
+  color: var(--accent, #4c9aff);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.update-banner a:hover { text-decoration: underline; }
+
 /* --- Audit log --- */
 
 .audit-table {

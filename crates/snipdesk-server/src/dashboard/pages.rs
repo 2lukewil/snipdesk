@@ -100,11 +100,13 @@ async fn render_page(
     content: &str,
 ) -> Html<String> {
     let (display, role) = fetch_nav_user(state, &session.claims).await;
+    let update_banner = render_update_banner(state).await;
     Html(render(
         LAYOUT,
         &[
             ("TITLE", title),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
+            ("UPDATE_BANNER", &update_banner),
             (
                 "USERS_ACTIVE",
                 if matches!(active, NavTab::Users) {
@@ -142,6 +144,32 @@ async fn render_page(
             ("CONTENT", content),
         ],
     ))
+}
+
+/// Build the "newer release available" banner that sits between the
+/// nav and the main content. Returns an empty string when no
+/// update is known (either the poller hasn't completed a cycle or
+/// the latest matches the running version). The banner links
+/// straight to the release page so an operator gets the notes in
+/// one click.
+async fn render_update_banner(state: &AppState) -> String {
+    let status = state.update_cache.current().await;
+    if !status.is_newer {
+        return String::new();
+    }
+    let version = status.latest_version.as_deref().unwrap_or("");
+    let url = status.html_url.as_deref().unwrap_or("");
+    let current = env!("CARGO_PKG_VERSION");
+    format!(
+        "<div class=\"update-banner\">\
+           <span><strong>Update available:</strong> {brand} server {ver} (running {cur})</span> \
+           <a href=\"{url}\" target=\"_blank\" rel=\"noopener\">View release notes &rarr;</a>\
+         </div>",
+        brand = escape_html(&state.brand_name),
+        ver = escape_html(version),
+        cur = escape_html(current),
+        url = escape_html(url),
+    )
 }
 
 /// Which nav-tab a page should highlight. `None` is for pages that

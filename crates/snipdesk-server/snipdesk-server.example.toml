@@ -94,3 +94,21 @@ master_key = ""
 #
 # [brand]
 # name = "Acme Snippets"
+
+# Periodic check for newer server releases. Default on; polls the
+# upstream GitHub releases feed every 6 hours, compares the highest
+# `server-v*` tag against the running version, and surfaces a
+# banner on the dashboard + an info log when a newer one exists.
+# Notification-only: the binary is never rewritten in place.
+# Container rollouts happen via image pulls; bare-metal operators
+# swap binaries during their maintenance window.
+#
+# [updater]
+# enabled = true
+# check_interval_hours = 6
+# # Override the feed for an air-gapped mirror or a fork:
+# # release_feed_url = "https://api.github.com/repos/yourorg/snipdesk/releases?per_page=20"
+# # tag_prefix = "server-v"
+# # Optional token to raise the GitHub API rate limit from 60/hr to
+# # 5000/hr; only needed if many instances share an outbound IP.
+# # github_token = "ghp_..."

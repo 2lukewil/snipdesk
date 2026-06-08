@@ -35,6 +35,8 @@ async fn make_app() -> axum::Router {
         stats: snipdesk_server::config::StatsConfig::default(),
         fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
         cors_allowed_origins: Vec::new(),
+        brand_name: "SnipDesk".to_string(),
+        update_cache: std::sync::Arc::new(snipdesk_server::updater::UpdateCache::default()),
     };
     router(state)
 }

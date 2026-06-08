@@ -125,25 +125,63 @@ jobs:
       # whitelabel manifest file in this same release - so one
       # tag push services every audience and there's no extra
       # hosting required.
+      # Brand bundle layout (built and base64-encoded by the
+      # operator before pasting into secrets.BRAND_BUNDLE_WHITELABEL):
+      #
+      #   acme/
+      #     brand.json
+      #     installer-assets/
+      #       header.bmp
+      #       sidebar.bmp
+      #       installer.ico
+      #       license.rtf
+      #
+      # To produce the secret value on a workstation:
+      #   tar -czf bundle.tgz -C path/to/acme .
+      #   base64 -w0 bundle.tgz | pbcopy   # or `base64 -w0 bundle.tgz > out.txt`
+      #
+      # The base64 string is the entire secret payload. CI decodes
+      # it into $RUNNER_TEMP/brand/ which becomes the bundle root
+      # brand.mjs reads (brand.json + installer-assets/ side by
+      # side). Vanilla builds are unaffected when the secret is
+      # absent.
       - name: Resolve whitelabel inputs
         id: wl
         shell: pwsh
         env:
-          BRAND_CONFIG_VALUE: ${{ secrets.BRAND_CONFIG_WHITELABEL }}
+          BRAND_BUNDLE_VALUE: ${{ secrets.BRAND_BUNDLE_WHITELABEL }}
         run: |
-          $raw = $env:BRAND_CONFIG_VALUE
+          $raw = $env:BRAND_BUNDLE_VALUE
           if (-not $raw) {
-            Write-Host "No BRAND_CONFIG_WHITELABEL secret; skipping whitelabel build."
+            Write-Host "No BRAND_BUNDLE_WHITELABEL secret; skipping whitelabel build."
             "configured=false" >> $env:GITHUB_OUTPUT
             exit 0
           }
-          try { $cfg = $raw | ConvertFrom-Json -ErrorAction Stop }
-          catch { Write-Error "BRAND_CONFIG_WHITELABEL is not valid JSON: $_"; exit 1 }
-          foreach ($key in 'name','identifier','teams_identifier') {
-            if (-not $cfg.$key) { Write-Error "BRAND_CONFIG_WHITELABEL missing required field: $key"; exit 1 }
+          $bundleDir = Join-Path $env:RUNNER_TEMP "brand"
+          if (Test-Path $bundleDir) { Remove-Item $bundleDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $bundleDir | Out-Null
+          $tgz = Join-Path $env:RUNNER_TEMP "brand.tgz"
+          try {
+            [IO.File]::WriteAllBytes($tgz, [Convert]::FromBase64String($raw.Trim()))
+          } catch {
+            Write-Error "BRAND_BUNDLE_WHITELABEL is not valid base64: $_"
+            exit 1
           }
-          $tmp = Join-Path $env:RUNNER_TEMP "brand.json"
-          Set-Content -Path $tmp -Value $raw -Encoding UTF8
+          tar -xzf $tgz -C $bundleDir
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to extract BRAND_BUNDLE_WHITELABEL tar."
+            exit 1
+          }
+          $brandJson = Join-Path $bundleDir "brand.json"
+          if (-not (Test-Path $brandJson)) {
+            Write-Error "Bundle is missing brand.json at the root."
+            exit 1
+          }
+          try { $cfg = Get-Content $brandJson -Raw | ConvertFrom-Json -ErrorAction Stop }
+          catch { Write-Error "brand.json is not valid JSON: $_"; exit 1 }
+          foreach ($key in 'name','identifier','teams_identifier') {
+            if (-not $cfg.$key) { Write-Error "brand.json missing required field: $key"; exit 1 }
+          }
           # PascalCase ASCII prefix for installer filenames; defaults
           # to name with non-alphanumerics stripped. Customers can
           # set "slug" explicitly for a shorter or different prefix.
@@ -153,11 +191,13 @@ jobs:
           # cleanly in releases/latest/download/.
           $slugLower = if ($cfg.slug) { $cfg.slug.ToLower() } else { ($cfg.name -replace '[^A-Za-z0-9]','').ToLower() }
           "configured=true" >> $env:GITHUB_OUTPUT
-          "config_path=$tmp" >> $env:GITHUB_OUTPUT
+          "config_path=$brandJson" >> $env:GITHUB_OUTPUT
           "product_name=$($cfg.name)" >> $env:GITHUB_OUTPUT
           "installer_prefix=$installerPrefix" >> $env:GITHUB_OUTPUT
           "manifest_prefix=snipdesk-$slugLower" >> $env:GITHUB_OUTPUT
+          $hasAssets = Test-Path (Join-Path $bundleDir "installer-assets")
           Write-Host "Whitelabel configured: $($cfg.name) -> installer prefix '$installerPrefix', manifest prefix 'snipdesk-$slugLower'"
+          Write-Host ("Installer-assets present in bundle: " + $(if ($hasAssets) { 'yes' } else { 'no' }))
 
       - name: Build whitelabel Lite (signed)
         if: steps.wl.outputs.configured == 'true'

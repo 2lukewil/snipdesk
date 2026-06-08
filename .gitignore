@@ -36,6 +36,11 @@ desktop.ini
 .env.local
 .env.*.local
 
+# Per-build customer installer assets. Staged into this directory
+# by scripts/brand.mjs during a customer build and removed on
+# restore, so the tracked tree never carries customer files.
+src-tauri/installer-assets/
+
 # snipdesk-server local state and active config. The committed file is
 # snipdesk-server.example.toml; the live config + the SQLite data
 # directory stay out of git.

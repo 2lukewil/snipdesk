@@ -11,38 +11,57 @@
 // SIGKILL. A pre-substitution `git diff --quiet` check ensures we
 // never overwrite uncommitted work in the target files.
 //
-// Config shape (JSON object at the path in $BRAND_CONFIG):
+// Brand bundle layout (referenced by $BRAND_CONFIG pointing at the
+// brand.json inside it):
+//
+//   <bundle>/
+//     brand.json
+//     installer-assets/        # optional; only needed for branded NSIS chrome
+//       <whatever>.bmp / .ico / .rtf
+//
+// brand.json schema:
 //   {
 //     "name":              "<display name>",        // required
 //     "identifier":        "<lite bundle id>",      // required
 //     "teams_identifier":  "<teams bundle id>",     // required
-//     "slug":              "<filename-safe slug>",  // optional, defaults to lowercased name
+//     "slug":              "<filename-safe slug>",  // optional
 //     "updater_url":       "<lite updater feed>",   // optional
 //     "teams_updater_url": "<teams updater feed>",  // optional
 //     "deep_link_scheme":  "<custom URL scheme>",   // optional
 //     "server_url":        "<default server URL>",  // optional
 //     "sso_only":          true | false,            // optional
 //     "installer": {                                // optional NSIS cosmetics
-//       "header_image":   "<path>",                 //   150x57 bmp
-//       "sidebar_image":  "<path>",                 //   164x314 bmp
-//       "installer_icon": "<path>",                 //   .ico for the installer chrome
-//       "license_file":   "<path>"                  //   .rtf shown on the License page
+//       "header_image":   "<filename>",             //   150x57 bmp in installer-assets/
+//       "sidebar_image":  "<filename>",             //   164x314 bmp in installer-assets/
+//       "installer_icon": "<filename>",             //   .ico for the installer chrome
+//       "license_file":   "<filename>"              //   .rtf shown on the License page
 //     }
 //   }
 //
 // server_url + sso_only seed defaults in Settings::default(); end
 // users can still flip both from the Team Library settings panel.
-// installer paths are resolved by Tauri relative to src-tauri/; the
-// usual pattern is to drop the customer's files into
-// src-tauri/installer-assets/ before the build and reference them
-// as "installer-assets/<file>".
+// installer.* values are bare filenames inside the bundle's
+// installer-assets/ folder; this script copies them into
+// src-tauri/installer-assets/ for the build and removes them again
+// on restore. The src-tauri target dir is gitignored so a customer
+// build never dirties the tracked tree.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  unlinkSync,
+  rmdirSync,
+  readdirSync,
+} from "node:fs";
 import { execSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const INSTALLER_ASSETS_DIR = join(repoRoot, "src-tauri", "installer-assets");
 
 // Files touched by substitution. Keep this list in sync with any
 // new source that hard-codes one of the constants below.
@@ -169,26 +188,34 @@ function applySubs(cfg) {
 // missing intermediate objects as needed. Rules with a value of
 // null / undefined are skipped, so a customer config without an
 // `installer` block leaves the tracked tauri.conf.json untouched.
+// Map a bare filename from brand.json's installer block to the
+// in-tree path Tauri will read at build time. Returns undefined
+// when the field is absent so the patch loop skips it cleanly.
+function nsisAssetPath(filename) {
+  if (typeof filename !== "string" || !filename) return undefined;
+  return `installer-assets/${filename}`;
+}
+
 const JSON_PATCHES = [
   {
     target: "src-tauri/tauri.conf.json",
     path: ["bundle", "windows", "nsis", "headerImage"],
-    value: (c) => c.installer && c.installer.header_image,
+    value: (c) => c.installer && nsisAssetPath(c.installer.header_image),
   },
   {
     target: "src-tauri/tauri.conf.json",
     path: ["bundle", "windows", "nsis", "sidebarImage"],
-    value: (c) => c.installer && c.installer.sidebar_image,
+    value: (c) => c.installer && nsisAssetPath(c.installer.sidebar_image),
   },
   {
     target: "src-tauri/tauri.conf.json",
     path: ["bundle", "windows", "nsis", "installerIcon"],
-    value: (c) => c.installer && c.installer.installer_icon,
+    value: (c) => c.installer && nsisAssetPath(c.installer.installer_icon),
   },
   {
     target: "src-tauri/tauri.conf.json",
     path: ["bundle", "windows", "nsis", "license"],
-    value: (c) => c.installer && c.installer.license_file,
+    value: (c) => c.installer && nsisAssetPath(c.installer.license_file),
   },
 ];
 
@@ -236,6 +263,66 @@ function restoreFiles(backups) {
   }
 }
 
+// Copy installer assets out of the brand bundle into the tracked
+// src-tauri/installer-assets/ directory so Tauri's NSIS bundler
+// can read them at the relative paths the JSON patches set.
+// Returns a cleanup descriptor (or null) the restore step uses to
+// remove exactly what we created - so a build never leaves stray
+// customer files behind in the worktree.
+function stageInstallerAssets(cfg, brandConfigPath) {
+  if (!cfg.installer || !brandConfigPath) return null;
+  const bundleDir = dirname(resolve(brandConfigPath));
+  const sourceDir = join(bundleDir, "installer-assets");
+  if (!existsSync(sourceDir)) {
+    console.warn(
+      `[brand] installer block set but ${sourceDir} doesn't exist; ` +
+        "skipping asset copy. Tauri's NSIS build will fail when it " +
+        "tries to read the patched paths.",
+    );
+    return null;
+  }
+  const targetExisted = existsSync(INSTALLER_ASSETS_DIR);
+  if (!targetExisted) mkdirSync(INSTALLER_ASSETS_DIR, { recursive: true });
+  const copied = [];
+  const fields = ["header_image", "sidebar_image", "installer_icon", "license_file"];
+  for (const field of fields) {
+    const filename = cfg.installer[field];
+    if (typeof filename !== "string" || !filename) continue;
+    const src = join(sourceDir, filename);
+    if (!existsSync(src)) {
+      console.warn(`[brand] installer asset missing in bundle: ${src}`);
+      continue;
+    }
+    const dst = join(INSTALLER_ASSETS_DIR, filename);
+    copyFileSync(src, dst);
+    copied.push(dst);
+    console.log(`[brand] staged installer asset: ${filename}`);
+  }
+  return { copied, createdDir: !targetExisted };
+}
+
+function cleanupInstallerAssets(state) {
+  if (!state) return;
+  for (const path of state.copied) {
+    try {
+      unlinkSync(path);
+    } catch (e) {
+      console.warn(`[brand] failed to remove staged asset ${path}: ${e.message}`);
+    }
+  }
+  // Only remove the directory if we created it AND it's now empty.
+  // Leaves a manually-populated dir alone for the unusual case
+  // where someone is iterating outside the bundle convention.
+  if (state.createdDir && existsSync(INSTALLER_ASSETS_DIR)) {
+    try {
+      const left = readdirSync(INSTALLER_ASSETS_DIR);
+      if (left.length === 0) rmdirSync(INSTALLER_ASSETS_DIR);
+    } catch (e) {
+      console.warn(`[brand] failed to clean installer-assets dir: ${e.message}`);
+    }
+  }
+}
+
 // Wraps a build invocation. Pass a callback that runs the actual
 // build (tauri / vite / etc.); this fn handles config load,
 // substitution, signal traps, and the unconditional restore.
@@ -246,7 +333,11 @@ export async function withBrand(callback) {
   console.log(`[brand] applying overrides for "${cfg.name}"`);
   const backups = applySubs(cfg);
   applyJsonPatches(cfg, backups);
-  const restore = () => restoreFiles(backups);
+  const assets = stageInstallerAssets(cfg, process.env.BRAND_CONFIG);
+  const restore = () => {
+    restoreFiles(backups);
+    cleanupInstallerAssets(assets);
+  };
   const onSignal = (sig, code) => {
     restore();
     process.exit(code);

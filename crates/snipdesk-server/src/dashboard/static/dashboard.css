@@ -797,3 +797,31 @@ textarea {
 .lib-folder-insert-zone.drop-target {
   background: rgba(53, 99, 255, 0.08);
 }
+
+/* Explicit drag-handle for folder rows. Same visual pattern as
+   the snippet cards (':: ' monospace grip). Sits ahead of the
+   caret so it's unambiguous: this column is for dragging, the
+   rest of the row is for clicking. The spacer variant keeps
+   leaf rows aligned with the special pseudo-nodes (All,
+   Unfiled) that don't get a grip. */
+.lib-folder-grab,
+.lib-folder-grab-spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 18px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  line-height: 1;
+  user-select: none;
+}
+.lib-folder-grab {
+  cursor: grab;
+}
+.lib-folder-grab:hover { color: var(--fg); }

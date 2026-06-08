@@ -1982,28 +1982,28 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // could swallow a click as a drag start. Splitting caret out
     // means the caret's click handler is the ONLY listener for
     // that span's click event.
-    // Inner link does NOT carry draggable="false". The previous
-    // revision set that to suppress the browser's default
-    // link-drag behaviour, but it had the side effect of
-    // disabling ANY drag-initiation from clicks inside the link
-    // area - which is most of the row width. The result: only
-    // rows where the user happened to mousedown on the tiny
-    // caret/spacer slot started a drag, which manifested as
-    // "only the topmost folder is draggable" (the visually
-    // obvious caret) and looked broken for the rest.
-    //
-    // Without draggable="false", clicking the link mousedown +
-    // moving the pointer initiates a drag - browser sees the
-    // <a> as draggable by default, our body-level dragstart
-    // listener walks closest() to the row, treats it as a row
-    // drag, and overrides dataTransfer with our payload. Plain
-    // clicks (mousedown + mouseup with no movement) still
-    // navigate as expected.
+    // Real folders get an explicit grip handle on the left as a
+    // dedicated drag target. The previous "any-area-of-the-row"
+    // approach relied on the browser walking closest()
+    // draggable=true ancestor from the mousedown target, which
+    // turned out to be unreliable in practice - mousedowns on the
+    // inner <a> were captured for link behaviour even with our
+    // dragstart handler running, and removing draggable="false"
+    // from the link wasn't enough. The grip is small (12px
+    // monospace ::), set cursor:grab, and has no children to
+    // confuse the browser. Same pattern the snippet cards use,
+    // so the visual vocabulary is consistent.
+    let grip_html = match kind {
+        FolderNodeKind::Real => {
+            "<span class=\"lib-folder-grab\" aria-hidden=\"true\" title=\"Drag to move\">::</span>"
+        }
+        _ => "<span class=\"lib-folder-grab-spacer\" aria-hidden=\"true\"></span>",
+    };
     format!(
         "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
             {drop_attrs} {drag_attrs}{style}>\
-           {caret}{glyph}\
+           {grip}{caret}{glyph}\
            <a class=\"lib-folder-link\" href=\"/dashboard/library?folder={href}\">\
              <span class=\"label\">{label_safe}</span>\
              <span class=\"count\">{count}</span>\
@@ -2012,6 +2012,7 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
         href = escape_html(path),
         path_attr = escape_html(path),
         label_safe = escape_html(label),
+        grip = grip_html,
         caret = caret_html,
         glyph = tree_glyph,
     )
@@ -3647,6 +3648,48 @@ pub async fn audit_page(
     };
     let rows = crate::audit::list_recent(&state.pool, per_page, offset).await;
 
+    // Pre-fetch display_name + email for every user target on
+    // this page so the target column renders as "Name <email>"
+    // instead of opaque uuids. One IN-list SELECT per page is
+    // cheap; the alternative (per-row lookup in humanize) would
+    // be O(N) round-trips.
+    let mut user_target_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in &rows {
+        if r.target_kind.as_deref() == Some("user") {
+            if let Some(uid) = r.target_id.as_deref() {
+                if !uid.is_empty() {
+                    user_target_ids.insert(uid.to_string());
+                }
+            }
+        }
+    }
+    let users_by_id: std::collections::HashMap<String, (String, String)> =
+        if user_target_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            // Manual placeholder list because sqlx::query_as doesn't
+            // expand a Vec into ? placeholders for SQLite. Each id
+            // is a uuid string, safe to inline after escape_html-
+            // style sanitisation - but a placeholder loop is cleaner.
+            let placeholders: Vec<&str> = user_target_ids.iter().map(|_| "?").collect();
+            let sql = format!(
+                "SELECT id, display_name, email FROM users WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let mut q = sqlx::query_as::<_, (String, String, String)>(&sql);
+            for uid in &user_target_ids {
+                q = q.bind(uid);
+            }
+            q.fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|(id, name, email)| (id, (name, email)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
     let mut body = String::new();
     body.push_str("<h1>Audit log</h1>");
     body.push_str(
@@ -3662,8 +3705,11 @@ pub async fn audit_page(
         body.push_str("</tr></thead><tbody>");
         for r in &rows {
             let details_html = humanize_audit_details(&r.action, r.details.as_deref());
-            let target_html =
-                humanize_audit_target(r.target_kind.as_deref(), r.target_id.as_deref());
+            let target_html = humanize_audit_target(
+                r.target_kind.as_deref(),
+                r.target_id.as_deref(),
+                &users_by_id,
+            );
             body.push_str(&format!(
                 "<tr>\
                    <td class=\"audit-when\">{when}</td>\
@@ -3771,16 +3817,55 @@ fn capitalize(s: &str) -> String {
 /// links to their detail page; library snippets link to the
 /// library list (no per-snippet detail page exists). Anything
 /// else falls back to the raw "kind:id" string.
-fn humanize_audit_target(kind: Option<&str>, id: Option<&str>) -> String {
+/// Display label for a single audit-row user target: prefer
+/// "Name <email>" pulled from the users table, fall back to the
+/// uuid for accounts the SELECT didn't see (e.g. deleted users
+/// the cascade hasn't NULL'd yet, or pre-fetch failures).
+fn user_target_label(
+    users: &std::collections::HashMap<String, (String, String)>,
+    uid: &str,
+) -> String {
+    match users.get(uid) {
+        Some((name, email)) => format!("{} &lt;{}&gt;", escape_html(name), escape_html(email)),
+        None => format!("user {}", escape_html(uid)),
+    }
+}
+
+fn humanize_audit_target(
+    kind: Option<&str>,
+    id: Option<&str>,
+    users: &std::collections::HashMap<String, (String, String)>,
+) -> String {
     match (kind, id) {
-        (Some("user"), Some(uid)) => format!(
-            "<a href=\"/dashboard/users/{uid}\" title=\"user {uid}\">user</a>",
-            uid = escape_html(uid),
+        // User target gets the user's display_name + email when
+        // available so an operator scanning the log doesn't have
+        // to cross-reference UUIDs to people. Falls back to the
+        // raw uuid only when the lookup misses.
+        (Some("user"), Some(uid)) if !uid.is_empty() => format!(
+            "<a href=\"/dashboard/users/{uid_attr}\">{label}</a>",
+            uid_attr = escape_html(uid),
+            label = user_target_label(users, uid),
         ),
-        (Some("library"), Some(lid)) => format!(
+        // Library snippet: there's no per-snippet detail page, so
+        // the link goes to the library overview. title= carries the
+        // uuid for hover-debug.
+        (Some("library"), Some(lid)) if !lid.is_empty() => format!(
             "<a href=\"/dashboard/library\" title=\"library snippet {lid}\">library snippet</a>",
             lid = escape_html(lid),
         ),
+        // Folder targets navigate straight to the folder's filtered
+        // library view via ?folder= - useful for folder.move and
+        // similar actions where the admin wants to see the result.
+        (Some("folder"), Some(fp)) if !fp.is_empty() => format!(
+            "<a href=\"/dashboard/library?folder={fp_attr}\">folder <em>{fp_display}</em></a>",
+            fp_attr = escape_html(fp),
+            fp_display = escape_html(fp),
+        ),
+        // Empty id (e.g. library.folder.reorder at root level fires
+        // with target_id="") shouldn't render as "folder:" or
+        // "user:" with nothing trailing - those read as broken UI.
+        // Collapse to a dash like the no-target case.
+        (Some(_), Some("")) => "<span class=\"muted\">-</span>".to_string(),
         (Some(k), Some(i)) => format!("{}:{}", escape_html(k), escape_html(i)),
         _ => "<span class=\"muted\">-</span>".to_string(),
     }
@@ -3874,26 +3959,76 @@ fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
             }
         }
         "library.update" => {
+            // Dropped the trailing "(vN)" - version is an internal
+            // wire-protocol counter and isn't user-meaningful.
             let title = get_str("title").unwrap_or_default();
             let folder = get_str("folder_path").unwrap_or_default();
-            let v = json.get("to_version").and_then(|v| v.as_i64());
-            let v_suffix = v.map(|n| format!(" (v{n})")).unwrap_or_default();
             if folder.is_empty() {
-                format!(
-                    "Updated \"<strong>{}</strong>\"{}",
-                    escape_html(&title),
-                    v_suffix
-                )
+                format!("Updated \"<strong>{}</strong>\"", escape_html(&title))
             } else {
                 format!(
-                    "Updated \"<strong>{}</strong>\" in <em>{}</em>{}",
+                    "Updated \"<strong>{}</strong>\" in <em>{}</em>",
                     escape_html(&title),
-                    escape_html(&folder),
-                    v_suffix
+                    escape_html(&folder)
                 )
             }
         }
         "library.delete" => "Deleted library snippet".to_string(),
+        "library.folder.move" => {
+            let from = get_str("from").unwrap_or_default();
+            let to = get_str("to").unwrap_or_default();
+            let count = json
+                .get("snippets_moved")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let dest = if to.is_empty() {
+                "<em>(root)</em>".to_string()
+            } else {
+                format!("<em>{}</em>", escape_html(&to))
+            };
+            let suffix = if count > 0 {
+                format!(" ({count} snippet{})", if count == 1 { "" } else { "s" })
+            } else {
+                String::new()
+            };
+            format!(
+                "Moved folder <strong>{}</strong> to {}{}",
+                escape_html(&from),
+                dest,
+                suffix,
+            )
+        }
+        "library.folder.create" => {
+            // No details on this action today; the path is in
+            // target_id (which the target column already shows).
+            "Created folder".to_string()
+        }
+        "library.folder.reorder" => {
+            let parent = get_str("parent").unwrap_or_default();
+            let parent_display = if parent.is_empty() {
+                "root level".to_string()
+            } else {
+                format!("<em>{}</em>", escape_html(&parent))
+            };
+            // Show the new order as leaf names so the line reads
+            // naturally instead of as a slash-path soup.
+            let names: Vec<String> = json
+                .get("order")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if names.is_empty() {
+                format!("Reordered children of {parent_display}")
+            } else {
+                let list = escape_html(&names.join(", "));
+                format!("Reordered {parent_display}: {list}")
+            }
+        }
         // Unknown action - keep the raw JSON, but escaped + in a
         // <code> block so the table column doesn't break HTML.
         _ => format!("<code>{}</code>", escape_html(s)),

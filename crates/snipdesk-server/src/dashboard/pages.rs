@@ -1982,37 +1982,36 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // could swallow a click as a drag start. Splitting caret out
     // means the caret's click handler is the ONLY listener for
     // that span's click event.
-    // Real folders get an explicit grip handle on the left as a
-    // dedicated drag target. The previous "any-area-of-the-row"
-    // approach relied on the browser walking closest()
-    // draggable=true ancestor from the mousedown target, which
-    // turned out to be unreliable in practice - mousedowns on the
-    // inner <a> were captured for link behaviour even with our
-    // dragstart handler running, and removing draggable="false"
-    // from the link wasn't enough. The grip is small (12px
-    // monospace ::), set cursor:grab, and has no children to
-    // confuse the browser. Same pattern the snippet cards use,
-    // so the visual vocabulary is consistent.
-    let grip_html = match kind {
-        FolderNodeKind::Real => {
-            "<span class=\"lib-folder-grab\" aria-hidden=\"true\" title=\"Drag to move\">::</span>"
-        }
-        _ => "<span class=\"lib-folder-grab-spacer\" aria-hidden=\"true\"></span>",
-    };
+    // No inner <a>. Previous revisions nested an
+    // <a class="lib-folder-link"> inside the draggable <div>, and
+    // browsers handle that ambiguity inconsistently - the spec
+    // says the closest draggable ancestor wins, but in Chromium
+    // the inner anchor's implicit drag-as-link behaviour wins for
+    // every row AFTER the first draggable=true element on the
+    // page. That manifested as "only the top-listed folder
+    // drags," with nested folders coincidentally working because
+    // they have a tree-glyph between caret and link that broke
+    // the conflict pattern.
+    //
+    // Solution: drop the <a> entirely. The row is a div with a JS
+    // click handler that navigates to /dashboard/library?folder=X
+    // (data-folder-href carries the URL). Drag is unambiguous.
+    // Ctrl/middle-click for new tab is lost, but folder
+    // navigation in an admin sidebar doesn't lean on that the way
+    // public docs do.
+    let folder_href = format!("/dashboard/library?folder={}", escape_html(path));
     format!(
         "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
+            data-folder-href=\"{href_attr}\" \
             {drop_attrs} {drag_attrs}{style}>\
-           {grip}{caret}{glyph}\
-           <a class=\"lib-folder-link\" href=\"/dashboard/library?folder={href}\">\
-             <span class=\"label\">{label_safe}</span>\
-             <span class=\"count\">{count}</span>\
-           </a>\
+           {caret}{glyph}\
+           <span class=\"label\">{label_safe}</span>\
+           <span class=\"count\">{count}</span>\
          </div>",
-        href = escape_html(path),
         path_attr = escape_html(path),
+        href_attr = escape_html(&folder_href),
         label_safe = escape_html(label),
-        grip = grip_html,
         caret = caret_html,
         glyph = tree_glyph,
     )
@@ -2510,16 +2509,28 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     saveCollapsed(c);
   }
 
-  // Click on the caret toggles the folder; stopPropagation +
-  // preventDefault stop the surrounding <a> link from firing
-  // (which would navigate to the folder filter view).
+  // Folder-row click navigation. The row no longer wraps an
+  // inner <a>, so we navigate explicitly. Caret clicks are
+  // handled first (with stopPropagation) so toggling collapse
+  // doesn't double-fire as navigation. Any other click on the
+  // row resolves to its data-folder-href and goes there.
   document.body.addEventListener("click", function (e) {
     var caret = e.target.closest && e.target.closest(".lib-folder-caret");
-    if (!caret) return;
-    e.preventDefault();
-    e.stopPropagation();
-    toggleFolderCollapsed(caret.getAttribute("data-folder-caret") || "");
-    applyFolderCollapse();
+    if (caret) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFolderCollapsed(caret.getAttribute("data-folder-caret") || "");
+      applyFolderCollapse();
+      return;
+    }
+    var row = e.target.closest && e.target.closest(".lib-folder-row[data-folder-href]");
+    if (row) {
+      // Ignore clicks during a drag (browser fires a phantom
+      // click on drop-end in some engines).
+      if (e.defaultPrevented) return;
+      var href = row.getAttribute("data-folder-href");
+      if (href) window.location.href = href;
+    }
   });
   // Keyboard parity for the focused caret. Space + Enter behave
   // like a click; matches the role="button" semantics we set on

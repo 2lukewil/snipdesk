@@ -310,20 +310,24 @@ textarea {
   letter-spacing: 0.06em;
   padding: 6px 8px 4px;
 }
-/* Folder row is the new wrapper: caret/spacer + tree-glyph/spacer +
-   link (label + count). Caret-vs-spacer and glyph-vs-spacer
-   reserve identical widths so labels line up across the column
-   regardless of whether a row has a caret or a tree glyph. */
+/* Folder row: caret/spacer + tree-glyph (depth>0 only) + label +
+   count. The row used to wrap an inner <a>, which created a
+   draggable/clickable conflict where Chromium only let the
+   FIRST draggable element on the page actually drag (other
+   rows' link-drag would silently abort the row-drag). Now the
+   row IS both the draggable and the click target (JS reads
+   data-folder-href and navigates). */
 .lib-folder-row {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   padding: 3px 6px;
   border-radius: 4px;
   color: var(--fg);
   user-select: none;
   border-left: 3px solid transparent;
 }
+.lib-folder-row[data-folder-href] { cursor: pointer; }
 .lib-folder-row:hover { background: var(--bg); }
 .lib-folder-row.active {
   background: var(--bg);
@@ -333,28 +337,19 @@ textarea {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
-/* The inner <a> takes the rest of the row and keeps label + count
-   together. flex:1 + min-width:0 lets the label truncate on
-   narrow sidebars instead of overflowing. */
-.lib-folder-link {
+/* Label fills remaining width and truncates with ellipsis on
+   narrow sidebars. Count pinned right via margin-left:auto -
+   simpler than nesting them in another flex container. */
+.lib-folder-row > .label {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  color: inherit;
-  text-decoration: none;
-  padding: 1px 0;
-}
-.lib-folder-link:hover { text-decoration: none; }
-.lib-folder-link .label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.lib-folder-link .count {
-  font-size: 11px;
+.lib-folder-row > .count {
+  margin-left: auto;
+  font-size: 12px;
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;

@@ -205,9 +205,19 @@
               <input id="onboarding-server-url" type="text" placeholder="https://snippets.example.com" autocomplete="off" spellcheck="false" />
             </label>
             <button id="onboarding-signin-oidc" class="btn-primary btn-block" type="button" disabled>Sign in with Google</button>
+            <details class="onboarding-paste-fallback">
+              <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
+              <p class="hint-inline">If your browser blocked or timed out the auto-launch, copy the token shown on the sign-in success page and paste it here.</p>
+              <label>
+                <span>Sign-in token</span>
+                <input id="onboarding-paste-token" type="text" autocomplete="off" spellcheck="false" />
+              </label>
+              <button id="onboarding-paste-token-submit" class="btn-secondary btn-block" type="button">Use this token</button>
+              <p id="onboarding-paste-token-error" class="editor-error hidden"></p>
+            </details>
             <details class="onboarding-other-signin signin-credentials">
               <summary>Other sign-in options</summary>
-              <p class="hint-inline">For email/password sign-in or pasting a token, open Settings -&gt; Team Library after this tour.</p>
+              <p class="hint-inline">For email/password sign-in, open Settings -&gt; Team Library after this tour.</p>
             </details>
             <p id="onboarding-signin-status" class="hint-inline"></p>
             <div class="onboarding-actions">

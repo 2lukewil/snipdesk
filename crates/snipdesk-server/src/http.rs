@@ -36,6 +36,12 @@ pub struct AppState {
     /// server is in password-only mode; the OIDC endpoints return a
     /// "not configured" error instead of 500ing.
     pub oidc_google: Option<GoogleOidcConfig>,
+    /// Deep-link URL schemes the OIDC start endpoint will trust in
+    /// the `?redirect=<scheme>://auth` parameter. Mirrors
+    /// `[oidc].allowed_deep_link_schemes` from the TOML; a
+    /// whitelabel-aware server lists every brand it serves so the
+    /// allowlist accepts each one.
+    pub oidc_allowed_schemes: Vec<String>,
     /// Dashboard session cookie gets the `Secure` attribute when this
     /// is `true`. Forwarded from `secure_cookies` in the TOML config.
     pub secure_cookies: bool,

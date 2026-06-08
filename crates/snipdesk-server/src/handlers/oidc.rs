@@ -146,11 +146,32 @@ async fn google_client(cfg: &GoogleOidcConfig) -> Result<CoreClient, ApiError> {
 #[derive(Debug, Deserialize)]
 pub struct StartQuery {
     /// Where the callback should send the user after issuing a JWT.
-    /// Defaults to `snipdesk://auth` (desktop deep link). Capped to
-    /// the small allowlist below to keep this from becoming an open
-    /// redirector.
+    /// Defaults to the first scheme in
+    /// `[oidc].allowed_deep_link_schemes` (typically `snipdesk://auth`).
+    /// Each value is checked against that allowlist so this can't
+    /// become an open redirector.
     #[serde(default)]
     pub redirect: Option<String>,
+}
+
+/// Pick the URL the callback page should attempt to deep-link the
+/// browser into. Accepts the client-supplied `?redirect=<scheme>://auth`
+/// when its scheme is in the allowlist; otherwise falls back to the
+/// first configured scheme. Empty allowlist (shouldn't happen, but
+/// the config default keeps it populated) falls back to "snipdesk".
+fn resolve_client_redirect(requested: Option<&str>, allowed: &[String]) -> String {
+    let default_scheme = allowed.first().map(String::as_str).unwrap_or("snipdesk");
+    if let Some(s) = requested {
+        // Pull the scheme out of "<scheme>://...": the allowlist
+        // compares scheme strings, not the full URL.
+        if let Some(idx) = s.find("://") {
+            let scheme = &s[..idx];
+            if !scheme.is_empty() && allowed.iter().any(|a| a == scheme) {
+                return s.to_string();
+            }
+        }
+    }
+    format!("{default_scheme}://auth")
 }
 
 /// Kick off the OIDC dance. Generates state + PKCE + nonce, stashes
@@ -182,11 +203,12 @@ pub async fn start(
         .set_pkce_challenge(pkce_challenge)
         .url();
 
-    let client_redirect = match q.redirect.as_deref() {
-        // Allowlist: only known-safe schemes. Open-redirect prevention.
-        Some(s) if s.starts_with("snipdesk://") => s.to_string(),
-        _ => "snipdesk://auth".to_string(),
-    };
+    // Allowlist the deep-link scheme against the configured list so
+    // a whitelabel client whose scheme isn't "snipdesk" gets a
+    // matching callback URL instead of being silently downgraded.
+    // Unknown / missing redirect falls back to the first configured
+    // scheme - the operator's primary brand, by convention.
+    let client_redirect = resolve_client_redirect(q.redirect.as_deref(), &state_app.oidc_allowed_schemes);
 
     if let Ok(mut store) = pending_store().lock() {
         // Bound the store so an attacker hammering /api/auth/oidc/start
@@ -629,4 +651,46 @@ fn html_attr(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_client_redirect;
+
+    fn allow(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn redirect_with_listed_scheme_passes_through() {
+        let r = resolve_client_redirect(Some("snipdesk://auth"), &allow(&["snipdesk"]));
+        assert_eq!(r, "snipdesk://auth");
+    }
+
+    #[test]
+    fn redirect_with_whitelabel_scheme_passes_when_listed() {
+        let r = resolve_client_redirect(Some("acme://auth"), &allow(&["snipdesk", "acme"]));
+        assert_eq!(r, "acme://auth");
+    }
+
+    #[test]
+    fn unknown_scheme_falls_back_to_first_listed() {
+        let r = resolve_client_redirect(Some("evil://attack"), &allow(&["snipdesk", "acme"]));
+        assert_eq!(r, "snipdesk://auth");
+    }
+
+    #[test]
+    fn missing_redirect_falls_back_to_first_listed() {
+        let r = resolve_client_redirect(None, &allow(&["acme", "snipdesk"]));
+        assert_eq!(r, "acme://auth");
+    }
+
+    #[test]
+    fn empty_allowlist_still_returns_snipdesk_default() {
+        // Shouldn't reach this path with the config default in place,
+        // but guard against it so an operator misconfig can't produce
+        // a "://auth" string with no scheme.
+        let r = resolve_client_redirect(Some("anything://x"), &[]);
+        assert_eq!(r, "snipdesk://auth");
+    }
 }

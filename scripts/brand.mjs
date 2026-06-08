@@ -90,6 +90,7 @@ const TARGETS = [
   "src-tauri/tauri.conf.json",
   "src-tauri/tauri.teams.conf.json",
   "src-tauri/src/lib.rs",
+  "src-tauri/src/server_commands.rs",
   "src/index.html",
   "src/main.js",
   "crates/snipdesk-core/src/settings.rs",

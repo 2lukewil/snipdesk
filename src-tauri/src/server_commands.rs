@@ -23,6 +23,17 @@ fn map_api_err(e: ApiError) -> String {
     e.to_string()
 }
 
+/// Custom URL scheme this build registers with the OS for the OIDC
+/// callback deep link (and any future "snipdesk://open-snippet/..."
+/// patterns). The literal "snipdesk" gets text-substituted at build
+/// time by scripts/brand.mjs whenever the bundle sets
+/// `deep_link_scheme` to something else, so a customer build that
+/// uses `acme://` consistently sends its own scheme to the server
+/// and accepts callbacks on it. Server-side, the matching
+/// `[oidc].allowed_deep_link_schemes` config keeps the allowlist
+/// from rejecting the non-default scheme.
+pub const DEEP_LINK_SCHEME: &str = "snipdesk";
+
 #[derive(Debug, Deserialize)]
 pub struct SignupArgs {
     pub server_url: String,
@@ -284,8 +295,12 @@ pub fn server_oidc_start_url(app: AppHandle, server_url: String) -> CmdResult<St
     let state = app.state::<AppState>();
     persist_server_url(&app, &server_url)?;
     let _ = state;
+    // Percent-encoded `<scheme>://auth` so it survives the query
+    // string round-trip without the server having to decode the
+    // colon. The scheme characters themselves are URL-safe (lower
+    // ASCII letters + digits), so no escaping is needed on them.
     Ok(format!(
-        "{server_url}/api/auth/oidc/start?redirect=snipdesk%3A%2F%2Fauth"
+        "{server_url}/api/auth/oidc/start?redirect={DEEP_LINK_SCHEME}%3A%2F%2Fauth"
     ))
 }
 

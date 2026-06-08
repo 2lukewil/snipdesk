@@ -331,10 +331,33 @@ pub struct CryptoConfig {
 /// extending to other providers (Microsoft, Okta) is "add another
 /// field + another handler module". For Workspace-only sign-in, set
 /// `required_hd` to the Workspace primary domain.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct OidcConfig {
     #[serde(default)]
     pub google: Option<GoogleOidcConfig>,
+    /// Deep-link URL schemes the OIDC start endpoint will accept in
+    /// its `?redirect=<scheme>://auth` parameter. The server uses
+    /// the matched scheme to build the post-callback deep link the
+    /// browser fires back at the desktop client. Defaults to
+    /// `["snipdesk"]` so a stock deployment keeps working without
+    /// any explicit config; whitelabel customers add their own
+    /// scheme (e.g. `["snipdesk", "acme"]`) so the server can
+    /// service multiple branded clients off one binary.
+    #[serde(default = "default_oidc_deep_link_schemes")]
+    pub allowed_deep_link_schemes: Vec<String>,
+}
+
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            google: None,
+            allowed_deep_link_schemes: default_oidc_deep_link_schemes(),
+        }
+    }
+}
+
+fn default_oidc_deep_link_schemes() -> Vec<String> {
+    vec!["snipdesk".to_string()]
 }
 
 #[derive(Debug, Deserialize, Clone)]

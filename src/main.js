@@ -729,6 +729,60 @@ const onboarding = {
     }
   },
 
+  // Manual fallback for when the browser doesn't auto-launch the
+  // deep link (Chrome / Edge prompts that the user dismissed, an
+  // antivirus stripping the scheme, a whitelabel build whose
+  // custom scheme isn't yet wired through the server's allowlist,
+  // etc.). The user copies the token from the success page in
+  // their browser and pastes here; we validate via the same
+  // server_oidc_paste_token IPC the Settings panel uses, then let
+  // the next signin poll pick up the now-signed-in state.
+  async usePastedToken() {
+    const tokenInput = document.getElementById("onboarding-paste-token");
+    const errEl = document.getElementById("onboarding-paste-token-error");
+    const urlInput = document.getElementById("onboarding-server-url");
+    if (errEl) errEl.classList.add("hidden");
+    const token = (tokenInput?.value || "").trim();
+    if (!token) {
+      if (errEl) {
+        errEl.textContent = "Paste your sign-in token first.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+    const url = (urlInput?.value || "").trim();
+    if (!url) {
+      if (errEl) {
+        errEl.textContent = "Enter the server URL above before pasting a token.";
+        errEl.classList.remove("hidden");
+      }
+      return;
+    }
+    // Persist the URL so paste_token has a server to bind the
+    // token to. Idempotent if Sign-in-with-Google already ran.
+    try {
+      const updated = { ...state.settings, server_url: url };
+      state.settings = await invoke("update_settings", { newSettings: updated });
+    } catch (err) {
+      console.warn("onboarding: server URL save failed", err);
+    }
+    try {
+      await invoke("server_oidc_paste_token", { token });
+      if (tokenInput) tokenInput.value = "";
+      // Immediate refresh + render so Continue lights up without
+      // waiting for the next 1.5s poll tick.
+      await loadServerStatus();
+      this.renderSigninStatus();
+    } catch (err) {
+      console.warn("onboarding: paste token failed", err);
+      if (errEl) {
+        errEl.textContent =
+          "Couldn't validate that token: " + (err?.message || String(err));
+        errEl.classList.remove("hidden");
+      }
+    }
+  },
+
   primeHotkeyPanel() {
     const label = document.getElementById("onboarding-hotkey-label");
     if (label) label.textContent = formatHotkey(state.settings?.hotkey);
@@ -4353,6 +4407,17 @@ function bindEvents() {
   });
   const onbSigninOidc = document.getElementById("onboarding-signin-oidc");
   if (onbSigninOidc) onbSigninOidc.addEventListener("click", () => onboarding.startOidc());
+  const onbPasteSubmit = document.getElementById("onboarding-paste-token-submit");
+  if (onbPasteSubmit) onbPasteSubmit.addEventListener("click", () => onboarding.usePastedToken());
+  const onbPasteInput = document.getElementById("onboarding-paste-token");
+  if (onbPasteInput) {
+    onbPasteInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onboarding.usePastedToken();
+      }
+    });
+  }
   const onbHotkeyHide = document.getElementById("onboarding-hotkey-hide");
   if (onbHotkeyHide) onbHotkeyHide.addEventListener("click", () => onboarding.hideAndTryHotkey());
   const onbTypingInput = document.getElementById("onboarding-typing-input");

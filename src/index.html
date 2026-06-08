@@ -313,6 +313,11 @@
                   administrators never see your snippet content.
                 </p>
 
+                <label class="row server-sso-toggle">
+                  <input id="set-prefer-sso-signin" type="checkbox" />
+                  <span>Hide username/password sign-in <em>- use single sign-on instead</em></span>
+                </label>
+
                 <div id="server-signed-out">
                   <label>
                     <span>Server URL <em>- e.g. http://127.0.0.1:8080 for a local server, or your company's https://snippets.example.com</em></span>
@@ -324,20 +329,20 @@
                       spellcheck="false"
                     />
                   </label>
-                  <label>
+                  <label class="signin-credentials">
                     <span>Email</span>
                     <input id="set-server-email" type="email" autocomplete="email" />
                   </label>
-                  <label>
+                  <label class="signin-credentials">
                     <span>Password</span>
                     <input id="set-server-password" type="password" autocomplete="current-password" />
                   </label>
                   <div id="server-error" class="editor-error hidden"></div>
-                  <div class="server-auth-actions">
+                  <div class="server-auth-actions signin-credentials">
                     <button id="btn-server-login" class="btn-primary" type="button">Sign in</button>
                     <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
                   </div>
-                  <div class="server-sso-divider"><span>or</span></div>
+                  <div class="server-sso-divider signin-credentials"><span>or</span></div>
                   <button id="btn-server-oidc" class="btn-secondary server-oidc-btn" type="button">Sign in with Google</button>
                   <details class="server-paste-fallback">
                     <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>

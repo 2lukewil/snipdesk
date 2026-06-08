@@ -94,6 +94,12 @@ pub struct Settings {
     /// itself lives in the OS keychain, not here.
     #[serde(default)]
     pub server_url: String,
+    /// Hide the username / password sign-in fields on the server
+    /// panel and present single sign-on as the only option. End
+    /// users can flip this back off; it exists for deployments
+    /// whose server doesn't accept credential auth.
+    #[serde(default)]
+    pub prefer_sso_signin: bool,
 
     // ---- Editor formatting toolbar ----
     /// User-customizable; teams ship different markup (Markdown, BBCode, etc).
@@ -209,6 +215,7 @@ impl Default for Settings {
             team_library_folder_name: default_team_folder_name(),
             show_team_snippets_inline: true,
             server_url: String::new(),
+            prefer_sso_signin: false,
             format_rules: default_format_rules(),
             backup_retention_days: default_backup_retention_days(),
             log_retention_days: default_log_retention_days(),

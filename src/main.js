@@ -417,6 +417,7 @@ const els = {
   btnCheckUpdates: document.getElementById("btn-check-updates"),
   updateCheckStatus: document.getElementById("update-check-status"),
   setAutoCheckUpdates: document.getElementById("set-auto-check-updates"),
+  setPreferSsoSignin: document.getElementById("set-prefer-sso-signin"),
   // Update toast
   updateToast: document.getElementById("update-toast"),
   updateToastMsg: document.getElementById("update-toast-msg"),
@@ -2907,6 +2908,10 @@ function openSettings() {
   els.setMinimizeToTray.checked = s.minimize_to_tray ?? true;
   els.setStartInTray.checked = s.start_in_tray ?? false;
   els.setAutoCheckUpdates.checked = s.auto_check_updates ?? true;
+  if (els.setPreferSsoSignin) {
+    els.setPreferSsoSignin.checked = !!s.prefer_sso_signin;
+    document.body.dataset.ssoOnly = String(!!s.prefer_sso_signin);
+  }
   // Appearance
   els.setTheme.value = s.theme || "dark";
   // Empty accent = theme default, but <input type="color"> can't represent "no
@@ -3673,6 +3678,9 @@ function collectSettingsForSave() {
     // from the form), but we round-trip the current value so update_settings
     // doesn't reset it to the default "".
     server_url: state.settings?.server_url ?? "",
+    prefer_sso_signin: els.setPreferSsoSignin
+      ? els.setPreferSsoSignin.checked
+      : (state.settings?.prefer_sso_signin ?? false),
     // Editor rules
     format_rules: state.editingRules
       .map((r) => ({
@@ -3948,6 +3956,16 @@ function bindEvents() {
   els.updateLater.addEventListener("click", dismissUpdateToast);
 
   els.setSave.addEventListener("click", saveSettings);
+
+  // Live-reflect the SSO-only toggle into the body data attribute so
+  // the credential block hides/shows immediately, before the user
+  // commits the settings panel. The persisted state still travels
+  // through saveSettings.
+  if (els.setPreferSsoSignin) {
+    els.setPreferSsoSignin.addEventListener("change", () => {
+      document.body.dataset.ssoOnly = String(els.setPreferSsoSignin.checked);
+    });
+  }
 
   // Hotkey fields: click-and-press to capture, instead of typing chord
   // strings by hand. Quick-add allows clearing via Backspace/Delete

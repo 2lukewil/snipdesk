@@ -18,8 +18,13 @@
 //     "teams_identifier":  "<teams bundle id>",     // required
 //     "updater_url":       "<lite updater feed>",   // optional
 //     "teams_updater_url": "<teams updater feed>",  // optional
-//     "deep_link_scheme":  "<custom URL scheme>"    // optional
+//     "deep_link_scheme":  "<custom URL scheme>",   // optional
+//     "server_url":        "<default server URL>",  // optional
+//     "sso_only":          true | false             // optional
 //   }
+//
+// server_url + sso_only seed defaults in Settings::default(); end
+// users can still flip both from the Team Library settings panel.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -36,6 +41,7 @@ const TARGETS = [
   "src-tauri/src/lib.rs",
   "src/index.html",
   "src/main.js",
+  "crates/snipdesk-core/src/settings.rs",
 ];
 
 // Stock constants that have a customer-overridable counterpart.
@@ -58,7 +64,27 @@ const RULES = [
   // bare string in a JSON array. Searching the literal quoted form
   // dodges accidental hits on "snipdesk" inside URLs / identifiers.
   { from: "\"snipdesk\"", to: (c) => c.deep_link_scheme && `"${c.deep_link_scheme}"` },
+  // Settings::default seeds. The `from` patterns match the exact
+  // lines in settings.rs's Default impl; the replacement keeps the
+  // surrounding context so future readers still see a stock-style
+  // initializer (just with a non-empty / true literal).
+  {
+    from: "server_url: String::new(),",
+    to: (c) => c.server_url && `server_url: String::from(${rustStringLiteral(c.server_url)}),`,
+  },
+  {
+    from: "prefer_sso_signin: false,",
+    to: (c) => (c.sso_only ? "prefer_sso_signin: true," : null),
+  },
 ];
+
+// Escape a string for embedding as a Rust "..." literal. JSON
+// already protects against most pitfalls but URLs can carry the
+// occasional backslash; quotes shouldn't appear in URLs but the
+// guard is cheap and covers any future caller.
+function rustStringLiteral(s) {
+  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
 function loadConfig() {
   const path = process.env.BRAND_CONFIG;

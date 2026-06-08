@@ -356,6 +356,13 @@ html, body {
   letter-spacing: 0.02em;
 }
 
+/* Hide the username/password sign-in surface when the user has
+   opted into SSO-only sign-in. The .signin-credentials marker is
+   applied to the email + password labels, the login/signup
+   actions, and the "or" divider; a body-level data attribute
+   drives the rule so JS can toggle it in one place. */
+body[data-sso-only="true"] .signin-credentials { display: none; }
+
 /* SSO affordances in the server-signed-out panel. The divider is a
    horizontal line with the word "or" floated centred; pure CSS so we
    don't have to fight a JS-driven layout. */

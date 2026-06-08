@@ -1966,16 +1966,14 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
         ),
         _ => "<span class=\"lib-folder-caret-spacer\" aria-hidden=\"true\"></span>".to_string(),
     };
-    // Tree-connector glyph for nested folders: down-and-right arrow
-    // (U+21B3 "DOWNWARDS ARROW WITH TIP RIGHTWARDS"). Reads as
-    // "this row lives inside the row above" at a glance. Always
-    // rendered in a fixed-width slot - even at depth 0, so the
-    // label column starts at a consistent x-position regardless
-    // of whether a row is nested.
+    // Tree-arrow glyph for nested folders only. Depth-0 rows skip
+    // the slot entirely - they don't need the structural hint and
+    // the empty spacer was wasting horizontal real estate on every
+    // top-level row.
     let tree_glyph = if depth > 0 {
         "<span class=\"lib-tree-glyph\" aria-hidden=\"true\">&#x21B3;</span>"
     } else {
-        "<span class=\"lib-tree-glyph-spacer\" aria-hidden=\"true\"></span>"
+        ""
     };
     // Folder row is now a <div> wrapping a separate caret + link.
     // Previous shape (caret span inside an <a>) made clicking the
@@ -2544,14 +2542,13 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
 
   function applySortMode() {
     var sel = document.getElementById("lib-sort-mode-select");
-    if (sel) sel.value = loadSortMode();
-    if (loadSortMode() !== "manual") return;
-    // Group real folder nodes by parent path; within each group,
-    // re-order by sort_order ASC then path ASC. Move DOM nodes
-    // into the new order while preserving the "parent immediately
-    // before its children" invariant (we re-walk the tree and
-    // re-append nodes in the chosen order to the sidebar
-    // container).
+    var mode = loadSortMode();
+    if (sel) sel.value = mode;
+    // Re-shuffle in BOTH modes. Alphabetical sorts by path; manual
+    // sorts by (sort_order, path). The previous implementation
+    // returned early in alpha mode, so switching manual -> alpha
+    // left the DOM in manual order until the next sidebar fetch -
+    // hence the "switching sort mode requires a refresh" bug.
     var sidebar = document.getElementById("library-sidebar");
     if (!sidebar) return;
     var all = Array.from(sidebar.querySelectorAll(
@@ -2565,22 +2562,23 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       if (!byParent[par]) byParent[par] = [];
       byParent[par].push(n);
     });
-    function sortKey(n) {
-      return [
-        parseInt(n.getAttribute("data-sort-order") || "0", 10),
-        n.getAttribute("data-folder-path") || "",
-      ];
-    }
     Object.keys(byParent).forEach(function (par) {
       byParent[par].sort(function (a, b) {
-        var ak = sortKey(a), bk = sortKey(b);
-        if (ak[0] !== bk[0]) return ak[0] - bk[0];
-        return ak[1].localeCompare(bk[1]);
+        var aP = a.getAttribute("data-folder-path") || "";
+        var bP = b.getAttribute("data-folder-path") || "";
+        if (mode === "manual") {
+          var aO = parseInt(a.getAttribute("data-sort-order") || "0", 10);
+          var bO = parseInt(b.getAttribute("data-sort-order") || "0", 10);
+          if (aO !== bO) return aO - bO;
+        }
+        return aP.localeCompare(bP);
       });
     });
-    // Anchor for re-inserts: last special node (Unfiled, root-drop)
-    // before the first real folder. We append rebuilt nodes after
-    // it so the special pseudo-nodes keep their leading position.
+    // Anchor for re-inserts: the root drop zone (or first
+    // pseudo-node) marks the boundary between specials and real
+    // folders. We append the rebuilt tree right after it so the
+    // pseudo-nodes (All, Unfiled, drop zone) keep their leading
+    // position.
     var anchor = sidebar.querySelector(".lib-folder-root-drop") ||
                  sidebar.querySelector(".lib-folder-row");
     if (!anchor) return;
@@ -2694,12 +2692,18 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       reordered.push(draggingId);
     }
     hideInsertZones();
-    var params = new URLSearchParams();
-    params.append("parent", parentOf(draggingId));
-    reordered.forEach(function (p) { params.append("paths", p); });
+    // JSON body (not URLSearchParams) so the server's Vec<String>
+    // for `paths` deserialises correctly. axum's Form extractor +
+    // serde_urlencoded silently dropped repeated keys into an
+    // empty Vec, which is why drag-reorder visually worked but the
+    // server never recorded a change.
     fetch("/dashboard/library/folders/reorder", {
       method: "POST",
-      body: params,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        parent: parentOf(draggingId),
+        paths: reordered,
+      }),
     }).then(function (r) {
       if (!r.ok) {
         r.text().then(function (msg) {
@@ -3221,7 +3225,7 @@ pub async fn library_folder_create(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct FolderReorderForm {
+pub struct FolderReorderBody {
     /// Parent path for the siblings being reordered. Empty for the
     /// root level. Doesn't currently filter anything server-side -
     /// the `paths` list IS the source of truth - but logging it
@@ -3229,10 +3233,8 @@ pub struct FolderReorderForm {
     /// Replies").
     #[serde(default)]
     pub parent: String,
-    /// The siblings in their new order. Repeats the form key
-    /// (`paths=A&paths=B&paths=C`) so axum's `Form` deserialises
-    /// it as a Vec. sort_order gets rewritten to 1..N in this
-    /// exact order.
+    /// The siblings in their new order. sort_order gets rewritten
+    /// to 1..N in this exact order.
     #[serde(default)]
     pub paths: Vec<String>,
 }
@@ -3242,10 +3244,16 @@ pub struct FolderReorderForm {
 /// (1, 2, 3, ...). Siblings not in the list are untouched, so the
 /// caller doesn't have to know about every folder in the tree -
 /// just the ones being reshuffled.
+///
+/// Body is JSON, not form-encoded: serde_urlencoded (what axum's
+/// `Form` uses) doesn't reliably deserialise repeated keys into a
+/// Vec, so a `paths=A&paths=B&paths=C` form post landed with
+/// `paths = []` on the server and the reorder silently no-op'd.
+/// JSON sidesteps the issue.
 pub async fn library_folder_reorder(
     State(state): State<AppState>,
     admin: DashboardAdmin,
-    Form(body): Form<FolderReorderForm>,
+    Json(body): Json<FolderReorderBody>,
 ) -> Response {
     if body.paths.is_empty() {
         return (StatusCode::BAD_REQUEST, "no paths supplied").into_response();

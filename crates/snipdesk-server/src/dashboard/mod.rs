@@ -80,6 +80,19 @@ pub fn routes() -> Router<AppState> {
             "/dashboard/library/folders/move",
             post(pages::library_folder_move),
         )
+        // "+ New folder" button. Creates an empty folder row so it
+        // appears in the sidebar even before any snippet lands in it.
+        .route(
+            "/dashboard/library/folders/create",
+            post(pages::library_folder_create),
+        )
+        // Manual reorder. Receives a complete ordered list of
+        // sibling paths under one parent and rewrites their
+        // sort_order to match. Idempotent.
+        .route(
+            "/dashboard/library/folders/reorder",
+            post(pages::library_folder_reorder),
+        )
         // Per-user detail + stats. Detail uses the same /users/:id
         // path as the JSON PUT/DELETE because GET there is unused;
         // axum routes on (path, method) so the methods coexist.

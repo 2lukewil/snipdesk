@@ -1646,7 +1646,8 @@ pub async fn library_page(
         hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body\" \
         hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">",
     );
-    body.push_str(&render_library_folder_tree(&rows, &selected));
+    let folders = load_library_folders(&state).await;
+    body.push_str(&render_library_folder_tree(&rows, &folders, &selected));
     body.push_str("</aside>");
     body.push_str("<div class=\"library-main\">");
     // Hidden input mirrors the current folder so polling sweeps the
@@ -1735,11 +1736,20 @@ fn filter_library_rows<'a>(rows: &'a [LibraryRow], selected: &str) -> Vec<&'a Li
 ///
 /// A leading "root" drop zone lets the user drop a nested folder
 /// onto it to lift it back to the top level.
-fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
+/// (path, sort_order) - the shape read from library_folders for
+/// passing into the tree renderer.
+type FolderRow = (String, i64);
+
+fn render_library_folder_tree(
+    rows: &[LibraryRow],
+    folders: &[FolderRow],
+    selected: &str,
+) -> String {
     // Collect every distinct folder_path that has at least one
     // snippet, plus every ancestor segment. BTreeSet keeps the
     // final iteration alphabetical, which is what the tree walk
-    // wants.
+    // wants. We then union in every path from library_folders so
+    // empty (admin-created) folders also show up.
     let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut unfiled = 0i64;
     let mut all = 0i64;
@@ -1763,6 +1773,24 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
             }
         }
     }
+    // Union explicit folder rows (empty folders created via the
+    // "+ New folder" button). Include their ancestors too.
+    for (fp, _) in folders {
+        let mut cursor = String::new();
+        for seg in fp.split('/').filter(|s| !s.is_empty()) {
+            if !cursor.is_empty() {
+                cursor.push('/');
+            }
+            cursor.push_str(seg);
+            paths.insert(cursor.clone());
+        }
+    }
+    // Sort-order lookup. Defaults to 0 for paths that don't have
+    // an explicit row (lazy-create hasn't caught up yet); the
+    // JS-side sort uses path as the tiebreak, which collapses to
+    // alphabetical.
+    let sort_order: std::collections::HashMap<&str, i64> =
+        folders.iter().map(|(p, o)| (p.as_str(), *o)).collect();
 
     // Recursive count = "snippets that show up if you click this
     // folder", matching the filter semantics. Cheap to compute:
@@ -1791,24 +1819,54 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
 
     let mut out = String::new();
     out.push_str("<div class=\"lib-folder-header\">Folders</div>");
-    out.push_str(&render_lib_folder_node(
-        FOLDER_ALL,
-        "All snippets",
-        all,
-        selected == FOLDER_ALL,
-        FolderNodeKind::Special,
-        0,
-        false,
-    ));
-    out.push_str(&render_lib_folder_node(
-        FOLDER_UNFILED,
-        "Unfiled",
-        unfiled,
-        selected == FOLDER_UNFILED,
-        FolderNodeKind::Unfiled,
-        0,
-        false,
-    ));
+    // Sort-mode toggle. The actual ordering happens client-side
+    // (JS reads the data-sort-order attribute and re-shuffles the
+    // DOM); the server always emits alphabetical so the
+    // first-paint is correct without JS, and the JS pass swaps
+    // siblings into manual order if the admin has chosen that.
+    out.push_str(
+        "<div class=\"lib-folder-controls\">\
+           <label class=\"lib-sort-mode\">\
+             <span>Sort</span>\
+             <select id=\"lib-sort-mode-select\">\
+               <option value=\"alpha\">Alphabetical</option>\
+               <option value=\"manual\">Manual</option>\
+             </select>\
+           </label>\
+         </div>",
+    );
+    // Inline "+ New folder" form. Submits via JS-driven fetch so
+    // we can clear the input + trigger the sidebar/cards refresh
+    // without a full page reload. Path goes through the same
+    // normalisation as the snippet save path on the server.
+    out.push_str(
+        "<form class=\"lib-folder-create\" id=\"lib-folder-create-form\">\
+           <input type=\"text\" id=\"lib-folder-create-input\" \
+                  placeholder=\"e.g. Replies/Refunds\" \
+                  autocomplete=\"off\" spellcheck=\"false\" />\
+           <button type=\"submit\" class=\"btn primary\">+ Folder</button>\
+         </form>",
+    );
+    out.push_str(&render_lib_folder_node(FolderNodeArgs {
+        path: FOLDER_ALL,
+        label: "All snippets",
+        count: all,
+        active: selected == FOLDER_ALL,
+        kind: FolderNodeKind::Special,
+        depth: 0,
+        has_children: false,
+        sort_order: 0,
+    }));
+    out.push_str(&render_lib_folder_node(FolderNodeArgs {
+        path: FOLDER_UNFILED,
+        label: "Unfiled",
+        count: unfiled,
+        active: selected == FOLDER_UNFILED,
+        kind: FolderNodeKind::Unfiled,
+        depth: 0,
+        has_children: false,
+        sort_order: 0,
+    }));
     // The root drop zone: dropping a folder here lifts it back to
     // top level. Drawn as a thin band between Unfiled and the
     // actual folders so it's discoverable without dominating.
@@ -1824,15 +1882,16 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
     for path in &paths {
         let depth = path.matches('/').count();
         let label = path.rsplit('/').next().unwrap_or(path);
-        out.push_str(&render_lib_folder_node(
+        out.push_str(&render_lib_folder_node(FolderNodeArgs {
             path,
             label,
-            count_for(path),
-            selected == path.as_str(),
-            FolderNodeKind::Real,
+            count: count_for(path),
+            active: selected == path.as_str(),
+            kind: FolderNodeKind::Real,
             depth,
-            has_children.contains(path),
-        ));
+            has_children: has_children.contains(path),
+            sort_order: *sort_order.get(path.as_str()).unwrap_or(&0),
+        }));
     }
     out
 }
@@ -1848,15 +1907,31 @@ enum FolderNodeKind {
     Real,    // A real folder path; full DnD on both axes
 }
 
-fn render_lib_folder_node(
-    path: &str,
-    label: &str,
+/// Args for `render_lib_folder_node`. Bundled into a struct so
+/// the call sites stay readable - 8 positional args was tipping
+/// over clippy's complexity bar.
+struct FolderNodeArgs<'a> {
+    path: &'a str,
+    label: &'a str,
     count: i64,
     active: bool,
     kind: FolderNodeKind,
     depth: usize,
     has_children: bool,
-) -> String {
+    sort_order: i64,
+}
+
+fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
+    let FolderNodeArgs {
+        path,
+        label,
+        count,
+        active,
+        kind,
+        depth,
+        has_children,
+        sort_order,
+    } = args;
     let active_class = if active { " active" } else { "" };
     // CSS reads --depth to compute padding-left; keeps the rule
     // simple instead of generating a class per depth level.
@@ -1903,7 +1978,8 @@ fn render_lib_folder_node(
     format!(
         "<a class=\"lib-folder-node{active_class}\" \
             href=\"/dashboard/library?folder={href}\" \
-            data-folder-path=\"{path_attr}\" {drop_attrs} {drag_attrs}{style}>\
+            data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
+            {drop_attrs} {drag_attrs}{style}>\
            {caret}{glyph}\
            <span class=\"label\">{label_safe}</span>\
            <span class=\"count\">{count}</span>\
@@ -1944,10 +2020,11 @@ pub async fn library_folders(
     Query(q): Query<LibraryPageQuery>,
 ) -> Response {
     let rows = load_library(&state).await.unwrap_or_default();
+    let folders = load_library_folders(&state).await;
     let selected = library_selected_folder(&q.folder);
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        render_library_folder_tree(&rows, &selected),
+        render_library_folder_tree(&rows, &folders, &selected),
     )
         .into_response()
 }
@@ -2129,6 +2206,18 @@ fn decode_tags_for_form(stored: &str) -> String {
         .filter(|t| !t.trim().is_empty())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Load explicit folder rows for the sidebar. Empty Vec is fine
+/// (and the load_or_default flow downstream treats it as such);
+/// the tree renderer just doesn't get any extra paths to union.
+async fn load_library_folders(state: &AppState) -> Vec<FolderRow> {
+    sqlx::query_as::<_, (String, i64)>(
+        "SELECT path, sort_order FROM library_folders ORDER BY sort_order, path",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default()
 }
 
 async fn load_library(state: &AppState) -> Result<Vec<LibraryRow>, ()> {
@@ -2420,12 +2509,234 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   });
 
   applyFolderCollapse();
+
+  // ---- Sort mode (alphabetical | manual) ----
+  //
+  // The server always emits siblings in alphabetical order (the
+  // BTreeSet walk is alphabetical). In manual mode the JS pass
+  // re-shuffles the DOM so siblings appear in (data-sort-order,
+  // path) order instead. Choice persists in localStorage so the
+  // 10s sidebar refresh keeps respecting it.
+  var SORT_MODE_KEY = "snipdesk-library-sort-mode";
+  function loadSortMode() {
+    try { return localStorage.getItem(SORT_MODE_KEY) || "alpha"; }
+    catch (_e) { return "alpha"; }
+  }
+  function saveSortMode(m) {
+    try { localStorage.setItem(SORT_MODE_KEY, m); } catch (_e) {}
+  }
+
+  function parentOf(path) {
+    var i = path.lastIndexOf("/");
+    return i === -1 ? "" : path.substring(0, i);
+  }
+
+  function applySortMode() {
+    var sel = document.getElementById("lib-sort-mode-select");
+    if (sel) sel.value = loadSortMode();
+    if (loadSortMode() !== "manual") return;
+    // Group real folder nodes by parent path; within each group,
+    // re-order by sort_order ASC then path ASC. Move DOM nodes
+    // into the new order while preserving the "parent immediately
+    // before its children" invariant (we re-walk the tree and
+    // re-append nodes in the chosen order to the sidebar
+    // container).
+    var sidebar = document.getElementById("library-sidebar");
+    if (!sidebar) return;
+    var all = Array.from(sidebar.querySelectorAll(
+      ".lib-folder-node[data-folder-source]"
+    ));
+    if (all.length === 0) return;
+    var byParent = {};
+    all.forEach(function (n) {
+      var p = n.getAttribute("data-folder-path") || "";
+      var par = parentOf(p);
+      if (!byParent[par]) byParent[par] = [];
+      byParent[par].push(n);
+    });
+    function sortKey(n) {
+      return [
+        parseInt(n.getAttribute("data-sort-order") || "0", 10),
+        n.getAttribute("data-folder-path") || "",
+      ];
+    }
+    Object.keys(byParent).forEach(function (par) {
+      byParent[par].sort(function (a, b) {
+        var ak = sortKey(a), bk = sortKey(b);
+        if (ak[0] !== bk[0]) return ak[0] - bk[0];
+        return ak[1].localeCompare(bk[1]);
+      });
+    });
+    // Anchor for re-inserts: last special node (Unfiled, root-drop)
+    // before the first real folder. We append rebuilt nodes after
+    // it so the special pseudo-nodes keep their leading position.
+    var anchor = sidebar.querySelector(".lib-folder-root-drop") ||
+                 sidebar.querySelector(".lib-folder-node");
+    if (!anchor) return;
+    function emitChildrenOf(par) {
+      var kids = byParent[par] || [];
+      kids.forEach(function (n) {
+        sidebar.insertBefore(n, anchor.nextSibling);
+        anchor = n;
+        emitChildrenOf(n.getAttribute("data-folder-path"));
+      });
+    }
+    emitChildrenOf("");
+  }
+
+  var sortSel = document.getElementById("lib-sort-mode-select");
+  if (sortSel) {
+    sortSel.value = loadSortMode();
+    sortSel.addEventListener("change", function () {
+      saveSortMode(sortSel.value);
+      applySortMode();
+      applyFolderCollapse();
+    });
+  }
+  applySortMode();
+
+  // ---- Folder reorder (drag-to-rearrange siblings) ----
+  //
+  // Only active in manual sort mode (reordering is meaningless
+  // under alphabetical sort - the rewrite would just be ignored
+  // on next render). Insert zones are tiny drop targets injected
+  // between sibling folder nodes during a folder drag; dropping
+  // on one reshuffles the sibling group and POSTs the new order.
+  function siblingsOf(path) {
+    var par = parentOf(path);
+    var sidebar = document.getElementById("library-sidebar");
+    if (!sidebar) return [];
+    return Array.from(sidebar.querySelectorAll(
+      ".lib-folder-node[data-folder-source]"
+    )).filter(function (n) {
+      return parentOf(n.getAttribute("data-folder-path") || "") === par;
+    });
+  }
+  function showInsertZones(forSourcePath) {
+    hideInsertZones();
+    if (loadSortMode() !== "manual") return;
+    var siblings = siblingsOf(forSourcePath);
+    if (siblings.length < 2) return;
+    siblings.forEach(function (n, i) {
+      var zone = document.createElement("div");
+      zone.className = "lib-folder-insert-zone";
+      zone.setAttribute("data-insert-parent", parentOf(forSourcePath));
+      zone.setAttribute("data-insert-before", n.getAttribute("data-folder-path") || "");
+      n.parentNode.insertBefore(zone, n);
+      // Trailing zone after the last sibling so you can drop at
+      // the very end.
+      if (i === siblings.length - 1) {
+        var tail = document.createElement("div");
+        tail.className = "lib-folder-insert-zone";
+        tail.setAttribute("data-insert-parent", parentOf(forSourcePath));
+        tail.setAttribute("data-insert-before", ""); // empty = append
+        n.parentNode.insertBefore(tail, n.nextSibling);
+      }
+    });
+  }
+  function hideInsertZones() {
+    document.querySelectorAll(".lib-folder-insert-zone").forEach(function (n) {
+      n.remove();
+    });
+  }
+
+  // Hook into the existing folder dragstart/dragend to manage
+  // insert-zone lifecycle. Re-uses the body-level dragstart we
+  // already have - we just listen for it once more.
+  document.body.addEventListener("dragstart", function (e) {
+    var folderSrc = e.target.closest &&
+      e.target.closest(".lib-folder-node[data-folder-source]");
+    if (folderSrc) {
+      showInsertZones(folderSrc.getAttribute("data-folder-path") || "");
+    }
+  });
+  document.body.addEventListener("dragend", hideInsertZones);
+
+  document.body.addEventListener("dragover", function (e) {
+    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
+    if (!zone || draggingKind !== "folder") return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    zone.classList.add("drop-target");
+  });
+  document.body.addEventListener("dragleave", function (e) {
+    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
+    if (zone) zone.classList.remove("drop-target");
+  });
+  document.body.addEventListener("drop", function (e) {
+    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
+    if (!zone || draggingKind !== "folder" || !draggingId) return;
+    e.preventDefault();
+    var insertBefore = zone.getAttribute("data-insert-before") || "";
+    // Compute the new sibling order: take the current siblings,
+    // pull out the dragged path, then insert it at the position
+    // before `insertBefore` (or at the end if empty).
+    var current = siblingsOf(draggingId).map(function (n) {
+      return n.getAttribute("data-folder-path") || "";
+    });
+    var reordered = current.filter(function (p) { return p !== draggingId; });
+    if (insertBefore) {
+      var idx = reordered.indexOf(insertBefore);
+      if (idx === -1) reordered.push(draggingId);
+      else reordered.splice(idx, 0, draggingId);
+    } else {
+      reordered.push(draggingId);
+    }
+    hideInsertZones();
+    var params = new URLSearchParams();
+    params.append("parent", parentOf(draggingId));
+    reordered.forEach(function (p) { params.append("paths", p); });
+    fetch("/dashboard/library/folders/reorder", {
+      method: "POST",
+      body: params,
+    }).then(function (r) {
+      if (!r.ok) {
+        r.text().then(function (msg) {
+          console.warn("folder reorder failed", r.status, msg);
+        });
+        return;
+      }
+      refreshLibrary();
+    });
+  });
+
+  // ---- "+ New folder" form ----
+  var createForm = document.getElementById("lib-folder-create-form");
+  if (createForm) {
+    createForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var input = document.getElementById("lib-folder-create-input");
+      if (!input) return;
+      var path = input.value.trim();
+      if (!path) return;
+      var params = new URLSearchParams();
+      params.append("path", path);
+      fetch("/dashboard/library/folders/create", {
+        method: "POST",
+        body: params,
+      }).then(function (r) {
+        if (!r.ok) {
+          r.text().then(function (msg) {
+            console.warn("folder create failed", r.status, msg);
+            alert("Couldn't create folder: " + msg);
+          });
+          return;
+        }
+        input.value = "";
+        refreshLibrary();
+      });
+    });
+  }
+
   // The sidebar polls every 10s and may swap in a fresh tree; the
   // sidebar fragment also re-renders after libraryChanged events
-  // from create/update/delete. Either way, reapply the collapse
-  // state once htmx has finished the swap.
+  // from create/update/delete. Either way, reapply collapse +
+  // sort state once htmx has finished the swap.
   document.body.addEventListener("htmx:afterSwap", function (e) {
-    if (e.target && e.target.id === "library-sidebar") applyFolderCollapse();
+    if (e.target && e.target.id === "library-sidebar") {
+      applySortMode();
+      applyFolderCollapse();
+    }
   });
 
   // htmx custom trigger so the JS above can ask the polling
@@ -2815,6 +3126,194 @@ pub async fn library_move(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct FolderCreateForm {
+    /// The path to create, e.g. "Replies/Billing". A path that
+    /// already exists is treated as success (INSERT OR IGNORE).
+    pub path: String,
+}
+
+/// Normalize a folder path: trim whitespace and outer slashes,
+/// collapse internal duplicate slashes, reject empty segments and
+/// control characters. Returns the normalised form on success or
+/// a static error code suitable for a 400 response.
+fn normalize_folder_path(input: &str) -> Result<String, &'static str> {
+    let trimmed = input.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Err("path required");
+    }
+    if trimmed.contains('\n') || trimmed.contains('\r') || trimmed.contains('\t') {
+        return Err("path contains invalid characters");
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in trimmed.split('/') {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            return Err("path contains an empty segment (double slash?)");
+        }
+        segments.push(seg);
+    }
+    Ok(segments.join("/"))
+}
+
+/// POST /dashboard/library/folders/create. Inserts a row into
+/// library_folders for an admin-created empty folder. Lazy
+/// auto-creation from snippet saves happens elsewhere; this
+/// endpoint is for the "+ New folder" button. Idempotent: a
+/// duplicate path becomes a no-op success.
+pub async fn library_folder_create(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(body): Form<FolderCreateForm>,
+) -> Response {
+    let path = match normalize_folder_path(&body.path) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+
+    // Sort order: max(existing sort_order) + 1 so the new folder
+    // lands at the end of its level. The user can drag-reorder
+    // later to reposition.
+    let next_order: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM library_folders")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(1);
+    let now = Utc::now().timestamp();
+    let res = sqlx::query(
+        "INSERT OR IGNORE INTO library_folders (path, sort_order, created_at) \
+         VALUES (?1, ?2, ?3)",
+    )
+    .bind(&path)
+    .bind(next_order)
+    .bind(now)
+    .execute(&state.pool)
+    .await;
+    if let Err(e) = res {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("insert: {e}")).into_response();
+    }
+
+    // Audit. Action is per-folder; details captures the path so a
+    // log scan can answer "who created Replies?"
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: admin.user_id(),
+            actor_email: &actor_email,
+            action: "library.folder.create",
+            target_kind: Some("folder"),
+            target_id: Some(&path),
+            details: None,
+        },
+    )
+    .await;
+
+    (
+        StatusCode::NO_CONTENT,
+        [(
+            header::HeaderName::from_static("hx-trigger"),
+            "libraryChanged",
+        )],
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FolderReorderForm {
+    /// Parent path for the siblings being reordered. Empty for the
+    /// root level. Doesn't currently filter anything server-side -
+    /// the `paths` list IS the source of truth - but logging it
+    /// makes audit entries readable ("reordered the children of
+    /// Replies").
+    #[serde(default)]
+    pub parent: String,
+    /// The siblings in their new order. Repeats the form key
+    /// (`paths=A&paths=B&paths=C`) so axum's `Form` deserialises
+    /// it as a Vec. sort_order gets rewritten to 1..N in this
+    /// exact order.
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+/// POST /dashboard/library/folders/reorder. Rewrites sort_order
+/// for the supplied list of sibling paths in left-to-right order
+/// (1, 2, 3, ...). Siblings not in the list are untouched, so the
+/// caller doesn't have to know about every folder in the tree -
+/// just the ones being reshuffled.
+pub async fn library_folder_reorder(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(body): Form<FolderReorderForm>,
+) -> Response {
+    if body.paths.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no paths supplied").into_response();
+    }
+    // Cap to keep a runaway form from billing thousands of UPDATEs
+    // in one POST. 500 siblings under one parent is comfortably
+    // beyond any realistic library shape.
+    if body.paths.len() > 500 {
+        return (StatusCode::BAD_REQUEST, "too many paths in one reorder").into_response();
+    }
+    let mut tx = match state.pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response()
+        }
+    };
+    for (i, path) in body.paths.iter().enumerate() {
+        // INSERT-OR-UPDATE pattern: a folder that exists only
+        // implicitly (no library_folders row yet) gets one created
+        // here at the right sort_order, instead of falling through
+        // to the default 0 and being out-of-order until the next
+        // explicit save.
+        let order = i as i64 + 1;
+        let now = Utc::now().timestamp();
+        if let Err(e) = sqlx::query(
+            "INSERT INTO library_folders (path, sort_order, created_at) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(path) DO UPDATE SET sort_order = excluded.sort_order",
+        )
+        .bind(path)
+        .bind(order)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("update: {e}")).into_response();
+        }
+    }
+    if let Err(e) = tx.commit().await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {e}")).into_response();
+    }
+
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: admin.user_id(),
+            actor_email: &actor_email,
+            action: "library.folder.reorder",
+            target_kind: Some("folder"),
+            target_id: Some(&body.parent),
+            details: Some(serde_json::json!({
+                "parent": body.parent,
+                "order": body.paths,
+            })),
+        },
+    )
+    .await;
+
+    (
+        StatusCode::NO_CONTENT,
+        [(
+            header::HeaderName::from_static("hx-trigger"),
+            "libraryChanged",
+        )],
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
 pub struct FolderMoveForm {
     /// The folder being moved, e.g. "Replies/Billing".
     pub old: String,
@@ -2938,6 +3437,59 @@ pub async fn library_folder_move(
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("update: {e}")).into_response();
         }
     }
+
+    // Keep library_folders in sync with the rename. Two updates:
+    //   1. Exact-match: the source folder itself becomes the new
+    //      target (delete row if un-nesting to root and the new
+    //      name is empty - but normalize_folder_path would have
+    //      rejected that case, so we just rename).
+    //   2. Descendants: prefix-replace via SUBSTR. SQLite has no
+    //      REPLACE_PREFIX, so build the new path inline with
+    //      string concatenation.
+    // We don't bump sort_order here; the relative order within
+    // the new parent stays whatever it was. ON CONFLICT DO NOTHING
+    // guards against "rename Replies to Outreach when Outreach
+    // already exists" - the snippets land under the existing
+    // Outreach row and the source row is dropped.
+    if new.is_empty() {
+        // Un-nest to root: descendants of `old` keep their suffix
+        // as their new top-level path. The folder rows for the
+        // old paths get rewritten to just the suffix.
+        let _ = sqlx::query(
+            "UPDATE OR REPLACE library_folders \
+             SET path = SUBSTR(path, ?1 + 1) \
+             WHERE path = ?2 OR path LIKE ?3",
+        )
+        .bind(prefix.len() as i64)
+        .bind(old)
+        .bind(&like_pattern)
+        .execute(&mut *tx)
+        .await;
+        // The exact-match row (path = old) is special-cased: its
+        // suffix would be empty (un-nesting "Foo" to root), which
+        // would orphan the row to an empty path. Delete it instead.
+        let _ = sqlx::query("DELETE FROM library_folders WHERE path = ?1")
+            .bind(old)
+            .execute(&mut *tx)
+            .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE OR REPLACE library_folders \
+             SET path = ?1 || SUBSTR(path, ?2 + 1) \
+             WHERE path LIKE ?3",
+        )
+        .bind(format!("{new}/"))
+        .bind(prefix.len() as i64)
+        .bind(&like_pattern)
+        .execute(&mut *tx)
+        .await;
+        let _ = sqlx::query("UPDATE OR REPLACE library_folders SET path = ?1 WHERE path = ?2")
+            .bind(new)
+            .bind(old)
+            .execute(&mut *tx)
+            .await;
+    }
+
     if let Err(e) = tx.commit().await {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {e}")).into_response();
     }

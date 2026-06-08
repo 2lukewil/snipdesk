@@ -682,3 +682,51 @@ textarea {
 .lib-folder-collapsed-child {
   display: none !important;
 }
+
+/* Sort-mode dropdown + create-folder form at the top of the
+   sidebar. Both sit between the "Folders" header and the
+   pseudo-nodes (All, Unfiled, root-drop). Compact so they don't
+   crowd the sidebar's working area. */
+.lib-folder-controls {
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.lib-sort-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lib-sort-mode select { font: inherit; }
+.lib-folder-create {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.lib-folder-create input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+.lib-folder-create button {
+  font-size: 11px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+/* Insert zones between sibling folders during a folder drag.
+   Only visible while a drag is in flight (the JS injects them
+   on dragstart and removes them on dragend). Slim by default;
+   light up on dragover. */
+.lib-folder-insert-zone {
+  height: 4px;
+  margin: 0 6px;
+  border-radius: 2px;
+  transition: background-color 60ms ease;
+}
+.lib-folder-insert-zone.drop-target {
+  height: 6px;
+  background: var(--accent);
+}

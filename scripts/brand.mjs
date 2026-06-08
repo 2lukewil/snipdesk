@@ -16,15 +16,26 @@
 //     "name":              "<display name>",        // required
 //     "identifier":        "<lite bundle id>",      // required
 //     "teams_identifier":  "<teams bundle id>",     // required
+//     "slug":              "<filename-safe slug>",  // optional, defaults to lowercased name
 //     "updater_url":       "<lite updater feed>",   // optional
 //     "teams_updater_url": "<teams updater feed>",  // optional
 //     "deep_link_scheme":  "<custom URL scheme>",   // optional
 //     "server_url":        "<default server URL>",  // optional
-//     "sso_only":          true | false             // optional
+//     "sso_only":          true | false,            // optional
+//     "installer": {                                // optional NSIS cosmetics
+//       "header_image":   "<path>",                 //   150x57 bmp
+//       "sidebar_image":  "<path>",                 //   164x314 bmp
+//       "installer_icon": "<path>",                 //   .ico for the installer chrome
+//       "license_file":   "<path>"                  //   .rtf shown on the License page
+//     }
 //   }
 //
 // server_url + sso_only seed defaults in Settings::default(); end
 // users can still flip both from the Team Library settings panel.
+// installer paths are resolved by Tauri relative to src-tauri/; the
+// usual pattern is to drop the customer's files into
+// src-tauri/installer-assets/ before the build and reference them
+// as "installer-assets/<file>".
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -113,12 +124,16 @@ function loadConfig() {
 }
 
 function ensureClean() {
-  // `git diff --quiet -- <paths>` exits 1 when any of the listed
-  // paths has uncommitted changes. We refuse to substitute over
-  // uncommitted work because a mid-build crash would conflate the
-  // user's edits with the substitution and make restore unsafe.
+  // Union of every file that substitution OR JSON patching may
+  // touch. `git diff --quiet -- <paths>` exits 1 when any has
+  // uncommitted changes. We refuse to substitute over uncommitted
+  // work because a mid-build crash would conflate the user's edits
+  // with the substitution and make restore unsafe.
+  const watched = Array.from(
+    new Set([...TARGETS, ...JSON_PATCHES.map((p) => p.target)]),
+  );
   try {
-    execSync(`git diff --quiet -- ${TARGETS.join(" ")}`, {
+    execSync(`git diff --quiet -- ${watched.join(" ")}`, {
       cwd: repoRoot,
       stdio: "ignore",
     });
@@ -126,7 +141,7 @@ function ensureClean() {
     console.error(
       "[brand] target files have uncommitted changes; commit or stash before building with $BRAND_CONFIG set:",
     );
-    for (const t of TARGETS) console.error(`  ${t}`);
+    for (const t of watched) console.error(`  ${t}`);
     process.exit(1);
   }
 }
@@ -149,6 +164,68 @@ function applySubs(cfg) {
   return backups;
 }
 
+// JSON-shaped overrides, applied after the text substitutions.
+// Each entry sets one key inside a tracked JSON file, creating
+// missing intermediate objects as needed. Rules with a value of
+// null / undefined are skipped, so a customer config without an
+// `installer` block leaves the tracked tauri.conf.json untouched.
+const JSON_PATCHES = [
+  {
+    target: "src-tauri/tauri.conf.json",
+    path: ["bundle", "windows", "nsis", "headerImage"],
+    value: (c) => c.installer && c.installer.header_image,
+  },
+  {
+    target: "src-tauri/tauri.conf.json",
+    path: ["bundle", "windows", "nsis", "sidebarImage"],
+    value: (c) => c.installer && c.installer.sidebar_image,
+  },
+  {
+    target: "src-tauri/tauri.conf.json",
+    path: ["bundle", "windows", "nsis", "installerIcon"],
+    value: (c) => c.installer && c.installer.installer_icon,
+  },
+  {
+    target: "src-tauri/tauri.conf.json",
+    path: ["bundle", "windows", "nsis", "license"],
+    value: (c) => c.installer && c.installer.license_file,
+  },
+];
+
+function setJsonPath(obj, path, value) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (typeof cur[path[i]] !== "object" || cur[path[i]] === null) {
+      cur[path[i]] = {};
+    }
+    cur = cur[path[i]];
+  }
+  cur[path[path.length - 1]] = value;
+}
+
+function applyJsonPatches(cfg, backups) {
+  // Group patches by target so each file is parsed + written once.
+  const byTarget = new Map();
+  for (const patch of JSON_PATCHES) {
+    const value = patch.value(cfg);
+    if (typeof value !== "string" || value.length === 0) continue;
+    if (!byTarget.has(patch.target)) byTarget.set(patch.target, []);
+    byTarget.get(patch.target).push({ path: patch.path, value });
+  }
+  for (const [rel, patches] of byTarget) {
+    const abs = join(repoRoot, rel);
+    if (!backups.has(abs)) {
+      // File wasn't in TARGETS; capture its pristine bytes now so
+      // restore reverts cleanly even though we never text-subbed.
+      backups.set(abs, readFileSync(abs, "utf8"));
+    }
+    const current = readFileSync(abs, "utf8");
+    const parsed = JSON.parse(current);
+    for (const { path, value } of patches) setJsonPath(parsed, path, value);
+    writeFileSync(abs, JSON.stringify(parsed, null, 2) + "\n");
+  }
+}
+
 function restoreFiles(backups) {
   for (const [abs, original] of backups) {
     try {
@@ -168,6 +245,7 @@ export async function withBrand(callback) {
   ensureClean();
   console.log(`[brand] applying overrides for "${cfg.name}"`);
   const backups = applySubs(cfg);
+  applyJsonPatches(cfg, backups);
   const restore = () => restoreFiles(backups);
   const onSignal = (sig, code) => {
     restore();

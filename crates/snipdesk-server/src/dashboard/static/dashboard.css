@@ -306,35 +306,70 @@ textarea {
   letter-spacing: 0.06em;
   padding: 6px 8px 4px;
 }
-.lib-folder-node {
+/* Folder row is the new wrapper: caret/spacer + tree-glyph/spacer +
+   link (label + count). Caret-vs-spacer and glyph-vs-spacer
+   reserve identical widths so labels line up across the column
+   regardless of whether a row has a caret or a tree glyph. */
+.lib-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--fg);
+  user-select: none;
+  border-left: 3px solid transparent;
+}
+.lib-folder-row:hover { background: var(--bg); }
+.lib-folder-row.active {
+  background: var(--bg);
+  border-left-color: var(--accent);
+}
+.lib-folder-row.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+/* The inner <a> takes the rest of the row and keeps label + count
+   together. flex:1 + min-width:0 lets the label truncate on
+   narrow sidebars instead of overflowing. */
+.lib-folder-link {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 5px 8px;
+  color: inherit;
+  text-decoration: none;
+  padding: 1px 0;
+}
+.lib-folder-link:hover { text-decoration: none; }
+.lib-folder-link .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-folder-link .count {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Kept for the special-pseudo-nodes path used by old call sites
+   (none should remain, but the rule is harmless and keeps any
+   stray <a class="lib-folder-node"> rendering sensibly). */
+.lib-folder-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
   border-radius: 4px;
   color: var(--fg);
   text-decoration: none;
   user-select: none;
-  border-left: 3px solid transparent;
 }
-.lib-folder-node:hover {
-  background: var(--bg);
-  text-decoration: none;
-}
-.lib-folder-node.active {
-  background: var(--bg);
-  border-left-color: var(--accent);
-}
-.lib-folder-node .count {
-  font-size: 11px;
-  color: var(--fg-dim);
-  font-variant-numeric: tabular-nums;
-}
-.lib-folder-node.drop-target {
-  outline: 2px dashed var(--accent);
-  outline-offset: -2px;
-}
+.lib-folder-node:hover { background: var(--bg); }
 
 /* Drag handles + dragging-state styling for library cards. */
 .library-card { position: relative; }
@@ -608,17 +643,13 @@ textarea {
 /* --- Library folder tree --- */
 
 /* Indentation per slash-depth via a CSS custom property the Rust
-   side sets inline (style="--depth: 2"). Keeps the rule self-
-   contained instead of generating a class per level. */
-.lib-folder-node[style*="--depth"] {
-  padding-left: calc(8px + 14px * var(--depth, 0));
+   side sets inline (style="--depth: 2"). 12px per level keeps the
+   tree compact while staying obvious at a glance. */
+.lib-folder-row[style*="--depth"] {
+  padding-left: calc(6px + 12px * var(--depth, 0));
 }
-.lib-folder-node[data-folder-source] {
-  cursor: grab;
-}
-.lib-folder-node[data-folder-source].dragging {
-  opacity: 0.5;
-}
+.lib-folder-row[data-folder-source] { cursor: grab; }
+.lib-folder-row[data-folder-source].dragging { opacity: 0.5; }
 
 /* Root drop zone for un-nesting. Subtle by default so it doesn't
    shout; lights up when a folder drag enters. */
@@ -639,19 +670,25 @@ textarea {
   color: var(--fg);
 }
 
-/* Caret toggle in front of folders with children. Reserved space
-   even when there's no caret (spacer) so labels line up across
-   leaves + parents at the same depth. */
+/* Caret toggle in front of folders with children. The spacer
+   variant is rendered in front of leaves + special pseudo-nodes
+   so labels line up across the column. Identical width + box-
+   sizing means the caret and spacer occupy exactly the same
+   horizontal slot - critical for the tree glyph that follows
+   it to land in a consistent x-position. */
 .lib-folder-caret,
 .lib-folder-caret-spacer {
-  display: inline-block;
-  width: 14px;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  box-sizing: border-box;
   font-size: 10px;
   line-height: 1;
   color: var(--fg-dim);
   user-select: none;
-  margin-right: 2px;
 }
 .lib-folder-caret {
   cursor: pointer;
@@ -664,13 +701,20 @@ textarea {
   outline: none;
 }
 
-/* Tree-corner glyph in the indent column for nested folders.
-   Subtle (--fg-dim) so it reads as a structural hint, not as
-   content. */
-.lib-tree-glyph {
-  display: inline-block;
-  width: 12px;
-  margin-right: 2px;
+/* Tree-arrow glyph in the indent column for nested folders.
+   Down-and-right arrow (U+21B3) - reads as "this row lives
+   inside the row above." The spacer variant lives in the same
+   slot for depth-0 folders so siblings at the same depth always
+   have the label column starting at the same x-position. */
+.lib-tree-glyph,
+.lib-tree-glyph-spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 16px;
+  flex-shrink: 0;
+  box-sizing: border-box;
   color: var(--fg-dim);
   font-size: 11px;
   line-height: 1;
@@ -678,7 +722,10 @@ textarea {
 }
 
 /* Hide descendant folder rows when any ancestor is collapsed.
-   JS computes membership; this rule just renders the result. */
+   JS computes membership; this rule just renders the result.
+   The selector targets the new row wrapper (the data-folder-path
+   attribute moved off the link onto the row in this revision). */
+.lib-folder-row.lib-folder-collapsed-child,
 .lib-folder-collapsed-child {
   display: none !important;
 }

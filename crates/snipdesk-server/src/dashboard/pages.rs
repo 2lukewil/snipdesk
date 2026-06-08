@@ -1643,7 +1643,7 @@ pub async fn library_page(
     body.push_str(
         "<aside class=\"library-sidebar\" id=\"library-sidebar\" \
         hx-get=\"/dashboard/library/folders\" \
-        hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body\" \
+        hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
         hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">",
     );
     let folders = load_library_folders(&state).await;
@@ -1667,7 +1667,7 @@ pub async fn library_page(
     body.push_str(
         "<div class=\"library-list\" id=\"library-list\" \
               hx-get=\"/dashboard/library/cards\" \
-              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body\" \
+              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
               hx-include=\"#library-folder-input\" \
               hx-swap=\"innerHTML\">",
     );
@@ -1947,16 +1947,16 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
             "data-droppable=\"1\"",
             // Folders are themselves draggable so a folder-drop
             // can pick them up for nest / unnest moves. The path
-            // doubles as the source id.
+            // doubles as the source id. draggable lives on the row
+            // wrapper (not the inner link) so the drag image
+            // includes caret + label and clicks on the caret can
+            // be cleanly cancelled.
             "draggable=\"true\" data-folder-source=\"1\"",
         ),
     };
     // Caret toggle in front of folders that have children. Leaves
-    // and special pseudo-nodes get an empty spacer span so labels
-    // align across the column. The button is a <span role=button>
-    // because nesting a real <button> inside the <a> would split
-    // the click target weirdly; JS handles the toggle and stops
-    // the click from following the link.
+    // and special pseudo-nodes get an empty spacer that takes the
+    // same width so labels line up across the column.
     let caret_html = match kind {
         FolderNodeKind::Real if has_children => format!(
             "<span class=\"lib-folder-caret\" data-folder-caret=\"{p}\" \
@@ -1964,26 +1964,37 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
              tabindex=\"0\">&#x25BE;</span>",
             p = escape_html(path),
         ),
-        _ => "<span class=\"lib-folder-caret-spacer\"></span>".to_string(),
+        _ => "<span class=\"lib-folder-caret-spacer\" aria-hidden=\"true\"></span>".to_string(),
     };
-    // Tree-connector glyph for nested folders. Just a corner
-    // character (└) - not a full ascii tree, because computing
-    // last-vs-non-last sibling correctly per level adds noise.
-    // The single corner reads as "this is inside something."
+    // Tree-connector glyph for nested folders: down-and-right arrow
+    // (U+21B3 "DOWNWARDS ARROW WITH TIP RIGHTWARDS"). Reads as
+    // "this row lives inside the row above" at a glance. Always
+    // rendered in a fixed-width slot - even at depth 0, so the
+    // label column starts at a consistent x-position regardless
+    // of whether a row is nested.
     let tree_glyph = if depth > 0 {
-        "<span class=\"lib-tree-glyph\">&#x2514;</span>"
+        "<span class=\"lib-tree-glyph\" aria-hidden=\"true\">&#x21B3;</span>"
     } else {
-        ""
+        "<span class=\"lib-tree-glyph-spacer\" aria-hidden=\"true\"></span>"
     };
+    // Folder row is now a <div> wrapping a separate caret + link.
+    // Previous shape (caret span inside an <a>) made clicking the
+    // caret unreliable: even with preventDefault, some browsers
+    // still followed the link, and the draggable=true on the <a>
+    // could swallow a click as a drag start. Splitting caret out
+    // means the caret's click handler is the ONLY listener for
+    // that span's click event.
     format!(
-        "<a class=\"lib-folder-node{active_class}\" \
-            href=\"/dashboard/library?folder={href}\" \
+        "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
             {drop_attrs} {drag_attrs}{style}>\
            {caret}{glyph}\
-           <span class=\"label\">{label_safe}</span>\
-           <span class=\"count\">{count}</span>\
-         </a>",
+           <a class=\"lib-folder-link\" href=\"/dashboard/library?folder={href}\" \
+              draggable=\"false\">\
+             <span class=\"label\">{label_safe}</span>\
+             <span class=\"count\">{count}</span>\
+           </a>\
+         </div>",
         href = escape_html(path),
         path_attr = escape_html(path),
         label_safe = escape_html(label),
@@ -2296,13 +2307,13 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
 
   function clearDropHighlights() {
     document.querySelectorAll(
-      ".lib-folder-node.drop-target, .lib-folder-root-drop.drop-target"
+      ".lib-folder-row.drop-target, .lib-folder-root-drop.drop-target"
     ).forEach(function (n) { n.classList.remove("drop-target"); });
   }
 
   document.body.addEventListener("dragstart", function (e) {
     var folderSrc = e.target.closest &&
-      e.target.closest(".lib-folder-node[data-folder-source]");
+      e.target.closest(".lib-folder-row[data-folder-source]");
     if (folderSrc) {
       draggingKind = "folder";
       draggingId = folderSrc.getAttribute("data-folder-path") || "";
@@ -2322,7 +2333,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   });
   document.body.addEventListener("dragend", function (e) {
     var dragged = e.target.closest &&
-      e.target.closest(".library-card, .lib-folder-node");
+      e.target.closest(".library-card, .lib-folder-row");
     if (dragged) dragged.classList.remove("dragging");
     draggingKind = null;
     draggingId = null;
@@ -2339,7 +2350,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       rootDrop.classList.add("drop-target");
       return;
     }
-    var node = e.target.closest && e.target.closest(".lib-folder-node[data-droppable]");
+    var node = e.target.closest && e.target.closest(".lib-folder-row[data-droppable]");
     if (!node) return;
     // A folder can't be dropped on itself or on its own descendants.
     if (draggingKind === "folder") {
@@ -2354,7 +2365,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   });
   document.body.addEventListener("dragleave", function (e) {
     var node = e.target.closest && e.target.closest(
-      ".lib-folder-node, .lib-folder-root-drop"
+      ".lib-folder-row, .lib-folder-root-drop"
     );
     if (node) node.classList.remove("drop-target");
   });
@@ -2369,7 +2380,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       submitFolderMove(draggingId, leaf || "");
       return;
     }
-    var node = e.target.closest && e.target.closest(".lib-folder-node[data-droppable]");
+    var node = e.target.closest && e.target.closest(".lib-folder-row[data-droppable]");
     if (!node) return;
     e.preventDefault();
     clearDropHighlights();
@@ -2454,7 +2465,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   function applyFolderCollapse() {
     var collapsed = loadCollapsed();
     document.querySelectorAll(
-      ".lib-folder-node[data-folder-path]"
+      ".lib-folder-row[data-folder-path]"
     ).forEach(function (n) {
       var p = n.getAttribute("data-folder-path") || "";
       // Hide if any ancestor path is in the collapsed set. Use
@@ -2473,7 +2484,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       k.classList.toggle("collapsed", isCollapsed);
       // ▸ = right-pointing small triangle (collapsed);
       // ▾ = down-pointing small triangle (expanded).
-      k.textContent = isCollapsed ? "▸" : "▾";
+      k.textContent = isCollapsed ? "\u25B8" : "\u25BE";
     });
   }
   function toggleFolderCollapsed(path) {
@@ -2544,7 +2555,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     var sidebar = document.getElementById("library-sidebar");
     if (!sidebar) return;
     var all = Array.from(sidebar.querySelectorAll(
-      ".lib-folder-node[data-folder-source]"
+      ".lib-folder-row[data-folder-source]"
     ));
     if (all.length === 0) return;
     var byParent = {};
@@ -2571,7 +2582,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     // before the first real folder. We append rebuilt nodes after
     // it so the special pseudo-nodes keep their leading position.
     var anchor = sidebar.querySelector(".lib-folder-root-drop") ||
-                 sidebar.querySelector(".lib-folder-node");
+                 sidebar.querySelector(".lib-folder-row");
     if (!anchor) return;
     function emitChildrenOf(par) {
       var kids = byParent[par] || [];
@@ -2607,7 +2618,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     var sidebar = document.getElementById("library-sidebar");
     if (!sidebar) return [];
     return Array.from(sidebar.querySelectorAll(
-      ".lib-folder-node[data-folder-source]"
+      ".lib-folder-row[data-folder-source]"
     )).filter(function (n) {
       return parentOf(n.getAttribute("data-folder-path") || "") === par;
     });
@@ -2645,7 +2656,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   // already have - we just listen for it once more.
   document.body.addEventListener("dragstart", function (e) {
     var folderSrc = e.target.closest &&
-      e.target.closest(".lib-folder-node[data-folder-source]");
+      e.target.closest(".lib-folder-row[data-folder-source]");
     if (folderSrc) {
       showInsertZones(folderSrc.getAttribute("data-folder-path") || "");
     }
@@ -2739,19 +2750,12 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     }
   });
 
-  // htmx custom trigger so the JS above can ask the polling
-  // endpoints to fire on demand without waiting for the 5s tick.
-  if (window.htmx) {
-    document.body.addEventListener("htmx:configRequest", function (e) {
-      // no-op hook for future request annotation
-    });
-    document.querySelectorAll("[hx-trigger]").forEach(function (el) {
-      var t = el.getAttribute("hx-trigger");
-      if (t && t.indexOf("refresh-now") === -1) {
-        el.setAttribute("hx-trigger", t + ", refresh-now");
-      }
-    });
-  }
+  // The hx-trigger attributes on the sidebar + cards list now
+  // include "refresh-now" baked in by the Rust template - no JS
+  // mutation needed. Previous attempts to splice it in here ran
+  // AFTER htmx had already processed the attribute, so triggers
+  // fired from JS were silently dropped and mutations only
+  // surfaced on the next 5s/10s tick.
 })();
 </script>"#;
 
@@ -3170,21 +3174,19 @@ pub async fn library_folder_create(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
 
-    // Sort order: max(existing sort_order) + 1 so the new folder
-    // lands at the end of its level. The user can drag-reorder
-    // later to reposition.
-    let next_order: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM library_folders")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(1);
+    // sort_order = 0 by intent: with all folders tied at 0, the
+    // (sort_order, path) tiebreak in JS collapses to alphabetical,
+    // so Manual mode looks identical to Alphabetical until the
+    // admin actively drags something. The previous max+1 approach
+    // landed new folders in creation order under Manual, which
+    // reads as "Manual mode is broken" - it wasn't, just
+    // unhelpful as a starting state.
     let now = Utc::now().timestamp();
     let res = sqlx::query(
         "INSERT OR IGNORE INTO library_folders (path, sort_order, created_at) \
-         VALUES (?1, ?2, ?3)",
+         VALUES (?1, 0, ?2)",
     )
     .bind(&path)
-    .bind(next_order)
     .bind(now)
     .execute(&state.pool)
     .await;

@@ -48,6 +48,14 @@ after.
   `libraryChanged` makes sidebar + cards refresh immediately on
   every mutation; currency symbols served as JS unicode escapes
   to dodge any layer that might re-encode the response.
+- **Server polish from v1.0 audit**: dropped the unused
+  `user_activity` table (migration 0006); per-route body limits
+  (32 KiB default, 256 KiB for telemetry, 2 MiB for snippet +
+  library content); opt-in CORS via `cors_allowed_origins` config;
+  1-hour cache for the OIDC discovery document so each sign-in
+  doesn't refetch Google's metadata; structured admin audit log
+  (migration 0007, new `audit` module, `/dashboard/audit` tab)
+  recording every user + library mutation with actor/target/details.
 
 ---
 
@@ -254,29 +262,15 @@ forward-compatible so the migration doesn't break the wire protocol.
 
 ---
 
-## Server polish (~2-3 days, mostly low-priority hardening)
+## Server polish
 
-From the v1.0 audit, items deferred because they're scale-or-policy
-calls rather than active bugs:
+The v1.0-audit list is shipped (see "Shipped in v1.0" above). One
+item from that audit stayed deliberately deferred:
 
 - **Login-error enumeration**: today's distinct `no_account` /
   `wrong_password` / `account_disabled` codes are deliberate
-  internal-tool ergonomics; collapse to one opaque code if SnipDesk
-  ever ships server-side to a wider audience.
-- **CORS**: opt-in `cors_allowed_origins` config + `tower_http::cors`
-  layer for the day a separate web frontend lands.
-- **Audit log**: structured `actor / target / action` entries for
-  every admin mutation. Today the writes log via `tracing::info!`
-  with ad-hoc fields; a real audit format would let operators answer
-  "who promoted whom and when" without grepping.
-- **Cached OIDC discovery**: the openidconnect crate hits Google's
-  metadata endpoint on every request. Fine at v1 scale; cache for
-  an hour if traffic grows.
-- **Pre-aggregated `user_activity` table** (created in 0001, never
-  referenced). Either wire it up or drop in a new migration.
-- **Body limits on a per-route basis**: 2 MiB global cap is fine but
-  `/api/admin/users` doesn't need it; `/api/snippets/*` is the
-  natural target.
+  internal-tool ergonomics. Collapse to one opaque code only if
+  SnipDesk ever ships server-side to a wider audience.
 
 ---
 

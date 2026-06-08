@@ -68,8 +68,8 @@ jobs:
       # Dockerfile build-args. Tagged
       # snipdesk-server-<slug>:<version> + :latest so a customer
       # whose compose pins `snipdesk-server-acme:latest` keeps
-      # their branding through every docker pull / Watchtower
-      # update without ever editing config on their end.
+      # their branding through every `docker compose pull` cycle
+      # without ever editing config on their end.
       - name: Decode whitelabel bundle
         id: wl
         shell: bash

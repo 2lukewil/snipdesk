@@ -398,8 +398,9 @@ services:
 ```
 
 The mounted TOML can omit `[brand]` and `[oidc].allowed_deep_link_schemes`
-entirely; the image's env supplies them. Pair with Watchtower
-(section above) for fully hands-off updates.
+entirely; the image's env supplies them. A `docker compose pull`
+preserves the baked env because it lives on the image, so brand
+stays through every update.
 
 The running server polls the GitHub releases feed every 6 hours by
 default (configurable via `[updater]` in the TOML, off via
@@ -408,76 +409,34 @@ dashboard renders a banner under the top nav linking to the
 release notes, and an info log fires. The banner is the operator
 signal that it's time to pull.
 
-#### Manual pull
+#### Pulling an update
+
+When the dashboard banner appears, or any time you want to roll
+forward:
 
 ```
 docker compose pull
 docker compose up -d
 ```
 
-#### Hands-off with Watchtower
+That's the whole flow. Pinning to `:latest` means a `pull` always
+fetches whatever the most recent `server-v*` release built; pin to
+a specific version tag if you'd rather control rollout windows
+explicitly. A pull + restart is on the order of seconds for
+snipdesk-server (small Rust binary, no `node_modules`). The active
+SQLite connection is dropped during restart; any in-flight admin
+POST gets a transient connection error and a retry. Persistent
+client sync resumes on the next poll.
 
-Watchtower is a separate container that watches other running
-containers for newer image versions, pulls them, and recreates the
-container. It pairs cleanly with the `:latest` tag on the
-snipdesk-server image.
+#### Automating it
 
-Add to your `docker-compose.yml`:
-
-```yaml
-services:
-  snipdesk-server:
-    image: ghcr.io/2lukewil/snipdesk-server:latest
-    labels:
-      # Watchtower only acts on containers it's labelled to watch.
-      # Scoping by label is safer than the default "watch every
-      # container on this host" mode.
-      - "com.centurylinklabs.watchtower.enable=true"
-    # ...rest of the service block as in section 6...
-
-  watchtower:
-    image: containrrr/watchtower
-    restart: unless-stopped
-    volumes:
-      # Watchtower needs the docker socket to pull and restart.
-      # Treat this like root - only run it on hosts you trust.
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      # Only act on containers carrying the enable label above.
-      WATCHTOWER_LABEL_ENABLE: "true"
-      # Poll every 6 hours. Aligns with the server's own update
-      # poller so the banner and the pull happen in the same window.
-      WATCHTOWER_POLL_INTERVAL: "21600"
-      # Remove the old image layers after a successful pull. Saves
-      # disk on long-running hosts.
-      WATCHTOWER_CLEANUP: "true"
-    command: ["--label-enable"]
-```
-
-With this in place the workflow is:
-
-1. Push a `server-v0.X.Y` tag in git.
-2. GitHub Actions builds and pushes `ghcr.io/2lukewil/snipdesk-server:0.X.Y` + `:latest`.
-3. Within `WATCHTOWER_POLL_INTERVAL` seconds, Watchtower pulls the new `:latest` and recreates the snipdesk-server container.
-4. The container restart picks up any migrations on its way back up.
-
-Caveats:
-
-- Watchtower needs the docker socket. That's effectively root on
-  the host, so only enable it on machines where you already trust
-  the container fleet. Keep the `WATCHTOWER_LABEL_ENABLE` scope
-  on; the default "watch every container" mode is louder than
-  most people want.
-- Pinning to `:latest` means the snipdesk-server release cadence
-  drives your update cadence. If you want change-window control,
-  drop the Watchtower service and stick with `docker compose pull`
-  on your own schedule - the in-dashboard banner still tells you
-  when an update is available.
-- A new image rebuild + pull + restart is on the order of seconds
-  for snipdesk-server (small Rust binary, no node_modules). The
-  active SQLite connection is dropped during restart; any in-
-  flight admin POST gets a transient connection error and a
-  retry. Persistent client sync resumes on next poll.
+If you'd rather have the pull happen on a cadence without thinking
+about it, any image-update tool your fleet already uses works:
+Diun for notifications, Renovate + a CI redeploy job, your
+hypervisor's scheduled-task runner, or a plain cron firing the
+two commands above. The in-server poller + dashboard banner are
+the canonical signal regardless of which automation (if any) you
+wire up.
 
 #### Kubernetes
 

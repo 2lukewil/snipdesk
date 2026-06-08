@@ -49,6 +49,15 @@
 // on restore. That target dir is gitignored so a customer build
 // never dirties the tracked tree.
 //
+// Per-asset fallback: each installer.* field is independent. If a
+// customer's brand.json declares a field whose file isn't actually
+// in their bundle, the override is skipped (with a warning) and
+// the value already in tauri.conf.json wins for that field. So a
+// project that wires its own defaults under
+// src-tauri/installer-defaults/<file> via tauri.conf.json's
+// bundle.windows.nsis section gets those defaults whenever a
+// whitelabel leaves out (or fails to provide) the matching asset.
+//
 // icon_source is a single PNG (ideally 1024x1024 with transparency)
 // that `tauri icon` expands into the full platform-specific app
 // icon set inside src-tauri/icons/. Before the expansion this
@@ -202,35 +211,23 @@ function applySubs(cfg) {
 // missing intermediate objects as needed. Rules with a value of
 // null / undefined are skipped, so a customer config without an
 // `installer` block leaves the tracked tauri.conf.json untouched.
-// Map a bare filename from brand.json's installer block to the
-// in-tree path Tauri will read at build time. Returns undefined
-// when the field is absent so the patch loop skips it cleanly.
-function nsisAssetPath(filename) {
-  if (typeof filename !== "string" || !filename) return undefined;
-  return `installer-assets/${filename}`;
-}
+// Installer-asset patches are handled by applyWhitelabelInstaller
+// (further down) because each path must be coupled to the matching
+// file copy + existence check. JSON_PATCHES stays for any future
+// purely-textual JSON overrides.
+const JSON_PATCHES = [];
 
-const JSON_PATCHES = [
-  {
-    target: "src-tauri/tauri.conf.json",
-    path: ["bundle", "windows", "nsis", "headerImage"],
-    value: (c) => c.installer && nsisAssetPath(c.installer.header_image),
-  },
-  {
-    target: "src-tauri/tauri.conf.json",
-    path: ["bundle", "windows", "nsis", "sidebarImage"],
-    value: (c) => c.installer && nsisAssetPath(c.installer.sidebar_image),
-  },
-  {
-    target: "src-tauri/tauri.conf.json",
-    path: ["bundle", "windows", "nsis", "installerIcon"],
-    value: (c) => c.installer && nsisAssetPath(c.installer.installer_icon),
-  },
-  {
-    target: "src-tauri/tauri.conf.json",
-    path: ["bundle", "windows", "nsis", "license"],
-    value: (c) => c.installer && nsisAssetPath(c.installer.license_file),
-  },
+// Maps brand.json's installer.* field names to the tauri.conf.json
+// keys they patch. applyWhitelabelInstaller walks this list and,
+// for each entry whose source file is present in the bundle,
+// stages the file and rewrites the JSON path. Missing files skip
+// the override, so the stock default (whatever tauri.conf.json
+// already points at) wins per field.
+const INSTALLER_FIELD_MAP = [
+  { field: "header_image",   nsisKey: "headerImage" },
+  { field: "sidebar_image",  nsisKey: "sidebarImage" },
+  { field: "installer_icon", nsisKey: "installerIcon" },
+  { field: "license_file",   nsisKey: "license" },
 ];
 
 function setJsonPath(obj, path, value) {
@@ -277,42 +274,73 @@ function restoreFiles(backups) {
   }
 }
 
-// Copy installer assets out of the brand bundle into the tracked
-// src-tauri/installer-assets/ directory so Tauri's NSIS bundler
-// can read them at the relative paths the JSON patches set.
-// Returns a cleanup descriptor (or null) the restore step uses to
-// remove exactly what we created - so a build never leaves stray
-// customer files behind in the worktree.
-function stageInstallerAssets(cfg, brandConfigPath) {
+// Per-asset staging + patching, paired so a missing file in the
+// bundle gracefully falls back to whatever default is already in
+// tauri.conf.json (or Tauri's built-in NSIS chrome when no default
+// is wired). For each installer.* field the customer declares:
+//   - file present in bundle/installer-assets/ -> copy it into
+//     src-tauri/installer-assets/, patch the matching nsis key to
+//     point at the staged copy
+//   - file missing -> warn, skip both copy and patch; the stock
+//     value in tauri.conf.json wins for that field
+//
+// Returns a state object for restore (lists what was copied + the
+// tauri.conf.json backup) or null when the customer declared no
+// installer block at all.
+function applyWhitelabelInstaller(cfg, brandConfigPath, backups) {
   if (!cfg.installer || !brandConfigPath) return null;
   const bundleDir = dirname(resolve(brandConfigPath));
   const sourceDir = join(bundleDir, "installer-assets");
   if (!existsSync(sourceDir)) {
     console.warn(
       `[brand] installer block set but ${sourceDir} doesn't exist; ` +
-        "skipping asset copy. Tauri's NSIS build will fail when it " +
-        "tries to read the patched paths.",
+        "every override will fall back to the project default.",
     );
     return null;
   }
+  const tauriConfRel = "src-tauri/tauri.conf.json";
+  const tauriConfAbs = join(repoRoot, tauriConfRel);
   const targetExisted = existsSync(INSTALLER_ASSETS_DIR);
-  if (!targetExisted) mkdirSync(INSTALLER_ASSETS_DIR, { recursive: true });
   const copied = [];
-  const fields = ["header_image", "sidebar_image", "installer_icon", "license_file"];
-  for (const field of fields) {
+  let parsedConf = null;
+
+  for (const { field, nsisKey } of INSTALLER_FIELD_MAP) {
     const filename = cfg.installer[field];
     if (typeof filename !== "string" || !filename) continue;
     const src = join(sourceDir, filename);
     if (!existsSync(src)) {
-      console.warn(`[brand] installer asset missing in bundle: ${src}`);
+      console.warn(
+        `[brand] installer.${field} declared "${filename}" but it's not in ` +
+          `the bundle; keeping the project default for ${nsisKey}.`,
+      );
       continue;
+    }
+    // Lazy: only create the dir / parse the config the first time
+    // we actually have a file to stage.
+    if (!targetExisted && copied.length === 0) {
+      mkdirSync(INSTALLER_ASSETS_DIR, { recursive: true });
+    }
+    if (!parsedConf) {
+      if (!backups.has(tauriConfAbs)) {
+        backups.set(tauriConfAbs, readFileSync(tauriConfAbs, "utf8"));
+      }
+      parsedConf = JSON.parse(readFileSync(tauriConfAbs, "utf8"));
     }
     const dst = join(INSTALLER_ASSETS_DIR, filename);
     copyFileSync(src, dst);
     copied.push(dst);
-    console.log(`[brand] staged installer asset: ${filename}`);
+    setJsonPath(
+      parsedConf,
+      ["bundle", "windows", "nsis", nsisKey],
+      `installer-assets/${filename}`,
+    );
+    console.log(`[brand] override: ${nsisKey} -> installer-assets/${filename}`);
   }
-  return { copied, createdDir: !targetExisted };
+
+  if (parsedConf) {
+    writeFileSync(tauriConfAbs, JSON.stringify(parsedConf, null, 2) + "\n");
+  }
+  return { copied, createdDir: !targetExisted && copied.length > 0 };
 }
 
 // Recursive file walker. `tauri icon` writes into subdirectories
@@ -476,7 +504,7 @@ export async function withBrand(callback) {
   console.log(`[brand] applying overrides for "${cfg.name}"`);
   const backups = applySubs(cfg);
   applyJsonPatches(cfg, backups);
-  const assets = stageInstallerAssets(cfg, process.env.BRAND_CONFIG);
+  const assets = applyWhitelabelInstaller(cfg, process.env.BRAND_CONFIG, backups);
   const iconSnapshot = regenerateAppIcons(cfg, process.env.BRAND_CONFIG);
   const restore = () => {
     restoreFiles(backups);

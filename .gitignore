@@ -46,8 +46,10 @@ src-tauri/installer-assets/
 # brand.json + icon.png + installer-assets/. scripts/brand.mjs is
 # happy with any path passed via $BRAND_CONFIG; this is just a
 # convention so the bundles sit next to the project without ever
-# being tracked.
-brands/
+# being tracked. The _template/ subdir is the documented starter
+# layout - everything else under brands/ stays ignored.
+brands/*
+!brands/_template/
 
 # snipdesk-server local state and active config. The committed file is
 # snipdesk-server.example.toml; the live config + the SQLite data

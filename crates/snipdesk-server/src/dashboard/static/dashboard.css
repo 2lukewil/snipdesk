@@ -639,6 +639,68 @@ textarea {
 }
 .audit-perpage select { font: inherit; }
 
+/* Diff expand button + hidden second row that holds the rendered
+   git-style diff for library.update entries. */
+.audit-diff-toggle {
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-right: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.audit-diff-toggle:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+.audit-diff-row td.audit-diff-cell {
+  background: var(--bg);
+  padding: 10px 14px;
+}
+.diff-field { margin: 0 0 10px; }
+.diff-field:last-child { margin-bottom: 0; }
+.diff-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+  margin-bottom: 4px;
+}
+.diff-block {
+  margin: 0;
+  padding: 6px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.diff-line { display: block; padding: 0 8px; }
+.diff-marker {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--fg-dim);
+  user-select: none;
+}
+.diff-line-add {
+  background: rgba(46, 160, 67, 0.18);
+  color: var(--fg);
+}
+.diff-line-add .diff-marker { color: #2ea043; }
+.diff-line-del {
+  background: rgba(248, 81, 73, 0.18);
+  color: var(--fg);
+}
+.diff-line-del .diff-marker { color: #f85149; }
+.diff-line-same { color: var(--fg-dim); }
+
 /* --- Library folder tree --- */
 
 /* Indentation per slash-depth via a CSS custom property the Rust

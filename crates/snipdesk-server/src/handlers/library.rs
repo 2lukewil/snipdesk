@@ -117,6 +117,28 @@ fn encode_tags(tags: &[String]) -> String {
     s
 }
 
+/// Soft cap for individual text fields embedded in audit details.
+/// 16 KB is far above any realistic title/body the dashboard cares
+/// to diff and well below the audit_log row size SQLite handles
+/// without thinking. Truncation is destructive but the audit log is
+/// not the source of truth for the snippet itself, so callers don't
+/// rely on perfect fidelity here.
+fn cap_for_audit(s: &str) -> String {
+    const MAX: usize = 16 * 1024;
+    if s.len() <= MAX {
+        s.to_string()
+    } else {
+        let mut out = String::with_capacity(MAX + 32);
+        let mut end = MAX;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&s[..end]);
+        out.push_str("\n... (truncated)");
+        out
+    }
+}
+
 fn decode_tags(s: &str) -> Vec<String> {
     s.split(',')
         .map(|t| t.trim().to_string())
@@ -276,13 +298,26 @@ pub async fn update(
 
     let mut tx = state.pool.begin().await?;
 
-    let current: Option<(i64, i64, i64)> =
-        sqlx::query_as("SELECT version, created_at, is_deleted FROM library_snippets WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let (current_version, created_at, is_deleted) =
-        current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
+    // Pull the full BEFORE row inside the same transaction. We need
+    // the existing title/body/tags/folder_path so the audit log can
+    // render a field-by-field diff, and the version/created_at/
+    // is_deleted columns for the existing conflict + flag checks.
+    let current: Option<(String, String, String, Option<String>, i64, i64, i64)> = sqlx::query_as(
+        "SELECT title, body, tags, folder_path, version, created_at, is_deleted \
+         FROM library_snippets WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (
+        before_title,
+        before_body,
+        before_tags,
+        before_folder,
+        current_version,
+        created_at,
+        is_deleted,
+    ) = current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
 
     if is_deleted != 0 {
         return Err(ApiError::bad_request(
@@ -321,6 +356,12 @@ pub async fn update(
     tx.commit().await?;
 
     let actor_email = audit::lookup_actor_email(&state.pool, &auth.0.sub).await;
+    // Cap each field at 16 KB before stuffing it into the audit
+    // details JSON so a runaway snippet body can't bloat the log
+    // row. The diff renderer treats the marker as a literal line
+    // appended to the value, which is a clear enough signal in the
+    // dashboard.
+    let before_tags_decoded = decode_tags(&before_tags);
     audit::record(
         &state.pool,
         AuditEvent {
@@ -332,7 +373,18 @@ pub async fn update(
             details: Some(serde_json::json!({
                 "title": body.payload.title,
                 "folder_path": body.payload.folder_path,
-                "to_version": new_version,
+                "before": {
+                    "title": cap_for_audit(&before_title),
+                    "body": cap_for_audit(&before_body),
+                    "tags": before_tags_decoded,
+                    "folder_path": before_folder,
+                },
+                "after": {
+                    "title": cap_for_audit(&body.payload.title),
+                    "body": cap_for_audit(&body.payload.body),
+                    "tags": body.payload.tags.clone(),
+                    "folder_path": body.payload.folder_path.clone(),
+                },
             })),
         },
     )

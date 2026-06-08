@@ -3705,22 +3705,73 @@ pub async fn audit_page(
                 r.target_id.as_deref(),
                 &users_by_id,
             );
+            // Parse the details JSON once per row so we can decide
+            // whether to surface the diff toggle without re-parsing
+            // inside humanize_audit_details.
+            let parsed: Option<serde_json::Value> = r
+                .details
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok());
+            let diff_block = if r.action == "library.update" {
+                parsed.as_ref().and_then(render_library_update_diff)
+            } else {
+                None
+            };
+            let toggle_btn = if diff_block.is_some() {
+                format!(
+                    "<button type=\"button\" class=\"audit-diff-toggle\" \
+                             aria-controls=\"audit-diff-{id}\" \
+                             aria-expanded=\"false\" \
+                             onclick=\"toggleAuditDiff({id})\">+ diff</button> ",
+                    id = r.id,
+                )
+            } else {
+                String::new()
+            };
             body.push_str(&format!(
                 "<tr>\
                    <td class=\"audit-when\">{when}</td>\
                    <td>{actor}</td>\
                    <td>{action}</td>\
                    <td>{target}</td>\
-                   <td class=\"audit-details\">{details}</td>\
+                   <td class=\"audit-details\">{toggle}{details}</td>\
                  </tr>",
                 when = format_relative(r.at),
                 actor = escape_html(&r.actor_email),
                 action = humanize_audit_action(&r.action),
                 target = target_html,
+                toggle = toggle_btn,
                 details = details_html,
             ));
+            if let Some(diff_html) = diff_block {
+                body.push_str(&format!(
+                    "<tr class=\"audit-diff-row\" id=\"audit-diff-{id}\" hidden>\
+                       <td colspan=\"5\" class=\"audit-diff-cell\">{diff}</td>\
+                     </tr>",
+                    id = r.id,
+                    diff = diff_html,
+                ));
+            }
         }
         body.push_str("</tbody></table>");
+        // Inline toggle so the diff row reveals when the user clicks
+        // the "+ diff" button. Kept inline (vs. a static .js) because
+        // it's the only JS on the page and saves one round-trip.
+        body.push_str(
+            "<script>\
+               function toggleAuditDiff(id) {\
+                 var row = document.getElementById('audit-diff-' + id);\
+                 if (!row) return;\
+                 var btn = document.querySelector('button[aria-controls=\"audit-diff-' + id + '\"]');\
+                 var open = row.hidden;\
+                 row.hidden = !open;\
+                 if (btn) {\
+                   btn.setAttribute('aria-expanded', open ? 'true' : 'false');\
+                   btn.textContent = open ? '- diff' : '+ diff';\
+                 }\
+               }\
+             </script>",
+        );
     }
 
     body.push_str("<div class=\"audit-pager\">");
@@ -4041,4 +4092,136 @@ fn value_to_string(v: &serde_json::Value) -> String {
         serde_json::Value::Null => "null".to_string(),
         other => other.to_string(),
     }
+}
+
+#[derive(Copy, Clone)]
+enum DiffKind {
+    Same,
+    Add,
+    Del,
+}
+
+/// Line-level LCS diff. O(n*m) DP is fine: audit details cap each
+/// field at 16 KB so n*m tops out around 200*200 lines worst case.
+/// Returns lines in source order with their kind.
+fn line_diff(a: &str, b: &str) -> Vec<(DiffKind, String)> {
+    let a_lines: Vec<&str> = a.split('\n').collect();
+    let b_lines: Vec<&str> = b.split('\n').collect();
+    let n = a_lines.len();
+    let m = b_lines.len();
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            dp[i + 1][j + 1] = if a_lines[i] == b_lines[j] {
+                dp[i][j] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    let mut i = n;
+    let mut j = m;
+    let mut out: Vec<(DiffKind, String)> = Vec::new();
+    while i > 0 && j > 0 {
+        if a_lines[i - 1] == b_lines[j - 1] {
+            out.push((DiffKind::Same, a_lines[i - 1].to_string()));
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            out.push((DiffKind::Del, a_lines[i - 1].to_string()));
+            i -= 1;
+        } else {
+            out.push((DiffKind::Add, b_lines[j - 1].to_string()));
+            j -= 1;
+        }
+    }
+    while i > 0 {
+        out.push((DiffKind::Del, a_lines[i - 1].to_string()));
+        i -= 1;
+    }
+    while j > 0 {
+        out.push((DiffKind::Add, b_lines[j - 1].to_string()));
+        j -= 1;
+    }
+    out.reverse();
+    out
+}
+
+/// Render one field's before/after as a small diff block. Returns
+/// None when the two sides are byte-equal so the caller can skip
+/// emitting a section for fields that didn't change.
+fn render_diff_field(label: &str, before: &str, after: &str) -> Option<String> {
+    if before == after {
+        return None;
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "<div class=\"diff-field\">\
+           <div class=\"diff-field-label\">{}</div>\
+           <pre class=\"diff-block\">",
+        escape_html(label)
+    ));
+    for (kind, text) in line_diff(before, after) {
+        let (cls, marker) = match kind {
+            DiffKind::Same => ("diff-line-same", " "),
+            DiffKind::Add => ("diff-line-add", "+"),
+            DiffKind::Del => ("diff-line-del", "-"),
+        };
+        out.push_str(&format!(
+            "<span class=\"diff-line {cls}\">\
+               <span class=\"diff-marker\">{marker}</span>{text}</span>\n",
+            cls = cls,
+            marker = marker,
+            text = escape_html(&text),
+        ));
+    }
+    out.push_str("</pre></div>");
+    Some(out)
+}
+
+/// Build the expandable diff block for a library.update audit row.
+/// Returns None for rows recorded before the before/after capture
+/// landed (older entries have no `before` key) or for an edit that
+/// changed nothing on any of the diffable fields.
+fn render_library_update_diff(details: &serde_json::Value) -> Option<String> {
+    let before = details.get("before")?;
+    let after = details.get("after")?;
+    let get_s = |obj: &serde_json::Value, key: &str| -> String {
+        obj.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let tags_str = |obj: &serde_json::Value| -> String {
+        obj.get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
+    let mut sections = String::new();
+    if let Some(s) = render_diff_field("Title", &get_s(before, "title"), &get_s(after, "title")) {
+        sections.push_str(&s);
+    }
+    if let Some(s) = render_diff_field(
+        "Folder",
+        &get_s(before, "folder_path"),
+        &get_s(after, "folder_path"),
+    ) {
+        sections.push_str(&s);
+    }
+    if let Some(s) = render_diff_field("Tags", &tags_str(before), &tags_str(after)) {
+        sections.push_str(&s);
+    }
+    if let Some(s) = render_diff_field("Body", &get_s(before, "body"), &get_s(after, "body")) {
+        sections.push_str(&s);
+    }
+    if sections.is_empty() {
+        return None;
+    }
+    Some(sections)
 }

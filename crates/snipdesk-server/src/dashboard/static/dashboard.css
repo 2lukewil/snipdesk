@@ -638,3 +638,47 @@ textarea {
   background: var(--bg-elev);
   color: var(--fg);
 }
+
+/* Caret toggle in front of folders with children. Reserved space
+   even when there's no caret (spacer) so labels line up across
+   leaves + parents at the same depth. */
+.lib-folder-caret,
+.lib-folder-caret-spacer {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-dim);
+  user-select: none;
+  margin-right: 2px;
+}
+.lib-folder-caret {
+  cursor: pointer;
+  border-radius: 3px;
+}
+.lib-folder-caret:hover,
+.lib-folder-caret:focus {
+  color: var(--fg);
+  background: var(--bg);
+  outline: none;
+}
+
+/* Tree-corner glyph in the indent column for nested folders.
+   Subtle (--fg-dim) so it reads as a structural hint, not as
+   content. */
+.lib-tree-glyph {
+  display: inline-block;
+  width: 12px;
+  margin-right: 2px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1;
+  user-select: none;
+}
+
+/* Hide descendant folder rows when any ancestor is collapsed.
+   JS computes membership; this rule just renders the result. */
+.lib-folder-collapsed-child {
+  display: none !important;
+}

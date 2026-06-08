@@ -1777,6 +1777,18 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
             .count() as i64
     };
 
+    // Has-children index, computed once: a folder has children
+    // iff some other path in the set starts with its prefix +
+    // "/". Drives the caret slot below.
+    let has_children: std::collections::HashSet<String> = paths
+        .iter()
+        .filter(|p| {
+            let pre = format!("{p}/");
+            paths.iter().any(|q| q.starts_with(&pre))
+        })
+        .cloned()
+        .collect();
+
     let mut out = String::new();
     out.push_str("<div class=\"lib-folder-header\">Folders</div>");
     out.push_str(&render_lib_folder_node(
@@ -1786,6 +1798,7 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
         selected == FOLDER_ALL,
         FolderNodeKind::Special,
         0,
+        false,
     ));
     out.push_str(&render_lib_folder_node(
         FOLDER_UNFILED,
@@ -1794,6 +1807,7 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
         selected == FOLDER_UNFILED,
         FolderNodeKind::Unfiled,
         0,
+        false,
     ));
     // The root drop zone: dropping a folder here lifts it back to
     // top level. Drawn as a thin band between Unfiled and the
@@ -1817,6 +1831,7 @@ fn render_library_folder_tree(rows: &[LibraryRow], selected: &str) -> String {
             selected == path.as_str(),
             FolderNodeKind::Real,
             depth,
+            has_children.contains(path),
         ));
     }
     out
@@ -1840,6 +1855,7 @@ fn render_lib_folder_node(
     active: bool,
     kind: FolderNodeKind,
     depth: usize,
+    has_children: bool,
 ) -> String {
     let active_class = if active { " active" } else { "" };
     // CSS reads --depth to compute padding-left; keeps the rule
@@ -1860,16 +1876,43 @@ fn render_lib_folder_node(
             "draggable=\"true\" data-folder-source=\"1\"",
         ),
     };
+    // Caret toggle in front of folders that have children. Leaves
+    // and special pseudo-nodes get an empty spacer span so labels
+    // align across the column. The button is a <span role=button>
+    // because nesting a real <button> inside the <a> would split
+    // the click target weirdly; JS handles the toggle and stops
+    // the click from following the link.
+    let caret_html = match kind {
+        FolderNodeKind::Real if has_children => format!(
+            "<span class=\"lib-folder-caret\" data-folder-caret=\"{p}\" \
+             role=\"button\" aria-label=\"Collapse/expand folder\" \
+             tabindex=\"0\">&#x25BE;</span>",
+            p = escape_html(path),
+        ),
+        _ => "<span class=\"lib-folder-caret-spacer\"></span>".to_string(),
+    };
+    // Tree-connector glyph for nested folders. Just a corner
+    // character (└) - not a full ascii tree, because computing
+    // last-vs-non-last sibling correctly per level adds noise.
+    // The single corner reads as "this is inside something."
+    let tree_glyph = if depth > 0 {
+        "<span class=\"lib-tree-glyph\">&#x2514;</span>"
+    } else {
+        ""
+    };
     format!(
         "<a class=\"lib-folder-node{active_class}\" \
             href=\"/dashboard/library?folder={href}\" \
             data-folder-path=\"{path_attr}\" {drop_attrs} {drag_attrs}{style}>\
+           {caret}{glyph}\
            <span class=\"label\">{label_safe}</span>\
            <span class=\"count\">{count}</span>\
          </a>",
         href = escape_html(path),
         path_attr = escape_html(path),
         label_safe = escape_html(label),
+        caret = caret_html,
+        glyph = tree_glyph,
     )
 }
 
@@ -2245,11 +2288,16 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     if (draggingKind === "snippet" && draggingId) {
       // "Unfiled" maps to empty folder_path on the server side.
       var folder = node.hasAttribute("data-unfiled") ? "" : target;
-      var fd = new FormData();
-      fd.append("folder_path", folder);
+      // URLSearchParams (not FormData) so the request goes out as
+      // application/x-www-form-urlencoded - what axum's `Form`
+      // extractor expects. FormData would set
+      // multipart/form-data; boundary=... and the server would
+      // 415. Same fix applies to the folder-move helper below.
+      var params = new URLSearchParams();
+      params.append("folder_path", folder);
       fetch("/dashboard/library/" + encodeURIComponent(draggingId) + "/move", {
         method: "PUT",
-        body: fd,
+        body: params,
       }).then(function (r) {
         if (!r.ok) { console.warn("snippet move failed", r.status); return; }
         refreshLibrary();
@@ -2272,12 +2320,12 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   });
 
   function submitFolderMove(oldPath, newPath) {
-    var fd = new FormData();
-    fd.append("old", oldPath);
-    fd.append("new", newPath);
+    var params = new URLSearchParams();
+    params.append("old", oldPath);
+    params.append("new", newPath);
     fetch("/dashboard/library/folders/move", {
       method: "POST",
-      body: fd,
+      body: params,
     }).then(function (r) {
       if (!r.ok) {
         r.text().then(function (msg) {
@@ -2296,6 +2344,89 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     if (list) window.htmx.trigger(list, "refresh-now");
     if (sidebar) window.htmx.trigger(sidebar, "refresh-now");
   }
+
+  // ---- Folder collapse / expand ----
+  //
+  // The set of currently-collapsed folder paths lives in
+  // localStorage so the choice survives page reloads + the 10s
+  // sidebar poll. Children of a collapsed folder are hidden via
+  // CSS (.lib-folder-collapsed-child); the caret on the parent
+  // flips between right-pointing (collapsed) and down-pointing
+  // (open) glyphs.
+  var FOLDER_COLLAPSE_KEY = "snipdesk-library-collapsed-folders";
+  function loadCollapsed() {
+    try { return JSON.parse(localStorage.getItem(FOLDER_COLLAPSE_KEY) || "[]"); }
+    catch (_e) { return []; }
+  }
+  function saveCollapsed(arr) {
+    try { localStorage.setItem(FOLDER_COLLAPSE_KEY, JSON.stringify(arr)); }
+    catch (_e) {}
+  }
+  function applyFolderCollapse() {
+    var collapsed = loadCollapsed();
+    document.querySelectorAll(
+      ".lib-folder-node[data-folder-path]"
+    ).forEach(function (n) {
+      var p = n.getAttribute("data-folder-path") || "";
+      // Hide if any ancestor path is in the collapsed set. Use
+      // prefix-with-slash so "Replies" doesn't hide a sibling
+      // path that happens to start with "Replies".
+      var hide = collapsed.some(function (parent) {
+        return p.indexOf(parent + "/") === 0;
+      });
+      n.classList.toggle("lib-folder-collapsed-child", hide);
+    });
+    document.querySelectorAll(
+      ".lib-folder-caret[data-folder-caret]"
+    ).forEach(function (k) {
+      var p = k.getAttribute("data-folder-caret") || "";
+      var isCollapsed = collapsed.indexOf(p) !== -1;
+      k.classList.toggle("collapsed", isCollapsed);
+      // ▸ = right-pointing small triangle (collapsed);
+      // ▾ = down-pointing small triangle (expanded).
+      k.textContent = isCollapsed ? "▸" : "▾";
+    });
+  }
+  function toggleFolderCollapsed(path) {
+    if (!path) return;
+    var c = loadCollapsed();
+    var i = c.indexOf(path);
+    if (i === -1) c.push(path); else c.splice(i, 1);
+    saveCollapsed(c);
+  }
+
+  // Click on the caret toggles the folder; stopPropagation +
+  // preventDefault stop the surrounding <a> link from firing
+  // (which would navigate to the folder filter view).
+  document.body.addEventListener("click", function (e) {
+    var caret = e.target.closest && e.target.closest(".lib-folder-caret");
+    if (!caret) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFolderCollapsed(caret.getAttribute("data-folder-caret") || "");
+    applyFolderCollapse();
+  });
+  // Keyboard parity for the focused caret. Space + Enter behave
+  // like a click; matches the role="button" semantics we set on
+  // the caret span.
+  document.body.addEventListener("keydown", function (e) {
+    if (e.key !== " " && e.key !== "Enter") return;
+    var caret = e.target.closest && e.target.closest(".lib-folder-caret");
+    if (!caret) return;
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFolderCollapsed(caret.getAttribute("data-folder-caret") || "");
+    applyFolderCollapse();
+  });
+
+  applyFolderCollapse();
+  // The sidebar polls every 10s and may swap in a fresh tree; the
+  // sidebar fragment also re-renders after libraryChanged events
+  // from create/update/delete. Either way, reapply the collapse
+  // state once htmx has finished the swap.
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    if (e.target && e.target.id === "library-sidebar") applyFolderCollapse();
+  });
 
   // htmx custom trigger so the JS above can ask the polling
   // endpoints to fire on demand without waiting for the 5s tick.

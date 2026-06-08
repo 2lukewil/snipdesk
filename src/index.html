@@ -179,6 +179,95 @@
         </div>
       </section>
 
+      <!-- First-run onboarding modal. Driven entirely from main.js;
+           the panels are siblings inside .onboarding-card and only
+           one carries .is-active at a time. The Teams-only sign-in
+           panel is filtered out of the step sequence at runtime on
+           Lite builds, so the progress dots and Continue logic
+           don't have to special-case it. -->
+      <section id="onboarding" class="modal hidden">
+        <div class="modal-card onboarding-card">
+          <div id="onboarding-progress" class="onboarding-progress" aria-hidden="true"></div>
+
+          <div class="onboarding-panel is-active" data-step="welcome">
+            <h2>Welcome to SnipDesk</h2>
+            <p>Fast canned-reply launcher for support agents. A minute of setup and you're ready.</p>
+            <div class="onboarding-actions">
+              <button class="btn-primary" data-onboarding-next>Get started</button>
+            </div>
+          </div>
+
+          <div class="onboarding-panel" data-step="signin" data-teams-only="true">
+            <h2>Sign in</h2>
+            <p>Connect your SnipDesk Teams account so your snippets stay in sync across devices. Snippets are encrypted at rest; administrators never see your snippet content.</p>
+            <label>
+              <span>Server URL</span>
+              <input id="onboarding-server-url" type="text" placeholder="https://snippets.example.com" autocomplete="off" spellcheck="false" />
+            </label>
+            <button id="onboarding-signin-oidc" class="btn-primary btn-block" type="button" disabled>Sign in with Google</button>
+            <details class="onboarding-other-signin signin-credentials">
+              <summary>Other sign-in options</summary>
+              <p class="hint-inline">For email/password sign-in or pasting a token, open Settings -&gt; Team Library after this tour.</p>
+            </details>
+            <p id="onboarding-signin-status" class="hint-inline"></p>
+            <div class="onboarding-actions">
+              <button class="btn-secondary" data-onboarding-skip>Skip for now</button>
+              <button class="btn-primary" data-onboarding-next disabled>Continue</button>
+            </div>
+          </div>
+
+          <div class="onboarding-panel" data-step="hotkey">
+            <h2>Try your hotkey</h2>
+            <p>SnipDesk lives in the background. Press <kbd id="onboarding-hotkey-label">Alt+Space</kbd> from any window to summon it.</p>
+            <p class="onboarding-instruction">Click below and we'll hide the window so you can try it for real.</p>
+            <p id="onboarding-hotkey-status" class="hint-inline"></p>
+            <div class="onboarding-actions">
+              <button class="btn-secondary" data-onboarding-skip>Skip</button>
+              <button id="onboarding-hotkey-hide" class="btn-primary" type="button">Hide and try</button>
+              <button class="btn-primary hidden" data-onboarding-next>Continue</button>
+            </div>
+          </div>
+
+          <div class="onboarding-panel" data-step="typing">
+            <h2>How fast do you type?</h2>
+            <p>Type the passage below. We'll measure your speed so the dashboard's time-saved estimate stays honest. Skip if you'd rather not.</p>
+            <div id="onboarding-typing-phrase" class="onboarding-phrase"></div>
+            <textarea id="onboarding-typing-input" class="onboarding-typing-input" spellcheck="false" autocomplete="off"></textarea>
+            <div id="onboarding-typing-result" class="onboarding-result hidden"></div>
+            <div class="onboarding-actions">
+              <button class="btn-secondary" data-onboarding-skip>Skip</button>
+              <button id="onboarding-typing-restart" class="btn-secondary hidden" type="button">Try again</button>
+              <button id="onboarding-typing-use" class="btn-primary hidden" type="button">Use this number</button>
+            </div>
+          </div>
+
+          <div class="onboarding-panel" data-step="wage">
+            <h2>Time and money savings</h2>
+            <p>Optional. SnipDesk can estimate the dollar value of every paste so you can see what you're saving over time. Skip if you'd rather not bother.</p>
+            <label>
+              <span>Hourly wage</span>
+              <input id="onboarding-wage" type="number" min="0" step="0.5" placeholder="0" />
+            </label>
+            <label>
+              <span>Currency</span>
+              <select id="onboarding-currency"></select>
+            </label>
+            <div class="onboarding-actions">
+              <button class="btn-secondary" data-onboarding-skip>Skip</button>
+              <button id="onboarding-wage-save" class="btn-primary" type="button">Save and continue</button>
+            </div>
+          </div>
+
+          <div class="onboarding-panel" data-step="done">
+            <h2>You're set</h2>
+            <p>Hit your hotkey anytime to summon SnipDesk. Tweak anything from Settings, and replay this tour from Settings -&gt; General whenever you want.</p>
+            <div class="onboarding-actions">
+              <button id="onboarding-finish" class="btn-primary" type="button">Get to it</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Settings modal (tabbed) -->
       <section id="settings" class="modal hidden">
         <div class="modal-card wide">
@@ -238,6 +327,10 @@
                 <input id="set-auto-check-updates" type="checkbox" />
                 <span>Check for updates automatically <em>- on launch, notify when a new version is available</em></span>
               </label>
+              <div class="row footer-row">
+                <button id="btn-replay-onboarding" type="button" class="btn-secondary">Replay onboarding</button>
+                <em class="hint-inline">Walks you through the first-run setup again.</em>
+              </div>
             </div>
 
             <!-- Appearance -->

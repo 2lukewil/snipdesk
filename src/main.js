@@ -429,6 +429,12 @@ const els = {
   btnExport: document.getElementById("btn-export"),
   btnImport: document.getElementById("btn-import"),
 
+  // Onboarding modal (driven by the controller in the Onboarding section
+  // further down; individual sub-element lookups happen lazily inside it
+  // so missing-on-Lite pieces don't show up here as null refs).
+  onboarding: document.getElementById("onboarding"),
+  btnReplayOnboarding: document.getElementById("btn-replay-onboarding"),
+
   contextMenu: document.getElementById("context-menu"),
 };
 
@@ -529,18 +535,19 @@ async function init() {
     attachFocusSync();
   }
 
+  // First-run: open the onboarding modal. Both the explicit
+  // first-run event from the Rust side and a boot-time check
+  // converge on the same controller; whichever fires first wins
+  // and the other is a no-op because the modal is already open.
+  if (!TEAMS_BUILD) {
+    document.querySelector('#onboarding [data-teams-only="true"]')?.remove();
+  }
+  if (!state.settings?.onboarding_completed) {
+    onboarding.start();
+  }
   await listen("snipdesk://first-run", async () => {
     if (state.settings?.onboarding_completed) return;
-    setStatus(
-      `Welcome to SnipDesk! Press ${formatHotkey(state.settings.hotkey)} anywhere to open it. Configure behavior in Settings (⚙).`,
-      "ok"
-    );
-    try {
-      const updated = { ...state.settings, onboarding_completed: true };
-      state.settings = await invoke("update_settings", { newSettings: updated });
-    } catch (err) {
-      console.warn("failed to mark onboarding complete", err);
-    }
+    onboarding.start();
   });
 
   // Show the running flavor + version in the About tab.
@@ -557,6 +564,372 @@ async function init() {
   if (state.settings?.auto_check_updates) {
     checkForUpdates({ silent: true });
   }
+}
+
+// ---------- Onboarding ----------
+//
+// First-run tour. Modal lives in #onboarding (see index.html);
+// panels are siblings that share .onboarding-panel and the active
+// one carries .is-active. The controller below drives transitions,
+// signal subscriptions (sign-in poll, hotkey demo), and the
+// typing-test logic. Lite skips the signin panel entirely; the
+// wage step is always skippable.
+
+const ONBOARDING_TYPING_PHRASE =
+  "A time may come soon, when none will return. Then there will be need of valour without renown, " +
+  "for none shall remember the deeds that are done in the last defence of your homes. " +
+  "Yet the deeds will not be less valiant because they are unpraised.";
+
+function onboardingSteps() {
+  const all = ["welcome", "signin", "hotkey", "typing", "wage", "done"];
+  return TEAMS_BUILD ? all : all.filter((s) => s !== "signin");
+}
+
+const onboarding = {
+  steps: [],
+  index: 0,
+  typing: null, // { startedAt, finishedAt, wpm }
+  signinPoll: null,
+  hotkeyUnlisten: null,
+
+  async start() {
+    if (!els.onboarding) return;
+    this.steps = onboardingSteps();
+    this.index = 0;
+    closeAllModals();
+    els.onboarding.classList.remove("hidden");
+    this.show(this.steps[0]);
+  },
+
+  show(step) {
+    document.querySelectorAll("#onboarding .onboarding-panel").forEach((p) => {
+      p.classList.toggle("is-active", p.dataset.step === step);
+    });
+    this.renderProgress();
+    if (step === "signin") this.primeSigninPanel();
+    if (step === "hotkey") this.primeHotkeyPanel();
+    if (step === "typing") this.primeTypingPanel();
+    if (step === "wage") this.primeWagePanel();
+  },
+
+  renderProgress() {
+    const container = document.getElementById("onboarding-progress");
+    if (!container) return;
+    container.innerHTML = "";
+    for (let i = 0; i < this.steps.length; i++) {
+      const dot = document.createElement("span");
+      const klass =
+        i < this.index ? "dot is-done" : i === this.index ? "dot is-current" : "dot";
+      dot.className = klass;
+      container.appendChild(dot);
+    }
+  },
+
+  advance() {
+    this.cleanupCurrentStep();
+    this.index++;
+    if (this.index >= this.steps.length) {
+      this.complete();
+      return;
+    }
+    this.show(this.steps[this.index]);
+  },
+
+  skip() {
+    this.advance();
+  },
+
+  cleanupCurrentStep() {
+    if (this.signinPoll) {
+      clearInterval(this.signinPoll);
+      this.signinPoll = null;
+    }
+    if (this.hotkeyUnlisten) {
+      try {
+        this.hotkeyUnlisten();
+      } catch (_e) {}
+      this.hotkeyUnlisten = null;
+    }
+    // Reset the hotkey panel's button visibility so a Replay starts clean.
+    document
+      .querySelectorAll('#onboarding [data-step="hotkey"] [data-onboarding-next]')
+      .forEach((el) => el.classList.add("hidden"));
+    const hideBtn = document.getElementById("onboarding-hotkey-hide");
+    if (hideBtn) hideBtn.classList.remove("hidden");
+  },
+
+  async primeSigninPanel() {
+    if (!TEAMS_BUILD) return;
+    // Reflect SSO-only preference so the "Other sign-in options"
+    // disclosure hides via the same CSS rule the Team Library
+    // settings panel uses.
+    document.body.dataset.ssoOnly = String(!!state.settings?.prefer_sso_signin);
+    const urlInput = document.getElementById("onboarding-server-url");
+    const oidcBtn = document.getElementById("onboarding-signin-oidc");
+    if (urlInput) {
+      urlInput.value = state.settings?.server_url || "";
+      const refreshOidc = () => {
+        if (oidcBtn) oidcBtn.disabled = !urlInput.value.trim();
+      };
+      // Avoid stacking listeners across Replays.
+      urlInput.oninput = refreshOidc;
+      refreshOidc();
+    }
+    await loadServerStatus();
+    this.renderSigninStatus();
+    this.signinPoll = setInterval(async () => {
+      await loadServerStatus();
+      this.renderSigninStatus();
+    }, 1500);
+  },
+
+  renderSigninStatus() {
+    const status = document.getElementById("onboarding-signin-status");
+    const next = document.querySelector(
+      '#onboarding [data-step="signin"] [data-onboarding-next]',
+    );
+    if (state.serverStatus?.signed_in) {
+      const display =
+        state.serverStatus.display_name || state.serverStatus.email || "(signed in)";
+      if (status) status.textContent = `Signed in as ${display}.`;
+      if (next) next.removeAttribute("disabled");
+    } else {
+      if (status) status.textContent = "Waiting for sign-in...";
+      if (next) next.setAttribute("disabled", "");
+    }
+  },
+
+  async startOidc() {
+    if (!TEAMS_BUILD) return;
+    const urlInput = document.getElementById("onboarding-server-url");
+    const status = document.getElementById("onboarding-signin-status");
+    const url = urlInput ? urlInput.value.trim() : "";
+    if (!url) return;
+    // Persist the URL so the OIDC handshake + later sync paths can
+    // pick it up via the existing settings.server_url channel.
+    try {
+      const updated = { ...state.settings, server_url: url };
+      state.settings = await invoke("update_settings", { newSettings: updated });
+    } catch (err) {
+      console.warn("onboarding: server URL save failed", err);
+      if (status) status.textContent = "Couldn't save server URL. Try again.";
+      return;
+    }
+    try {
+      const startUrl = await invoke("server_oidc_start_url", { serverUrl: url });
+      const { open: openExternal } = await import("@tauri-apps/plugin-shell");
+      await openExternal(startUrl);
+      if (status) status.textContent = "Browser opened. Finish signing in there.";
+    } catch (err) {
+      console.warn("onboarding: oidc start failed", err);
+      if (status) {
+        status.textContent =
+          "Couldn't open browser. Open Settings -> Team Library to sign in manually.";
+      }
+    }
+  },
+
+  primeHotkeyPanel() {
+    const label = document.getElementById("onboarding-hotkey-label");
+    if (label) label.textContent = formatHotkey(state.settings?.hotkey);
+    const status = document.getElementById("onboarding-hotkey-status");
+    if (status) status.textContent = "";
+  },
+
+  async hideAndTryHotkey() {
+    const status = document.getElementById("onboarding-hotkey-status");
+    const hideBtn = document.getElementById("onboarding-hotkey-hide");
+    const next = document.querySelector(
+      '#onboarding [data-step="hotkey"] [data-onboarding-next]',
+    );
+    if (status) status.textContent = `Waiting for ${formatHotkey(state.settings?.hotkey)}...`;
+    // Subscribe BEFORE hiding so we never miss the re-open event.
+    try {
+      this.hotkeyUnlisten = await listen("snipdesk://opened", () => {
+        if (status) status.textContent = "Got it. That's how you'll summon SnipDesk anytime.";
+        if (hideBtn) hideBtn.classList.add("hidden");
+        if (next) next.classList.remove("hidden");
+      });
+    } catch (err) {
+      console.warn("onboarding: failed to subscribe to opened event", err);
+    }
+    try {
+      await invoke("hide_window");
+    } catch (err) {
+      console.warn("onboarding: hide_window failed", err);
+      if (status) {
+        status.textContent =
+          "Couldn't hide the window automatically. Press your hotkey anyway, then click Continue.";
+      }
+      if (next) next.classList.remove("hidden");
+    }
+  },
+
+  primeTypingPanel() {
+    const phraseEl = document.getElementById("onboarding-typing-phrase");
+    const input = document.getElementById("onboarding-typing-input");
+    if (!phraseEl || !input) return;
+    phraseEl.innerHTML = "";
+    for (const ch of ONBOARDING_TYPING_PHRASE) {
+      const span = document.createElement("span");
+      span.className = "ch";
+      span.textContent = ch;
+      phraseEl.appendChild(span);
+    }
+    // Mark the very first char as the cursor.
+    const first = phraseEl.querySelector(".ch");
+    if (first) first.classList.add("cursor");
+    input.value = "";
+    this.typing = { startedAt: null, finishedAt: null, wpm: null };
+    document.getElementById("onboarding-typing-result").classList.add("hidden");
+    document.getElementById("onboarding-typing-use").classList.add("hidden");
+    document.getElementById("onboarding-typing-restart").classList.add("hidden");
+    setTimeout(() => input.focus(), 50);
+  },
+
+  onTypingInput() {
+    const phraseEl = document.getElementById("onboarding-typing-phrase");
+    const input = document.getElementById("onboarding-typing-input");
+    if (!phraseEl || !input || !this.typing) return;
+    const typed = input.value;
+    if (typed.length > 0 && this.typing.startedAt === null) {
+      this.typing.startedAt = Date.now();
+    }
+    const spans = phraseEl.querySelectorAll(".ch");
+    spans.forEach((s, i) => {
+      s.classList.remove("ok", "bad", "cursor");
+      if (i < typed.length) {
+        s.classList.add(typed[i] === ONBOARDING_TYPING_PHRASE[i] ? "ok" : "bad");
+      } else if (i === typed.length) {
+        s.classList.add("cursor");
+      }
+    });
+    if (typed === ONBOARDING_TYPING_PHRASE && !this.typing.finishedAt) {
+      this.typing.finishedAt = Date.now();
+      const seconds = (this.typing.finishedAt - this.typing.startedAt) / 1000;
+      const words = ONBOARDING_TYPING_PHRASE.trim().split(/\s+/).length;
+      const wpm = Math.max(1, Math.round((words * 60) / seconds));
+      this.typing.wpm = wpm;
+      const result = document.getElementById("onboarding-typing-result");
+      result.innerHTML = `<strong>${wpm} WPM</strong> over ${seconds.toFixed(1)}s.`;
+      result.classList.remove("hidden");
+      document.getElementById("onboarding-typing-use").classList.remove("hidden");
+      document.getElementById("onboarding-typing-restart").classList.remove("hidden");
+      input.blur();
+    }
+  },
+
+  async useTypingResult() {
+    if (!this.typing || this.typing.wpm == null) return;
+    await this.saveProfile({ wpm: this.typing.wpm });
+    this.advance();
+  },
+
+  primeWagePanel() {
+    const wageInput = document.getElementById("onboarding-wage");
+    const currSel = document.getElementById("onboarding-currency");
+    if (!wageInput || !currSel) return;
+    wageInput.value =
+      state.settings?.hourly_wage && state.settings.hourly_wage > 0
+        ? String(state.settings.hourly_wage)
+        : "";
+    if (currSel.options.length === 0) {
+      const codes = [
+        "AUD", "USD", "EUR", "GBP", "CAD", "NZD", "JPY", "CHF", "INR", "SGD",
+        "HKD", "ZAR", "BRL", "MXN", "KRW", "SEK", "NOK", "DKK", "PLN", "CZK",
+        "TRY", "AED", "CNY", "THB", "IDR", "PHP",
+      ];
+      for (const c of codes) {
+        const o = document.createElement("option");
+        o.value = c;
+        o.textContent = c;
+        currSel.appendChild(o);
+      }
+    }
+    const existing = state.settings?.wage_currency;
+    if (existing && Array.from(currSel.options).some((o) => o.value === existing)) {
+      currSel.value = existing;
+    } else {
+      currSel.value = guessCurrencyFromLocale();
+    }
+  },
+
+  async saveWage() {
+    const wageInput = document.getElementById("onboarding-wage");
+    const currSel = document.getElementById("onboarding-currency");
+    const wage = parseFloat(wageInput?.value);
+    const currency = currSel?.value;
+    const args = {};
+    if (Number.isFinite(wage) && wage > 0) args.hourly_wage = wage;
+    if (currency) args.currency = currency;
+    if (Object.keys(args).length > 0) await this.saveProfile(args);
+    this.advance();
+  },
+
+  async saveProfile(args) {
+    // Always reflect into local settings; the Settings UI uses
+    // these fields directly on the Savings tab regardless of build
+    // flavor.
+    try {
+      const updated = { ...state.settings };
+      if (typeof args.wpm === "number") updated.typing_speed_wpm = args.wpm;
+      if (typeof args.hourly_wage === "number") updated.hourly_wage = args.hourly_wage;
+      if (typeof args.currency === "string") updated.wage_currency = args.currency;
+      state.settings = await invoke("update_settings", { newSettings: updated });
+    } catch (err) {
+      console.warn("onboarding: local settings save failed", err);
+    }
+    // Mirror to the server when Teams + signed in so the dashboard's
+    // per-user override picks it up. Silent failure: the local save
+    // is the source of truth for the desktop client; server is a
+    // nice-to-have for the org dashboard.
+    if (TEAMS_BUILD && state.serverStatus?.signed_in) {
+      try {
+        await invoke("server_update_profile", { args });
+      } catch (err) {
+        console.warn("onboarding: server profile push failed", err);
+      }
+    }
+  },
+
+  async complete() {
+    if (els.onboarding) els.onboarding.classList.add("hidden");
+    try {
+      const updated = { ...state.settings, onboarding_completed: true };
+      state.settings = await invoke("update_settings", { newSettings: updated });
+    } catch (err) {
+      console.warn("onboarding: complete-write failed", err);
+    }
+  },
+
+  async replay() {
+    try {
+      const updated = { ...state.settings, onboarding_completed: false };
+      state.settings = await invoke("update_settings", { newSettings: updated });
+    } catch (err) {
+      console.warn("onboarding: replay-flag write failed", err);
+    }
+    await this.start();
+  },
+};
+
+// Used by the onboarding wage panel + (future) any other UI that
+// wants a sensible currency default. Mirrors the locale map the
+// server's stats page uses; ports it here so the desktop client
+// doesn't have to round-trip the server just to guess.
+function guessCurrencyFromLocale() {
+  const localeMap = {
+    AU: "AUD", US: "USD", GB: "GBP", DE: "EUR", FR: "EUR", IT: "EUR", ES: "EUR",
+    NL: "EUR", AT: "EUR", BE: "EUR", IE: "EUR", PT: "EUR", FI: "EUR", GR: "EUR",
+    JP: "JPY", CA: "CAD", NZ: "NZD", CH: "CHF", IN: "INR", SG: "SGD", HK: "HKD",
+    ZA: "ZAR", BR: "BRL", MX: "MXN", KR: "KRW", SE: "SEK", NO: "NOK", DK: "DKK",
+    PL: "PLN", CZ: "CZK", TR: "TRY", AE: "AED", CN: "CNY", TH: "THB", ID: "IDR",
+    PH: "PHP",
+  };
+  const lang = (navigator.language || "").toUpperCase();
+  const parts = lang.split(/[-_]/);
+  const region = parts.length > 1 ? parts[1] : "";
+  return (region && localeMap[region]) || "AUD";
 }
 
 // ---------- Auto-update ----------
@@ -3965,6 +4338,35 @@ function bindEvents() {
     els.setPreferSsoSignin.addEventListener("change", () => {
       document.body.dataset.ssoOnly = String(els.setPreferSsoSignin.checked);
     });
+  }
+
+  // ---- Onboarding wiring ----
+  // Each panel's primary actions get a click handler. Next/Skip
+  // buttons are addressed by data attribute so adding a panel
+  // doesn't require touching this block; only step-specific
+  // buttons (typing test, hide-window, etc.) get explicit lookups.
+  document.querySelectorAll("#onboarding [data-onboarding-next]").forEach((b) => {
+    b.addEventListener("click", () => onboarding.advance());
+  });
+  document.querySelectorAll("#onboarding [data-onboarding-skip]").forEach((b) => {
+    b.addEventListener("click", () => onboarding.skip());
+  });
+  const onbSigninOidc = document.getElementById("onboarding-signin-oidc");
+  if (onbSigninOidc) onbSigninOidc.addEventListener("click", () => onboarding.startOidc());
+  const onbHotkeyHide = document.getElementById("onboarding-hotkey-hide");
+  if (onbHotkeyHide) onbHotkeyHide.addEventListener("click", () => onboarding.hideAndTryHotkey());
+  const onbTypingInput = document.getElementById("onboarding-typing-input");
+  if (onbTypingInput) onbTypingInput.addEventListener("input", () => onboarding.onTypingInput());
+  const onbTypingUse = document.getElementById("onboarding-typing-use");
+  if (onbTypingUse) onbTypingUse.addEventListener("click", () => onboarding.useTypingResult());
+  const onbTypingRestart = document.getElementById("onboarding-typing-restart");
+  if (onbTypingRestart) onbTypingRestart.addEventListener("click", () => onboarding.primeTypingPanel());
+  const onbWageSave = document.getElementById("onboarding-wage-save");
+  if (onbWageSave) onbWageSave.addEventListener("click", () => onboarding.saveWage());
+  const onbFinish = document.getElementById("onboarding-finish");
+  if (onbFinish) onbFinish.addEventListener("click", () => onboarding.complete());
+  if (els.btnReplayOnboarding) {
+    els.btnReplayOnboarding.addEventListener("click", () => onboarding.replay());
   }
 
   // Hotkey fields: click-and-press to capture, instead of typing chord

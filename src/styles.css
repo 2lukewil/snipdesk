@@ -1459,3 +1459,153 @@ body.compact .search-bar {
   border-radius: 6px;
   pointer-events: none;
 }
+
+/* --- First-run onboarding modal ---
+   One card with sibling panels; only the one with .is-active is
+   rendered. Reuses the existing .modal positioning + dim backdrop;
+   sizing + chrome are bespoke so the panels can breathe.
+*/
+.onboarding-card {
+  width: min(560px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 28px 32px;
+}
+.onboarding-card h2 {
+  margin: 4px 0 8px;
+  font-size: 22px;
+}
+.onboarding-card p {
+  margin: 0 0 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.onboarding-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.onboarding-card label > span {
+  font-weight: 600;
+  color: var(--text);
+}
+.onboarding-card input,
+.onboarding-card select,
+.onboarding-card textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Progress strip across the top of the card. One dot per step in
+   the runtime sequence (Teams = 6, Lite = 5); main.js fills these
+   in based on the active route. */
+.onboarding-progress {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin: 0 0 22px;
+}
+.onboarding-progress .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+.onboarding-progress .dot.is-done {
+  background: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.onboarding-progress .dot.is-current {
+  background: var(--accent);
+  transform: scale(1.25);
+}
+
+/* Panels stack inside the card; main.js toggles .is-active. */
+.onboarding-panel { display: none; }
+.onboarding-panel.is-active { display: block; }
+
+.onboarding-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+.onboarding-card .btn-block {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+}
+.onboarding-instruction {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Typing test phrase + input. The phrase is rendered as inline
+   spans so main.js can colour per-character match state without
+   touching the input itself. */
+.onboarding-phrase {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 12px 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: none;
+}
+.onboarding-phrase .ch.ok { color: color-mix(in srgb, #2ea043 70%, var(--text)); }
+.onboarding-phrase .ch.bad {
+  color: #f85149;
+  background: color-mix(in srgb, #f85149 18%, transparent);
+  border-radius: 2px;
+}
+.onboarding-phrase .ch.cursor {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 2px;
+}
+.onboarding-typing-input {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+}
+.onboarding-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 6px;
+  font-size: 14px;
+}
+.onboarding-result strong { font-size: 18px; }
+
+/* Footer-row in Settings General for the "Replay onboarding"
+   button - sits at the bottom under the regular toggles. */
+.footer-row {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Inline keyboard hint glyph used in the hotkey panel. */
+.onboarding-card kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+}

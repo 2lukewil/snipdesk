@@ -113,19 +113,50 @@ pub struct AuditRow {
     pub details: Option<String>,
 }
 
+/// Actions we hide from the dashboard view (and exclude from its
+/// count). folder.reorder used to be recorded; it carries no
+/// destructive effect and reads as inscrutable JSON in the audit
+/// table, so we filter it everywhere it would surface. Old rows
+/// stay in the table for forensic completeness.
+pub const HIDDEN_ACTIONS: &[&str] = &["library.folder.reorder"];
+
+/// Comma-quoted list for embedding in a SQL `IN (...)` clause. The
+/// values are compile-time constants here, but the helper keeps the
+/// quoting honest if the list ever grows.
+fn hidden_actions_sql_list() -> String {
+    HIDDEN_ACTIONS
+        .iter()
+        .map(|a| format!("'{}'", a.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// SQL fragment that excludes hidden actions from a query against
+/// the `audit_log` table. Returns an empty string when no actions
+/// are hidden so the caller can append unconditionally.
+pub fn hidden_actions_filter_sql(prefix: &str) -> String {
+    if HIDDEN_ACTIONS.is_empty() {
+        String::new()
+    } else {
+        format!(" {prefix} action NOT IN ({})", hidden_actions_sql_list())
+    }
+}
+
 /// Most-recent N entries. The dashboard wraps this for its audit
 /// page; the offset + limit are bounded by the caller (so a
 /// runaway URL like `?limit=999999999` can't OOM the page).
 pub async fn list_recent(pool: &SqlitePool, limit: i64, offset: i64) -> Vec<AuditRow> {
-    sqlx::query_as::<_, AuditRow>(
+    let sql = format!(
         "SELECT id, at, actor_email, action, target_kind, target_id, details \
-         FROM audit_log \
+         FROM audit_log{filter} \
          ORDER BY at DESC, id DESC \
          LIMIT ?1 OFFSET ?2",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default()
+        filter = hidden_actions_filter_sql("WHERE"),
+    );
+    sqlx::query_as::<_, AuditRow>(&sql)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
 }

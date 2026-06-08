@@ -370,18 +370,12 @@ textarea {
 }
 .lib-folder-node:hover { background: var(--bg); }
 
-/* Drag handles + dragging-state styling for library cards. */
+/* Dragging-state styling for library cards. The whole card is the
+   drag target (no explicit handle), so cursor:grab and the dragging
+   opacity are the only visual cues needed. */
 .library-card { position: relative; }
 .library-card[draggable="true"] { cursor: grab; }
 .library-card.dragging { opacity: 0.5; }
-.library-card .drag-handle {
-  color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  cursor: grab;
-  user-select: none;
-  font-weight: 700;
-  letter-spacing: -1px;
-}
 
 /* Formatting toolbar above each body textarea. */
 .format-toolbar {

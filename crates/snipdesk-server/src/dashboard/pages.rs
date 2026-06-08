@@ -2154,7 +2154,6 @@ fn render_library_card(r: &LibraryRow) -> String {
         "<div class=\"library-card\" id=\"lib-{id_attr}\" \
              draggable=\"true\" data-snippet-id=\"{id_attr}\">\
            <div class=\"card-head\">\
-             <span class=\"drag-handle\" title=\"Drag to move\">::</span>\
              <span class=\"title\">{title}</span>{folder}{tags}{usage_pill}\
              <span class=\"meta\">updated {when}</span>\
            </div>\
@@ -3264,7 +3263,7 @@ pub struct FolderReorderBody {
 /// JSON sidesteps the issue.
 pub async fn library_folder_reorder(
     State(state): State<AppState>,
-    admin: DashboardAdmin,
+    _admin: DashboardAdmin,
     Json(body): Json<FolderReorderBody>,
 ) -> Response {
     if body.paths.is_empty() {
@@ -3308,22 +3307,10 @@ pub async fn library_folder_reorder(
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {e}")).into_response();
     }
 
-    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
-    crate::audit::record(
-        &state.pool,
-        crate::audit::AuditEvent {
-            actor_id: admin.user_id(),
-            actor_email: &actor_email,
-            action: "library.folder.reorder",
-            target_kind: Some("folder"),
-            target_id: Some(&body.parent),
-            details: Some(serde_json::json!({
-                "parent": body.parent,
-                "order": body.paths,
-            })),
-        },
-    )
-    .await;
+    // Intentionally not recorded in the audit log: folder reorder is
+    // a pure UX-state change with no destructive effect, and the
+    // serialised order list is noise that would crowd out the
+    // mutations operators actually want to see.
 
     (
         StatusCode::NO_CONTENT,
@@ -3632,7 +3619,14 @@ pub async fn audit_page(
     // the next-link condition. The old `rows.len() == PAGE_SIZE`
     // heuristic only worked once the first page was completely
     // full, which made the pager look broken on small instances.
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+    // COUNT must apply the same hidden-action filter as list_recent
+    // or the pager's "page N of M" claim disagrees with what
+    // actually appears in the table.
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM audit_log{}",
+        crate::audit::hidden_actions_filter_sql("WHERE"),
+    );
+    let total: i64 = sqlx::query_scalar(&count_sql)
         .fetch_one(&state.pool)
         .await
         .unwrap_or(0);

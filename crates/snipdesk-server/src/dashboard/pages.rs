@@ -3481,6 +3481,31 @@ pub async fn library_folder_move(
             .bind(old)
             .execute(&mut *tx)
             .await;
+        // Mirror the rewrite into the audit log so historical
+        // "created folder Foo" rows link to wherever Foo lives
+        // now instead of a stale path that no longer exists.
+        // Descendants follow the same SUBSTR rule the folder rows
+        // used above.
+        let _ = sqlx::query(
+            "UPDATE audit_log \
+             SET target_id = SUBSTR(target_id, ?1 + 1) \
+             WHERE target_kind = 'folder' AND target_id LIKE ?2",
+        )
+        .bind(prefix.len() as i64)
+        .bind(&like_pattern)
+        .execute(&mut *tx)
+        .await;
+        // Exact-match audit rows: the folder itself just became
+        // root - its snippets are no longer in any folder, so
+        // there's nothing to link to. Empty target_id collapses
+        // to a dash in humanize_audit_target.
+        let _ = sqlx::query(
+            "UPDATE audit_log SET target_id = '' \
+             WHERE target_kind = 'folder' AND target_id = ?1",
+        )
+        .bind(old)
+        .execute(&mut *tx)
+        .await;
     } else {
         let _ = sqlx::query(
             "UPDATE OR REPLACE library_folders \
@@ -3497,6 +3522,28 @@ pub async fn library_folder_move(
             .bind(old)
             .execute(&mut *tx)
             .await;
+        // Mirror the rewrite into the audit log: any historical
+        // row whose target was `old` or one of its descendants
+        // gets re-pointed at the new path so the link in the
+        // Target column lands on the current location.
+        let _ = sqlx::query(
+            "UPDATE audit_log \
+             SET target_id = ?1 || SUBSTR(target_id, ?2 + 1) \
+             WHERE target_kind = 'folder' AND target_id LIKE ?3",
+        )
+        .bind(format!("{new}/"))
+        .bind(prefix.len() as i64)
+        .bind(&like_pattern)
+        .execute(&mut *tx)
+        .await;
+        let _ = sqlx::query(
+            "UPDATE audit_log SET target_id = ?1 \
+             WHERE target_kind = 'folder' AND target_id = ?2",
+        )
+        .bind(new)
+        .bind(old)
+        .execute(&mut *tx)
+        .await;
     }
 
     if let Err(e) = tx.commit().await {
@@ -3504,7 +3551,10 @@ pub async fn library_folder_move(
     }
 
     // One audit row per folder move (not per snippet), with the
-    // count so an admin can sanity-check what was touched.
+    // count so an admin can sanity-check what was touched. The
+    // target_id reflects the post-move location so the link
+    // navigates to where the folder ended up; root moves carry an
+    // empty target_id which collapses to a dash in the table.
     let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
     crate::audit::record(
         &state.pool,
@@ -3513,7 +3563,7 @@ pub async fn library_folder_move(
             actor_email: &actor_email,
             action: "library.folder.move",
             target_kind: Some("folder"),
-            target_id: Some(old),
+            target_id: Some(new),
             details: Some(serde_json::json!({
                 "from": old,
                 "to": new,
@@ -3679,6 +3729,45 @@ pub async fn audit_page(
                 .unwrap_or_default()
         };
 
+    // Same pre-fetch pattern for library snippet targets: pull the
+    // CURRENT folder_path and is_deleted state in one IN query so
+    // the target column can link straight to the snippet's card,
+    // not the library home page. A snippet's folder may have
+    // changed since the audit row was written; the live row wins.
+    let mut snippet_target_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for r in &rows {
+        if r.target_kind.as_deref() == Some("library") {
+            if let Some(sid) = r.target_id.as_deref() {
+                if !sid.is_empty() {
+                    snippet_target_ids.insert(sid.to_string());
+                }
+            }
+        }
+    }
+    let snippets_by_id: std::collections::HashMap<String, (Option<String>, bool)> =
+        if snippet_target_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            let placeholders: Vec<&str> = snippet_target_ids.iter().map(|_| "?").collect();
+            let sql = format!(
+                "SELECT id, folder_path, is_deleted FROM library_snippets WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let mut q = sqlx::query_as::<_, (String, Option<String>, i64)>(&sql);
+            for sid in &snippet_target_ids {
+                q = q.bind(sid);
+            }
+            q.fetch_all(&state.pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|(id, fp, d)| (id, (fp, d != 0)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
     let mut body = String::new();
     body.push_str("<h1>Audit log</h1>");
     body.push_str(
@@ -3698,6 +3787,7 @@ pub async fn audit_page(
                 r.target_kind.as_deref(),
                 r.target_id.as_deref(),
                 &users_by_id,
+                &snippets_by_id,
             );
             // Parse the details JSON once per row so we can decide
             // whether to surface the diff toggle without re-parsing
@@ -3875,6 +3965,7 @@ fn humanize_audit_target(
     kind: Option<&str>,
     id: Option<&str>,
     users: &std::collections::HashMap<String, (String, String)>,
+    snippets: &std::collections::HashMap<String, (Option<String>, bool)>,
 ) -> String {
     match (kind, id) {
         // User target gets the user's display_name + email when
@@ -3886,24 +3977,52 @@ fn humanize_audit_target(
             uid_attr = escape_html(uid),
             label = user_target_label(users, uid),
         ),
-        // Library snippet: there's no per-snippet detail page, so
-        // the link goes to the library overview. title= carries the
-        // uuid for hover-debug.
-        (Some("library"), Some(lid)) if !lid.is_empty() => format!(
-            "<a href=\"/dashboard/library\" title=\"library snippet {lid}\">library snippet</a>",
-            lid = escape_html(lid),
-        ),
+        // Library snippet: link to the specific card by anchoring
+        // on its DOM id, and pre-filter the library to whichever
+        // folder the snippet currently lives in so the card is
+        // actually on the page when the anchor jump lands. Lookup
+        // misses (deleted or never-fetched) fall back to a muted
+        // "(deleted)" label rather than a broken link.
+        (Some("library"), Some(lid)) if !lid.is_empty() => match snippets.get(lid) {
+            Some((_, true)) => format!(
+                "<span class=\"muted\" title=\"deleted snippet {lid}\">library snippet (deleted)</span>",
+                lid = escape_html(lid),
+            ),
+            Some((folder, false)) => {
+                let folder_param = folder
+                    .as_deref()
+                    .filter(|f| !f.is_empty())
+                    .map(|f| format!("?folder={}", urlencoding::encode(f)))
+                    .unwrap_or_default();
+                format!(
+                    "<a href=\"/dashboard/library{folder}#lib-{id_attr}\" \
+                        title=\"library snippet {lid}\">library snippet</a>",
+                    folder = folder_param,
+                    id_attr = escape_html(lid),
+                    lid = escape_html(lid),
+                )
+            }
+            // Pre-fetch missed (race with delete, or id not in the
+            // snippets table at all). Fall back to the library home
+            // so the link still goes somewhere useful.
+            None => format!(
+                "<a href=\"/dashboard/library\" title=\"library snippet {lid}\">library snippet</a>",
+                lid = escape_html(lid),
+            ),
+        },
         // Folder targets navigate straight to the folder's filtered
         // library view via ?folder= - useful for folder.move and
         // similar actions where the admin wants to see the result.
+        // The query value is URL-encoded so slashes in nested
+        // paths ride through cleanly across browsers.
         (Some("folder"), Some(fp)) if !fp.is_empty() => format!(
             "<a href=\"/dashboard/library?folder={fp_attr}\">folder <em>{fp_display}</em></a>",
-            fp_attr = escape_html(fp),
+            fp_attr = urlencoding::encode(fp),
             fp_display = escape_html(fp),
         ),
-        // Empty id (e.g. library.folder.reorder at root level fires
-        // with target_id="") shouldn't render as "folder:" or
-        // "user:" with nothing trailing - those read as broken UI.
+        // Empty id (e.g. library.folder.move into root fires with
+        // target_id="") shouldn't render as "folder:" or "user:"
+        // with nothing trailing - those read as broken UI.
         // Collapse to a dash like the no-target case.
         (Some(_), Some("")) => "<span class=\"muted\">-</span>".to_string(),
         (Some(k), Some(i)) => format!("{}:{}", escape_html(k), escape_html(i)),

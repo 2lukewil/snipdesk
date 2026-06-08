@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { readdirSync, renameSync, existsSync } from "node:fs";
 
 import { loadEnv } from "./load-env.mjs";
+import { withBrand } from "./brand.mjs";
 
 // Pull signing key + passphrase from .env if present so local builds can
 // sign updater artifacts without per-shell env-var ceremony. No-op in CI.
@@ -32,29 +33,31 @@ const extraArgs = process.argv.slice(2);
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 
-console.log("[build-teams] vite build --mode teams");
-const vite = spawnSync(
-  "npx",
-  ["vite", "build", "--mode", "teams"],
-  { stdio: "inherit", env: childEnv, shell: true },
-);
-if (vite.status !== 0) {
-  console.error("[build-teams] vite build failed");
-  process.exit(vite.status ?? 1);
-}
+await withBrand(async () => {
+  console.log("[build-teams] vite build --mode teams");
+  const vite = spawnSync(
+    "npx",
+    ["vite", "build", "--mode", "teams"],
+    { stdio: "inherit", env: childEnv, shell: true },
+  );
+  if (vite.status !== 0) {
+    console.error("[build-teams] vite build failed");
+    process.exit(vite.status ?? 1);
+  }
 
-console.log(
-  `[build-teams] tauri build --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
-);
-const tauri = spawnSync(
-  "npx",
-  ["tauri", "build", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
-  { stdio: "inherit", env: childEnv, shell: true },
-);
-if (tauri.status !== 0) {
-  console.error("[build-teams] tauri build failed");
-  process.exit(tauri.status ?? 1);
-}
+  console.log(
+    `[build-teams] tauri build --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
+  );
+  const tauri = spawnSync(
+    "npx",
+    ["tauri", "build", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
+    { stdio: "inherit", env: childEnv, shell: true },
+  );
+  if (tauri.status !== 0) {
+    console.error("[build-teams] tauri build failed");
+    process.exit(tauri.status ?? 1);
+  }
+});
 
 // Normalize the Teams NSIS installer to a stable, version-less, ASCII name.
 // Tauri derives the filename from productName ("SnipDesk" -> "SnipDesk_<ver>_

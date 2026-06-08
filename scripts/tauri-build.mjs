@@ -12,14 +12,18 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 import { loadEnv } from "./load-env.mjs";
+import { withBrand } from "./brand.mjs";
 
 loadEnv();
 
 const extraArgs = process.argv.slice(2);
 
-const r = spawnSync("npx", ["tauri", "build", ...extraArgs], {
-  stdio: "inherit",
-  env: process.env,
-  shell: true,
+const code = await withBrand(() => {
+  const r = spawnSync("npx", ["tauri", "build", ...extraArgs], {
+    stdio: "inherit",
+    env: process.env,
+    shell: true,
+  });
+  return r.status ?? 1;
 });
-process.exit(r.status ?? 1);
+process.exit(code);

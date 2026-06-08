@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadEnv } from "./load-env.mjs";
+import { withBrand } from "./brand.mjs";
 
 loadEnv();
 
@@ -23,12 +24,17 @@ const extraArgs = process.argv.slice(2);
 
 const childEnv = { ...process.env, SNIPDESK_TEAMS_BUILD: "1" };
 
-console.log(
-  `[dev-teams] tauri dev --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
+await withBrand(
+  () =>
+    new Promise((resolveFn) => {
+      console.log(
+        `[dev-teams] tauri dev --features teams --config ${teamsConfigPath} ${extraArgs.join(" ")}`,
+      );
+      const child = spawn(
+        "npx",
+        ["tauri", "dev", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
+        { stdio: "inherit", env: childEnv, shell: true },
+      );
+      child.on("exit", (code) => resolveFn(code ?? 0));
+    }),
 );
-const child = spawn(
-  "npx",
-  ["tauri", "dev", "--features", "teams", "--config", teamsConfigPath, ...extraArgs],
-  { stdio: "inherit", env: childEnv, shell: true },
-);
-child.on("exit", (code) => process.exit(code ?? 0));

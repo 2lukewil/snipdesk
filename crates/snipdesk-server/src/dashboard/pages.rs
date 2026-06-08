@@ -2352,6 +2352,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     draggingKind = null;
     draggingId = null;
     clearDropHighlights();
+    clearDropPositionClasses();
   });
   document.body.addEventListener("dragover", function (e) {
     var rootDrop = e.target.closest && e.target.closest(".lib-folder-root-drop");
@@ -2375,38 +2376,54 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
     }
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    node.classList.add("drop-target");
+    // Decide nest vs reorder visual based on cursor Y. Snippet drags
+    // and alpha-mode folder drags always fall through to "into"
+    // (existing nest highlight). Manual-mode folder drags pick up
+    // an above/below indicator from classifyFolderDrop.
+    clearDropPositionClasses();
+    var position = (draggingKind === "folder")
+      ? classifyFolderDrop(node, e.clientY)
+      : "into";
+    if (position === "above") {
+      node.classList.add("drop-above");
+      node.classList.remove("drop-target");
+    } else if (position === "below") {
+      node.classList.add("drop-below");
+      node.classList.remove("drop-target");
+    } else {
+      node.classList.add("drop-target");
+    }
   });
   document.body.addEventListener("dragleave", function (e) {
     var node = e.target.closest && e.target.closest(
       ".lib-folder-row, .lib-folder-root-drop"
     );
-    if (node) node.classList.remove("drop-target");
+    if (node) node.classList.remove("drop-target", "drop-above", "drop-below");
   });
   document.body.addEventListener("drop", function (e) {
     var rootDrop = e.target.closest && e.target.closest(".lib-folder-root-drop");
     if (rootDrop && draggingKind === "folder" && draggingId) {
       e.preventDefault();
       clearDropHighlights();
-      // Un-nest: drop on the root zone. Server treats empty `new`
-      // as "lift to root" and recomputes descendant paths.
-      var leaf = draggingId.split("/").pop();
-      submitFolderMove(draggingId, leaf || "");
+      clearDropPositionClasses();
+      var leaf0 = draggingId.split("/").pop();
+      submitFolderMove(draggingId, leaf0 || "");
       return;
     }
     var node = e.target.closest && e.target.closest(".lib-folder-row[data-droppable]");
     if (!node) return;
     e.preventDefault();
-    clearDropHighlights();
     var target = node.getAttribute("data-folder-path") || "";
+    // Capture position BEFORE clearing classes so we know whether
+    // this was a nest or a reorder. classifyFolderDrop reads the
+    // cursor freshly; classes were just for visual feedback.
+    var position = (draggingKind === "folder")
+      ? classifyFolderDrop(node, e.clientY)
+      : "into";
+    clearDropHighlights();
+    clearDropPositionClasses();
     if (draggingKind === "snippet" && draggingId) {
-      // "Unfiled" maps to empty folder_path on the server side.
       var folder = node.hasAttribute("data-unfiled") ? "" : target;
-      // URLSearchParams (not FormData) so the request goes out as
-      // application/x-www-form-urlencoded - what axum's `Form`
-      // extractor expects. FormData would set
-      // multipart/form-data; boundary=... and the server would
-      // 415. Same fix applies to the folder-move helper below.
       var params = new URLSearchParams();
       params.append("folder_path", folder);
       fetch("/dashboard/library/" + encodeURIComponent(draggingId) + "/move", {
@@ -2417,19 +2434,16 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
         refreshLibrary();
       });
     } else if (draggingKind === "folder" && draggingId) {
-      // Nest: source becomes a child of target.
-      // The path-equal and descendant cases are already filtered in
-      // dragover (no preventDefault, so drop won't fire), but a
-      // defence-in-depth check here keeps a buggy listener from
-      // turning into a real bad request.
       if (!target || target === draggingId || target.indexOf(draggingId + "/") === 0) {
         return;
       }
-      // Unfiled is a snippet-only target; folder-drop onto Unfiled
-      // is a no-op for folders.
       if (node.hasAttribute("data-unfiled")) return;
-      var leaf = draggingId.split("/").pop();
-      submitFolderMove(draggingId, target + "/" + leaf);
+      if (position === "above" || position === "below") {
+        submitFolderReorder(target, position);
+      } else {
+        var leaf = draggingId.split("/").pop();
+        submitFolderMove(draggingId, target + "/" + leaf);
+      }
     }
   });
 
@@ -2632,13 +2646,26 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   }
   applySortMode();
 
-  // ---- Folder reorder (drag-to-rearrange siblings) ----
+  // ---- Folder reorder via in-row drop indicators ----
   //
-  // Only active in manual sort mode (reordering is meaningless
-  // under alphabetical sort - the rewrite would just be ignored
-  // on next render). Insert zones are tiny drop targets injected
-  // between sibling folder nodes during a folder drag; dropping
-  // on one reshuffles the sibling group and POSTs the new order.
+  // Previous revisions injected separate "insert zone" elements
+  // between sibling folder rows on dragstart. Chromium aborts a
+  // drag when the dragstart handler mutates the surrounding DOM,
+  // which is exactly what showInsertZones did - that's why only
+  // the very first draggable row's drag survived, and why nested
+  // folders with single-sibling groups (siblings.length < 2 in
+  // the old guard) coincidentally worked: no zones got inserted,
+  // no DOM mutation, drag survived.
+  //
+  // The new mechanism does ZERO DOM mutation during dragstart.
+  // dragover on a folder row computes the cursor's Y position
+  // relative to the row and adds one of three classes:
+  //   - drop-above (top 30% of the row)  -> insert dragged BEFORE this row
+  //   - drop-below (bottom 30%)          -> insert dragged AFTER this row
+  //   - drop-target (middle 40%)         -> nest dragged INTO this row
+  // Reorder is only available in manual sort mode + when dragged
+  // and target share a parent. Cross-parent or alpha-mode drops
+  // fall through to the existing nest behaviour.
   function siblingsOf(path) {
     var par = parentOf(path);
     var sidebar = document.getElementById("library-sidebar");
@@ -2649,82 +2676,39 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       return parentOf(n.getAttribute("data-folder-path") || "") === par;
     });
   }
-  function showInsertZones(forSourcePath) {
-    hideInsertZones();
-    if (loadSortMode() !== "manual") return;
-    var siblings = siblingsOf(forSourcePath);
-    if (siblings.length < 2) return;
-    siblings.forEach(function (n, i) {
-      var zone = document.createElement("div");
-      zone.className = "lib-folder-insert-zone";
-      zone.setAttribute("data-insert-parent", parentOf(forSourcePath));
-      zone.setAttribute("data-insert-before", n.getAttribute("data-folder-path") || "");
-      n.parentNode.insertBefore(zone, n);
-      // Trailing zone after the last sibling so you can drop at
-      // the very end.
-      if (i === siblings.length - 1) {
-        var tail = document.createElement("div");
-        tail.className = "lib-folder-insert-zone";
-        tail.setAttribute("data-insert-parent", parentOf(forSourcePath));
-        tail.setAttribute("data-insert-before", ""); // empty = append
-        n.parentNode.insertBefore(tail, n.nextSibling);
-      }
+  function clearDropPositionClasses() {
+    document.querySelectorAll(
+      ".lib-folder-row.drop-above, .lib-folder-row.drop-below"
+    ).forEach(function (n) {
+      n.classList.remove("drop-above", "drop-below");
     });
   }
-  function hideInsertZones() {
-    document.querySelectorAll(".lib-folder-insert-zone").forEach(function (n) {
-      n.remove();
-    });
+  function classifyFolderDrop(node, clientY) {
+    // Only attempt reorder in manual mode + same-parent target.
+    // Anything else collapses to nest (drop-target).
+    if (loadSortMode() !== "manual") return "into";
+    if (!node.hasAttribute("data-folder-source")) return "into";
+    var targetPath = node.getAttribute("data-folder-path") || "";
+    if (parentOf(targetPath) !== parentOf(draggingId || "")) return "into";
+    var rect = node.getBoundingClientRect();
+    var ratio = (clientY - rect.top) / Math.max(rect.height, 1);
+    if (ratio < 0.30) return "above";
+    if (ratio > 0.70) return "below";
+    return "into";
   }
-
-  // Hook into the existing folder dragstart/dragend to manage
-  // insert-zone lifecycle. Re-uses the body-level dragstart we
-  // already have - we just listen for it once more.
-  document.body.addEventListener("dragstart", function (e) {
-    var folderSrc = e.target.closest &&
-      e.target.closest(".lib-folder-row[data-folder-source]");
-    if (folderSrc) {
-      showInsertZones(folderSrc.getAttribute("data-folder-path") || "");
-    }
-  });
-  document.body.addEventListener("dragend", hideInsertZones);
-
-  document.body.addEventListener("dragover", function (e) {
-    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
-    if (!zone || draggingKind !== "folder") return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    zone.classList.add("drop-target");
-  });
-  document.body.addEventListener("dragleave", function (e) {
-    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
-    if (zone) zone.classList.remove("drop-target");
-  });
-  document.body.addEventListener("drop", function (e) {
-    var zone = e.target.closest && e.target.closest(".lib-folder-insert-zone");
-    if (!zone || draggingKind !== "folder" || !draggingId) return;
-    e.preventDefault();
-    var insertBefore = zone.getAttribute("data-insert-before") || "";
-    // Compute the new sibling order: take the current siblings,
-    // pull out the dragged path, then insert it at the position
-    // before `insertBefore` (or at the end if empty).
-    var current = siblingsOf(draggingId).map(function (n) {
+  function submitFolderReorder(targetPath, position) {
+    var siblings = siblingsOf(draggingId).map(function (n) {
       return n.getAttribute("data-folder-path") || "";
     });
-    var reordered = current.filter(function (p) { return p !== draggingId; });
-    if (insertBefore) {
-      var idx = reordered.indexOf(insertBefore);
-      if (idx === -1) reordered.push(draggingId);
-      else reordered.splice(idx, 0, draggingId);
-    } else {
+    var reordered = siblings.filter(function (p) { return p !== draggingId; });
+    var idx = reordered.indexOf(targetPath);
+    if (idx === -1) {
       reordered.push(draggingId);
+    } else if (position === "above") {
+      reordered.splice(idx, 0, draggingId);
+    } else {
+      reordered.splice(idx + 1, 0, draggingId);
     }
-    hideInsertZones();
-    // JSON body (not URLSearchParams) so the server's Vec<String>
-    // for `paths` deserialises correctly. axum's Form extractor +
-    // serde_urlencoded silently dropped repeated keys into an
-    // empty Vec, which is why drag-reorder visually worked but the
-    // server never recorded a change.
     fetch("/dashboard/library/folders/reorder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2741,7 +2725,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
       }
       refreshLibrary();
     });
-  });
+  }
 
   // ---- "+ New folder" form ----
   var createForm = document.getElementById("lib-folder-create-form");

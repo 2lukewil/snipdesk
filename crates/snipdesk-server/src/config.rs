@@ -390,8 +390,39 @@ pub struct GoogleOidcConfig {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("read config {}", path.display()))?;
+        let raw = std::fs::read_to_string(path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                // Most common first-run failure: operator pulled the
+                // image + `docker run` without mounting their config.
+                // The default error ("read config: No such file...")
+                // told them the path but not what to do about it.
+                // Spell the full fix out so the next message they see
+                // includes the answer.
+                anyhow!(
+                    "config file not found at {}\n\
+                     \n\
+                     Mount your snipdesk-server.toml at this path when you start \
+                     the container, e.g.\n\
+                       docker run \\\n  \
+                           -v ./snipdesk-server.toml:{}:ro \\\n  \
+                           -v ./data:/var/lib/snipdesk \\\n  \
+                           -e SNIPDESK_MASTER_KEY=<base64-of-32-bytes> \\\n  \
+                           ghcr.io/2lukewil/snipdesk/snipdesk-server:latest\n\
+                     \n\
+                     A minimal config that just gets the server running:\n  \
+                         bind_addr = \"0.0.0.0:8080\"\n  \
+                         data_dir = \"/var/lib/snipdesk\"\n\
+                     \n\
+                     See snipdesk-server.example.toml for the full schema or \
+                     docs/deploy.md for a complete walkthrough.\n\
+                     Generate a fresh master key with: snipdesk-server gen-key",
+                    path.display(),
+                    path.display(),
+                )
+            } else {
+                anyhow::Error::new(e).context(format!("read config {}", path.display()))
+            }
+        })?;
         let mut cfg: Config =
             toml::from_str(&raw).with_context(|| format!("parse config {}", path.display()))?;
         cfg.apply_env_overrides();

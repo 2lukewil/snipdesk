@@ -1,15 +1,13 @@
 # Deploying snipdesk-server
 
-This is the production deployment guide. For a 5-minute walk
-from a fresh machine to a working dashboard, see
-[`docker-quickstart.md`](docker-quickstart.md). For local
-development, the quick-start in
-[`README.md`](../README.md#self-hosting-the-teams-server) covers
-it in five lines.
+Production deployment guide for `snipdesk-server`. For a five-minute
+walk from a fresh machine to a working dashboard, see
+[Docker quickstart](/docker-quickstart). For the architecture this
+deployment is running, see [Server architecture](/server-design).
 
-Audience: an ops or platform engineer setting up a real Teams
-deployment for their organization. Expects familiarity with Docker,
-reverse proxies, and TLS.
+Audience: an operator setting up a real Teams deployment for their
+organisation. Assumes familiarity with Docker, reverse proxies, and
+TLS.
 
 ## What you're deploying
 
@@ -151,10 +149,11 @@ Skip this section if you're running password-only.
    `http://127.0.0.1:8080/api/auth/oidc/callback` as a second URI.
 4. Copy the `client_id` and `client_secret` into the config.
 5. **Decide on Workspace lockdown.** `required_hd` is the strict
-   knob - Google sets the `hd` claim on tokens issued to Workspace
-   members, and we reject any token whose `hd` doesn't match. Set
-   this and only your Workspace can sign in. Leave it unset and any
-   Google account that passes the consent screen can sign up.
+   knob: Google sets the `hd` claim on tokens issued to Workspace
+   members, and the server rejects any token whose `hd` doesn't
+   match. Set it and only the matching Workspace can sign in. Leave
+   it unset and any Google account that passes the consent screen
+   can sign up.
 6. **Bootstrap the first admin.** The first user who signs up (via
    email/password OR OIDC) is auto-promoted to admin. Sign in as
    yourself before sharing the URL with the team, so you control the
@@ -253,15 +252,15 @@ config is what really matters.)
 
 ## 7a. Cross-origin web clients (CORS)
 
-The default v1 topology - desktop client + admin dashboard, both
-hitting the server on its own host - never needs CORS. Same-origin
-requests skip the preflight, the dashboard's htmx posts go through
-the cookie, and the desktop JSON API uses `Authorization: Bearer`.
-The server ships with CORS disabled and stays that way unless you
-opt in.
+CORS is off by default and only needs to be enabled when a separate
+web frontend on a different origin needs to call `/api/*`. The
+default topology (desktop client + admin dashboard, both same-origin
+with the server) never triggers a CORS preflight: same-origin
+requests skip it, the dashboard's htmx posts authenticate via cookie,
+and the desktop JSON API uses `Authorization: Bearer`.
 
-Opt in when a separate web frontend (deployed on a different
-origin) needs to talk to `/api/*`. Add to the config:
+To enable CORS for a web client on a different origin, add to the
+config:
 
 ```toml
 cors_allowed_origins = [
@@ -450,6 +449,28 @@ version tags and roll forward via your normal manifest update
 flow. The in-server poller + dashboard banner work the same way
 inside a pod as in a compose container.
 
+#### Rollback
+
+If a release breaks something, pin to the previous version tag
+and bring the container back up:
+
+```
+# In your docker-compose.yml, swap :latest for the known-good tag.
+# Example:
+#   image: ghcr.io/2lukewil/snipdesk-server:server-v0.1.4
+docker compose down
+docker compose pull
+docker compose up -d
+```
+
+The SQLite data file is unaffected: rollback is a pure binary swap.
+Schema migrations only ever add (the in-tree migrations are append-
+only), so an older binary against a newer schema typically still
+works against the columns it knows about. If the older binary
+genuinely can't read the newer schema, restore the most recent
+backup of `snipdesk.db` from before the failed upgrade, then start
+the older image against it.
+
 ### Audit log
 
 Every admin mutation (user create/update/delete, library
@@ -479,20 +500,16 @@ restart. Set to `0` to disable purging entirely.
 
 ### Key rotation
 
-JWT secret rotation: just swap `jwt_secret` in the config and
-restart. Every active session is invalidated; users sign back in.
+JWT secret rotation is cheap: swap `jwt_secret` in the config and
+restart. Every active session is invalidated and users sign back in.
 
-Master encryption key rotation is harder. The current row format
-records `key_version` (currently always 1); the planned procedure
-adds the new key as `key_version = 2`, runs a re-encryption pass
-against existing rows, then drops the old key. The CLI subcommand
-for this is v1.1 work; for v1.0 you'd do it manually with the
-encrypt/decrypt functions in `crates/snipdesk-server/src/crypto.rs`.
-
-In other words: don't rotate the master key on a running system in
-v1.0 unless you're comfortable scripting the migration. Treat it as
-"set once, never rotate" - which is the same posture as a database
-encryption-at-rest key in most managed-database products.
+Master encryption key rotation is more involved. The schema records
+`key_version` per row to support online rotation, but the in-server
+re-encryption command for v1.0 is not exposed. Treat the master key
+as "set once, never rotate" unless an operator is comfortable
+scripting against the encrypt/decrypt functions in
+`crates/snipdesk-server/src/crypto.rs`. This matches the posture of
+encryption-at-rest keys in most managed databases.
 
 ### Disaster recovery
 
@@ -508,30 +525,32 @@ content needs to be recreated manually.
 
 ## 10. Security posture
 
-The honest answer to "what protects user data" for v1.0:
+What protects user data in v1.0:
 
 - **In transit:** TLS, at the reverse proxy.
 - **At rest, personal snippets:** AES-256-GCM with a server-held
   master key. DB dumps reveal nothing without the key.
-- **At rest, library snippets:** plaintext, deliberately. Library
-  content is explicitly shared and intended to be visible to every
-  authenticated member.
-- **API authorization:** every personal-snippet endpoint enforces
+- **At rest, library snippets:** plaintext, intentionally. Library
+  content is shared content (canned replies every signed-in member
+  needs to read).
+- **API authorisation:** every personal-snippet endpoint enforces
   `owner_id == authenticated_user.id`. Cross-user access via the
-  API is impossible.
+  documented API is impossible.
 - **Admin dashboard:** never exposes personal snippet bodies. Admin
-  views are counts, timestamps, account metadata.
+  views are counts, timestamps, account metadata, and the audit log.
 - **OIDC token compromise:** an attacker with a stolen JWT can read
-  the victim's snippets via the API. Mitigation: 30-day TTL with
-  rolling refresh, plus admins can disable a user from the dashboard
-  to invalidate active sessions on the next request.
+  the victim's snippets via the API. Mitigations: 30-day rolling
+  TTL, plus admins can disable a user from the dashboard to
+  invalidate active sessions on the next request.
 - **Server compromise (shell access):** an attacker with the master
-  key + DB can decrypt all personal snippets. This is the v1
-  trust-boundary limit: the operator is inside the boundary.
+  key plus the DB can decrypt all personal snippets. This is the
+  explicit v1.0 trust boundary: the operator is inside it.
 
-End-to-end encryption is the v2 upgrade path documented in
-`docs/server-design.md`. The v1 schema is forward-compatible so the
-migration won't break the wire protocol.
+For an end-to-end model where operators are outside the trust
+boundary (SaaS deployments, regulated customer environments), see
+the *Future: end-to-end encryption* section of
+[Server architecture](/server-design#future-end-to-end-encryption).
+The v1 schema is forward-compatible with the upgrade.
 
 ## 11. Troubleshooting
 
@@ -571,8 +590,3 @@ file permissions.
 `since=N returned=M` - if `returned=0` even when there should be
 data, the client's cursor is past the server's data.
 
----
-
-If something in this doc is wrong or missing, file an issue and
-include your environment + the symptom. The doc trails reality; PRs
-that move it forward are welcome.

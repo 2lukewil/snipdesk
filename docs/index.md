@@ -21,22 +21,22 @@ hero:
 features:
   - title: Lite (free, offline)
     details: >-
-      Global hotkey, fuzzy search, variables, folders, tags, usage tracking,
-      auto-paste, import / export. Local SQLite. No account required.
+      Global hotkey, fuzzy search, variables, folders, tags, auto-paste,
+      import and export. Snippets live on the device. No account required.
     link: /getting-started
-    linkText: Install & first run
+    linkText: Install and first run
   - title: Teams (server-backed)
     details: >-
-      Adds personal-snippet sync across devices (AES-256-GCM at rest),
-      shared team library, persistent login, OIDC sign-in, trash & restore,
-      admin dashboard.
+      Sync personal snippets across devices, share a team library,
+      sign in with Google Workspace, manage users from a browser
+      dashboard. Personal snippets are encrypted on the server.
     link: /docker-quickstart
     linkText: Spin up a server
-  - title: Self-hosted & whitelabel
+  - title: Self-hosted and whitelabel
     details: >-
-      One Rust binary backed by a single SQLite file. Run it in Docker on
-      anything from a Raspberry Pi to a Kubernetes cluster. Rebrand the
-      installer per customer without forking.
+      One Rust binary backed by a single SQLite file. Runs in Docker
+      anywhere from a Raspberry Pi to a Kubernetes cluster. Rebuild
+      the client and server with your own branding without forking.
     link: /whitelabel
     linkText: Build a branded image
 ---
@@ -50,7 +50,6 @@ features:
 - **[Build from source](/build)** - prerequisites, dev loops for both editions, local server, edition flags, the docs site itself.
 - **[Auto-update & releases](/auto-update)** - how tagged pushes build, sign, and publish installers; one-time signing-key setup.
 - **[Whitelabel brand bundles](/whitelabel)** - rebuild the client and server for a customer-branded image without touching the upstream repo.
-- **[Roadmap](/ROADMAP)** - what is shipped, what is next, ordered by impact-per-effort.
 
 ::: tip Looking for the source?
 Every page on this site is a markdown file under

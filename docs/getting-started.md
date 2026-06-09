@@ -68,11 +68,9 @@ That's the entire core loop.
 
 ### 3. Try variables
 
-Variables are placeholders the app prompts you to fill in at paste
-time. Useful for snippets that need a customer name, an invoice ID,
-etc.
-
-Create a snippet with a body like:
+`{placeholders}` in a snippet body become fill-in prompts at paste
+time. Useful for canned replies that need a customer name, an
+invoice ID, or any per-paste detail.
 
 ```
 Hi {customer_name},
@@ -84,12 +82,9 @@ Best,
 Support
 ```
 
-The bits in `{curly braces}` are variables. When you paste this
-snippet, SnipDesk prompts you for each value before doing the paste.
-Values you've used before for the same variable+snippet are
-remembered and offered as suggestions next time.
-
-Variables can be any combination of letters, digits, `_`, and `-`.
+On paste, SnipDesk prompts for each variable; values from previous
+uses are offered as suggestions. Names can use letters, digits,
+`_`, and `-`.
 
 ## Keyboard cheat sheet
 
@@ -218,10 +213,10 @@ Sign in on each device with the same account. Snippets sync within
 a few minutes; offline edits queue locally and push when you
 reconnect.
 
-Conflict resolution today is last-write-wins per snippet (v1.1 will
-preserve the loser as a `(conflict YYYY-MM-DD)` copy). For the
-extremely rare case where you edit the same snippet on two devices
-both offline, the second one to sync wins.
+If you edit the same snippet on two devices while both are offline,
+the second to sync wins. In practice this is extremely rare:
+synced devices only conflict if both go offline, both edit the same
+snippet, then both come back online.
 
 ## When something doesn't work
 
@@ -254,10 +249,5 @@ the right thing to attach to a bug report.
   your ticketing tool uses BBCode or RAW HTML, swap the defaults.
 - Settings -> Appearance has a compact density mode that fits more
   snippets on screen.
-- The roadmap in `docs/ROADMAP.md` lists the planned upgrades -
-  browser-title parsing to pre-fill variables, WHMCS integration to
-  pull ticket data, and more. Some of these may already be live
-  by the time you read this.
 
-That's all the surface area worth a walkthrough. The rest is
-discoverable from the in-app menus.
+The rest is discoverable from the in-app menus.

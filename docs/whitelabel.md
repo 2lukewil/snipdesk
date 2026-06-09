@@ -31,26 +31,14 @@ build is unaffected.
 ## The flow at a glance
 
 ```
-brands/_template/         (tracked; reference layout)
-        |
-        |  cp -r to a gitignored sibling
-        v
-brands/<customer>/        (gitignored; your real bundle)
-   - brand.json           (display name, slug, scheme, server URL, ...)
-   - icon.png             (source icon; Tauri downscales)
-   - installer-assets/    (NSIS chrome, ICO, license)
-        |
-        |  node scripts/pack-brand.mjs brands/<customer>
-        v
-<slug>-bundle.b64         (in your OS temp dir, copied to clipboard)
-        |
-        |  paste into repo Secret named BRAND_BUNDLE_<SLUG>
-        v
-GitHub Actions
-        |
-        +-- on `v*` tag    -> branded Teams installer alongside vanilla artifacts
-        +-- on `server-v*` -> branded Docker image with brand env baked in
+brands/_template/  -- copy to a gitignored sibling --> brands/<customer>/
+brands/<customer>/ -- node scripts/pack-brand.mjs --> <slug>-bundle.b64
+<slug>-bundle.b64  -- paste into repo Secret BRAND_BUNDLE_<SLUG>
+git tag v1.2.3     -- triggers branded Teams installer alongside vanilla
+git tag server-v0.2.0 -- triggers branded Docker image on GHCR
 ```
+
+The five steps in detail below.
 
 ## Step 1. Bootstrap a bundle from the template
 

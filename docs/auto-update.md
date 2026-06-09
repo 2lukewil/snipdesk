@@ -1,59 +1,83 @@
-# Auto-Update - How it works
+# Auto-update and release flow
 
-> **Status:** Shipping. CI-driven releases via `.github/workflows/release.yml`.
+How tagged releases ship to running installations.
+
+`.github/workflows/release.yml` fires on a `v*` tag push, builds
+and signs both editions, generates update manifests, and publishes
+a GitHub release. Every running SnipDesk instance polls the manifest
+on next launch and offers an in-app install.
 
 ## The flow at a glance
 
 ```
-You: bump version, git tag v1.0.1, git push --tags
+git tag v1.0.1 && git push --tags
      │
      ▼
 GitHub Actions (release.yml on tag push)
      │
      ├─ npm ci, npm run build
-     ├─ tauri build (offline, signed via env-var key)
+     ├─ tauri build (Lite, signed via env-var key)
      ├─ tauri build --features teams (Teams, signed)
-     ├─ generate-manifest.ps1 (emits two manifest JSONs)
+     ├─ scripts/generate-manifest.ps1 (emits two manifest JSONs)
      └─ softprops/action-gh-release publishes the tag with all six files
             │
             ▼
-GitHub Releases (release marked Latest by default)
+GitHub Releases (marked Latest by default)
             │
             ▼
 Every running SnipDesk instance, on next launch:
-  - Hits releases/latest/download/snipdesk-update.json (or teams equivalent)
-  - Sees newer version available → toast: "v1.0.1 available | Install / Later"
-  - User clicks Install → download, verify Ed25519 signature, install, relaunch
+  - Polls releases/latest/download/snipdesk-update.json (or the Teams manifest)
+  - Newer version available -> toast: "v1.0.1 available | Install / Later"
+  - User clicks Install -> download, verify Ed25519 signature, install, relaunch
 ```
 
-End-to-end: ~3-5 minutes from `git push --tags` to the release being live. Clients pick up within whatever their next launch is.
+End-to-end: roughly three to five minutes from `git push --tags` to
+the release being live. Clients pick it up on their next launch.
 
-## How the cryptography works
+## How the signature works
 
-When you build with the `TAURI_SIGNING_PRIVATE_KEY` env var set, Tauri's bundler signs each NSIS installer with your Ed25519 private key, producing a `<installer>.sig` file alongside it. The `generate-manifest.ps1` helper reads each `.sig` and splices it into a manifest JSON pointing at the installer's GitHub Releases URL.
+When the workflow builds with `TAURI_SIGNING_PRIVATE_KEY` set,
+Tauri's bundler signs each NSIS installer with an Ed25519 private
+key, producing a `<installer>.sig` file alongside it.
+`generate-manifest.ps1` reads each `.sig` and splices it into a
+manifest JSON pointing at the installer's GitHub Releases URL.
 
-When a client polls the manifest, it parses the version + URL + signature, downloads the installer, streams the bytes through an Ed25519 verifier using the public key baked into the binary at compile time (in `tauri.conf.json`'s `plugins.updater.pubkey`), and rejects the file if the signature doesn't match. Tampered bundles never install.
+When a client polls the manifest, it parses the version + URL +
+signature, downloads the installer, streams the bytes through an
+Ed25519 verifier using the public key baked into the binary at
+compile time (in `tauri.conf.json` at `plugins.updater.pubkey`),
+and rejects the file if the signature doesn't match. Tampered
+bundles never install.
 
-This signature is **independent of Authenticode / SmartScreen.** SmartScreen warnings on first install are a separate Windows trust concern, fixed by buying an Authenticode cert, which is on the post-1.0 roadmap and not blocking auto-update.
+The signature is independent of Authenticode / SmartScreen.
+SmartScreen warnings on first install are a separate Windows trust
+concern handled by buying an Authenticode certificate; it does not
+block the auto-update chain.
 
-## One-time setup
+## One-time signing-key setup
 
-You do this once. After that, every release is `git tag && git push`.
+Once per repository. After this, every release is `git tag && git push`.
 
-### 1. Generate the Ed25519 keypair locally
+### 1. Generate the Ed25519 keypair
 
 ```powershell
 npx @tauri-apps/cli signer generate -w $HOME\.snipdesk-update.key
 ```
 
-Pick a passphrase you'll remember. The command emits two files:
+Pick a passphrase. The command emits two files:
 
-- `~\.snipdesk-update.key` - private. Encrypted-at-rest with your passphrase. **Save in your password manager + offline backup.** Losing this means you cannot ship signed updates and have to break the auto-update chain.
-- `~\.snipdesk-update.key.pub` - public. Goes into `tauri.conf.json`.
+- `~\.snipdesk-update.key` (private). Encrypted at rest with the
+  passphrase. Store in a password manager plus an offline backup.
+  Losing this means the auto-update chain breaks: a new keypair
+  has to be embedded in a fresh release, and existing installs
+  can't auto-upgrade through the gap.
+- `~\.snipdesk-update.key.pub` (public). Goes into `tauri.conf.json`.
 
-### 2. Embed the public key in the build
+### 2. Embed the public key
 
-Open `~\.snipdesk-update.key.pub`, copy the contents (a single base64 string), paste it into `src-tauri/tauri.conf.json` replacing the `REPLACE_WITH_TAURI_SIGNER_PUBLIC_KEY` placeholder:
+Copy the contents of `~\.snipdesk-update.key.pub` into
+`src-tauri/tauri.conf.json` at `plugins.updater.pubkey`, replacing
+the `REPLACE_WITH_TAURI_SIGNER_PUBLIC_KEY` placeholder:
 
 ```json
 "plugins": {
@@ -66,38 +90,47 @@ Open `~\.snipdesk-update.key.pub`, copy the contents (a single base64 string), p
 }
 ```
 
-Commit the change. From this point on, every build embeds the public key so the runtime updater can verify signatures.
+Commit the change. Every build from now on embeds the public key
+so the runtime updater can verify signatures.
 
 ### 3. Add the private key + passphrase as GitHub secrets
 
-In your GitHub repo settings → Secrets and variables → Actions → New repository secret:
+Repo Settings -> Secrets and variables -> Actions -> New repository
+secret:
 
-- `TAURI_SIGNING_PRIVATE_KEY` - paste the **contents** of `~\.snipdesk-update.key` (open it in Notepad, copy everything, paste). It's already encrypted by the passphrase, so storing it as-is is fine.
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` - the passphrase you chose during generation.
+- `TAURI_SIGNING_PRIVATE_KEY`: the contents of
+  `~\.snipdesk-update.key` (open in Notepad, copy everything,
+  paste). It's already passphrase-encrypted so storing the file
+  contents as-is is fine.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the passphrase chosen during
+  generation.
 
-GitHub encrypts both at rest and never logs them.
+### 4. Smoke-test the workflow
 
-### 4. (Optional) Smoke-test the workflow
-
-Push a throwaway tag to verify the pipeline:
+Push a throwaway tag to confirm the pipeline:
 
 ```powershell
 git tag v0.0.0-test
 git push --tags
 ```
 
-Watch the Actions tab. If the workflow goes green, you'll get a (probably ugly) release at `https://github.com/2lukewil/snipdesk/releases/tag/v0.0.0-test`. Delete it (`gh release delete v0.0.0-test --cleanup-tag`) once you've confirmed the artifacts look right.
+Watch the Actions tab. A green workflow ends with a release at
+`https://github.com/2lukewil/snipdesk/releases/tag/v0.0.0-test`.
+Delete it once the artifacts look right:
+
+```powershell
+gh release delete v0.0.0-test --cleanup-tag
+```
 
 ## Per-release flow
 
-After setup is done, releases are three commands:
+Three commands per release:
 
 ```powershell
 # 1. Bump the version in three places (in lockstep):
-#      Cargo.toml             → [workspace.package].version
-#      package.json           → version
-#      src-tauri/tauri.conf.json → version
-#    (A small script in scripts/ could automate this - TODO if releases get frequent.)
+#      Cargo.toml             -> [workspace.package].version
+#      package.json           -> version
+#      src-tauri/tauri.conf.json -> version
 
 # 2. Commit the bump and push:
 git add -A
@@ -109,25 +142,28 @@ git tag v1.0.1
 git push --tags
 ```
 
-Step 3 fires `.github/workflows/release.yml`. ~3-5 minutes later your release is live and clients start picking it up on their next launch.
+Step 3 fires `.github/workflows/release.yml`. Three to five minutes
+later the release is live and clients start picking it up on their
+next launch.
 
-## Manual fallback
+## Manual fallback (CI down)
 
-If CI is broken and you need to ship anyway, the manual local path:
+The local equivalent, used when CI is broken and a release has to
+ship anyway:
 
 ```powershell
 cd E:\snipdesk
 
-# One-time setup: copy .env.example to .env and fill in
+# One-time: copy .env.example to .env and fill in
 # TAURI_SIGNING_PRIVATE_KEY_PATH + TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
-# Both npm scripts below pick up .env automatically via scripts/load-env.mjs.
+# Both npm scripts below pick up .env via scripts/load-env.mjs.
 
 npm run tauri:build -- --bundles nsis
 npm run tauri:build:teams -- --bundles nsis
 
-# The Teams build self-renames its installer to SnipDesk-Teams-setup.exe.
-# The offline build doesn't, so normalize it the same way release.yml does
-# (generate-manifest.ps1 expects the canonical names):
+# Teams build self-renames its installer to SnipDesk-Teams-setup.exe.
+# Normalize the Lite output to the canonical name generate-manifest.ps1
+# expects:
 $nsis = "target\release\bundle\nsis"
 $lite = Get-ChildItem $nsis -Filter "SnipDesk Lite_*_x64-setup.exe" | Select-Object -First 1
 Rename-Item "$($lite.FullName).sig" "SnipDesk-Lite-setup.exe.sig"
@@ -146,44 +182,73 @@ gh release create v1.0.1 -t "SnipDesk 1.0.1" --generate-notes `
   snipdesk-teams-update.json
 ```
 
-Same outputs as the CI path, just produced on your machine.
+Same outputs as the CI path, produced locally.
 
-## What clients see
+## What end users see
 
-When `auto_check_updates` is on (default), every launch silently fetches the manifest. If the version is newer than `CARGO_PKG_VERSION`, a non-blocking toast appears in the status bar:
+With `auto_check_updates` on (the default), every launch silently
+fetches the manifest. If the version is newer than the running
+binary, a non-blocking toast appears in the status bar:
 
 > **SnipDesk 1.0.1 is available.** Install and restart | Later
 
-Click "Install and restart" → progress shown in the status bar (downloaded byte count) → silent install → relaunch. About 30 seconds total on a normal connection.
+Click *Install and restart* and the install runs through the status
+bar (download progress, silent install, relaunch) in about thirty
+seconds on a normal connection.
 
-If the user clicks Later, the toast clears and they get re-prompted on the next launch. There's no nagging within a session.
+Click *Later* and the toast clears. The next launch re-prompts.
+No nagging within a session.
 
-If the network is unreachable, the check fails silently - `console.warn` only, no user-facing error. Manual "Check for updates" in Settings → About surfaces errors loudly.
+If the network is unreachable, the check fails silently
+(`console.warn` only, no user-facing error). The manual *Check for
+updates* button in Settings -> About surfaces errors loudly.
 
 ## Windows install path caveats
 
-NSIS is the auto-update target. NSIS installs per-user under `%LOCALAPPDATA%\Programs\` without admin elevation, so the updater can replace files silently. **MSI installs** (under `Program Files`) require admin elevation on every update - not silently installable. We don't ship MSI for auto-update; the offline build's NSIS installer is what end users should grab.
+NSIS is the auto-update target. NSIS installs per-user under
+`%LOCALAPPDATA%\Programs\` without admin elevation, so the updater
+can replace files silently. **MSI installs** (under `Program Files`)
+require admin elevation on every update and are not silently
+installable. SnipDesk doesn't ship MSI for auto-update; the
+released NSIS installer is what end users should grab.
 
-If a user originally installed via an MSI (e.g. some IT departments require it for deployment), they'll need to uninstall and reinstall via the NSIS installer once to get into the auto-update chain. Document this in the README install section if it ever becomes a real friction point.
+If a user originally installed via MSI (some IT departments require
+it), they need to uninstall and reinstall via the NSIS installer
+once to enter the auto-update chain.
 
 ## Troubleshooting
 
-**"Invalid signature" on client.** Either you bumped the keypair without redeploying the public key in `tauri.conf.json`, or `TAURI_SIGNING_PRIVATE_KEY` in CI doesn't match the embedded public key. Regenerate one to match the other.
+**Invalid signature on client.** Either the keypair was rotated
+without redeploying the public key in `tauri.conf.json`, or
+`TAURI_SIGNING_PRIVATE_KEY` in CI doesn't match the embedded public
+key. Regenerate one to match the other.
 
-**Release workflow fails on `tauri build`.** Most common cause: the TAURI_SIGNING_PRIVATE_KEY secret has whitespace at the start/end (Notepad's CRLF + trailing newline can do this). Re-paste it exactly with no surrounding whitespace.
+**Release workflow fails on `tauri build`.** Most common cause: the
+`TAURI_SIGNING_PRIVATE_KEY` secret has whitespace at the start or
+end (a Notepad CRLF + trailing newline will do this). Re-paste it
+with no surrounding whitespace.
 
-**Workflow succeeds but client never sees the update.** Check the release was marked "Latest" in GitHub UI (the workflow does this automatically; if it ended up as a draft or pre-release, the `releases/latest/download/` URL won't redirect to it). Also check the manifest URL in `tauri.conf.json` matches your repo path (`2lukewil/snipdesk` etc.).
+**Workflow succeeds but the client never sees the update.** Check
+the release was marked "Latest" in the GitHub UI (the workflow does
+this automatically; if it landed as a draft or pre-release, the
+`releases/latest/download/` URL won't redirect to it). Also confirm
+the manifest URL in `tauri.conf.json` matches the repo path.
 
-**Update toast doesn't appear at all.** Verify `auto_check_updates` is on in Settings → General. The plugin's `check()` returns `null` when the manifest version equals or is older than the running binary's version, so make sure you actually bumped the version in all three places.
+**Update toast doesn't appear.** Verify `auto_check_updates` is on
+in Settings -> General. The updater's `check()` returns `null` when
+the manifest version equals or is older than the running binary's,
+so confirm the version was actually bumped in all three files
+(Cargo.toml, package.json, tauri.conf.json).
 
-## Future improvements (deferred)
+## Deferred
 
-- Authenticode code signing for Windows SmartScreen (separate concern, ROADMAP.md).
-- Update channels (stable / beta) - add a `update_channel` setting that swaps the endpoint URL.
-- Background re-check while running (currently only on launch).
-- Delta updates (only download changed bytes) - Tauri doesn't support this natively yet.
-- A version-bump helper script so the three-file dance becomes one command.
-
----
-
-*Doc owner: Lucas Wilson.*
+- Authenticode code signing for Windows SmartScreen (separate
+  certificate purchase; doesn't block auto-update).
+- Update channels (stable / beta) via an `update_channel` setting
+  that swaps the endpoint URL.
+- Background re-check while the app is running (currently checks
+  only at launch).
+- Delta updates (only download changed bytes). Tauri doesn't
+  support this natively yet.
+- A version-bump helper script so the three-file dance becomes one
+  command.

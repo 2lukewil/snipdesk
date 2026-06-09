@@ -33,6 +33,13 @@ npm run tauri:dev
 First run takes a few minutes while Rust compiles dependencies;
 later runs only rebuild what changed.
 
+If `tauri:dev` fails on first run, the most common causes are
+missing platform dependencies. See
+[Tauri prerequisites](https://tauri.app/start/prerequisites/) for
+the canonical platform-by-platform list. On Windows, the usual
+culprit is WebView2 (preinstalled on Windows 11); on Linux, the
+GTK/WebKit packages above.
+
 ### Teams
 
 The Teams build needs the cargo feature plus the Teams Tauri config;

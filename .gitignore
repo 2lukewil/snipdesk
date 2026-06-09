@@ -6,6 +6,11 @@ dist/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
+# Roadmap is private working notes, not customer-facing docs. Kept
+# on disk for personal reference but not shipped via the docs site
+# or the repo.
+docs/ROADMAP.md
+
 # Cargo build output. The workspace puts its target/ at the repo root;
 # the legacy src-tauri/target/ entry stays for anyone who built before
 # the workspace conversion (cargo will recreate it as a no-op symlink-

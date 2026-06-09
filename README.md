@@ -2,7 +2,7 @@
 
 Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in.
 
-Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. Ships in two editions: **Lite** (free, offline) and **Teams** (server-backed sync + shared library + SSO + admin dashboard).
+Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. Ships in two editions: **Lite** (free, offline, snippets live on the device) and **Teams** (server-backed sync across devices, shared team library, single sign-on, admin dashboard).
 
 > ## Documentation
 >
@@ -10,7 +10,7 @@ Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows,
 >
 > - **End users:** [Getting started](https://2lukewil.github.io/snipdesk/getting-started)
 > - **Self-hosters:** [Docker quickstart](https://2lukewil.github.io/snipdesk/docker-quickstart) | [Production deploy](https://2lukewil.github.io/snipdesk/deploy)
-> - **Developers:** [Build from source](https://2lukewil.github.io/snipdesk/build) | [Whitelabel](https://2lukewil.github.io/snipdesk/whitelabel) | [Releases](https://2lukewil.github.io/snipdesk/auto-update)
+> - **Developers:** [Build from source](https://2lukewil.github.io/snipdesk/build) | [Whitelabel](https://2lukewil.github.io/snipdesk/whitelabel) | [Releases](https://2lukewil.github.io/snipdesk/auto-update) | [Architecture](https://2lukewil.github.io/snipdesk/server-design)
 
 ## Install
 

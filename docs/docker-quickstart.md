@@ -104,9 +104,12 @@ Verify it's running:
 docker logs snipdesk-server
 ```
 
-You should see `snipdesk-server listening on 0.0.0.0:8080` and
-a few migration lines. If you instead see a config error, it'll
-tell you exactly what to fix - re-run after the fix.
+You should see `snipdesk-server listening on 0.0.0.0:8080` and a
+few migration lines. The `0.0.0.0` is the in-container bind
+address; reach the server from the host at `http://127.0.0.1:8080`
+(that's what `-p 127.0.0.1:8080:8080` set up). If you instead see
+a config error, it'll tell you exactly what to fix; re-run after
+the fix.
 
 ## 5. Create your first admin
 

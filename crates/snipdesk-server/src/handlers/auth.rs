@@ -110,41 +110,44 @@ pub async fn signup(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
 
-    // First-admin auto-promotion: if no admins exist yet, this signup
-    // becomes the admin. Subsequent signups all land as 'member'.
-    // (Note: this admin_count check + INSERT pair has a known race
-    // condition flagged by the audit. The transactional fix lands in
-    // a separate commit so the enumeration fix here stays focused.)
-    let admin_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        .fetch_one(&state.pool)
-        .await?;
-    let role = if admin_count.0 == 0 {
-        "admin"
-    } else {
-        "member"
-    };
-
-    // INSERT relies on the UNIQUE(email) index to reject duplicates.
-    // On UniqueViolation we return a generic `signup_failed` (400) -
-    // no hint about which field tripped the check, no 409 status to
-    // disambiguate from other 400s. Any other DB error bubbles up as
-    // a 500 with the cause logged server-side only.
-    let insert_result = sqlx::query(
+    // First-admin auto-promotion folded INTO the INSERT statement.
+    // The CASE subquery runs under the same statement-level write
+    // lock SQLite acquires for the INSERT itself, so two concurrent
+    // signups on a fresh DB cannot both read admin_count=0 and both
+    // land as admin (audit Tier 1 #6). Whichever INSERT lands first
+    // sees count=0 and becomes the admin; the second sees count=1
+    // (the first's committed row) and lands as member.
+    //
+    // RETURNING reads back the role the DB chose so we can issue the
+    // matching JWT without doing a follow-up SELECT.
+    //
+    // UNIQUE(email) violations become a generic `signup_failed` (400)
+    // for the same enumeration-prevention reasons as audit Tier 1 #3.
+    // Any other DB error bubbles up as a 500 with the cause logged
+    // server-side only.
+    let inserted: Result<(String,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, last_seen_at, password_hash) \
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+         VALUES ( \
+           ?, ?, ?, \
+           CASE WHEN (SELECT COUNT(*) FROM users WHERE role = 'admin') = 0 \
+                THEN 'admin' \
+                ELSE 'member' \
+           END, \
+           0, ?, ?, ? \
+         ) \
+         RETURNING role",
     )
     .bind(&id)
     .bind(&email)
     .bind(&display_name)
-    .bind(role)
     .bind(now)
     .bind(now)
     .bind(&password_hash)
-    .execute(&state.pool)
+    .fetch_one(&state.pool)
     .await;
 
-    match insert_result {
-        Ok(_) => {}
+    let role = match inserted {
+        Ok((r,)) => r,
         Err(sqlx::Error::Database(db_err))
             if db_err.kind() == sqlx::error::ErrorKind::UniqueViolation =>
         {
@@ -154,14 +157,14 @@ pub async fn signup(
             ));
         }
         Err(e) => return Err(e.into()),
-    }
+    };
 
-    let token = issue_token(&id, role, &state.jwt_secret)?;
+    let token = issue_token(&id, &role, &state.jwt_secret)?;
     let user = UserDto {
         id,
         email,
         display_name,
-        role: role.to_string(),
+        role,
         created_at: now,
         // Fresh signup: per-user wpm/wage/currency overrides start
         // unset; the dashboard falls back to the [stats] defaults

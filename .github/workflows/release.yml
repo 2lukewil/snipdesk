@@ -260,39 +260,22 @@ jobs:
           }
           Write-Host "All $($expected.Count) artifacts present."
 
-      # ---- Build the release-files list ----
-      # softprops/action-gh-release reads its `files:` input as a
-      # newline-separated string; we assemble it here so the
-      # whitelabel rows only appear when the build actually ran.
-      - name: Compose release file list
-        id: files
-        shell: pwsh
-        env:
-          WL_CONFIGURED: ${{ steps.wl.outputs.configured }}
-          WL_INSTALLER_PREFIX: ${{ steps.wl.outputs.installer_prefix }}
-          WL_MANIFEST_PREFIX: ${{ steps.wl.outputs.manifest_prefix }}
-        run: |
-          $lines = @(
-            "target/release/bundle/nsis/SnipDesk-Lite-setup.exe",
-            "target/release/bundle/nsis/SnipDesk-Lite-setup.exe.sig",
-            "target/release/bundle/nsis/SnipDesk-Teams-setup.exe",
-            "target/release/bundle/nsis/SnipDesk-Teams-setup.exe.sig",
-            "snipdesk-update.json",
-            "snipdesk-teams-update.json"
-          )
-          if ($env:WL_CONFIGURED -eq 'true') {
-            $lines += @(
-              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe",
-              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe.sig",
-              "$($env:WL_MANIFEST_PREFIX)-teams-update.json"
-            )
-          }
-          # Multi-line output via the GHA heredoc syntax.
-          $out = "files<<EOF`n" + ($lines -join "`n") + "`nEOF"
-          $out >> $env:GITHUB_OUTPUT
-
       # ---- Publish release ----
-      - name: Create GitHub release
+      #
+      # Two conditional steps instead of one with a dynamically-
+      # composed `files:` input. The earlier approach assembled a
+      # multi-line GITHUB_OUTPUT value via PowerShell heredoc, which
+      # sporadically lost its contents because Out-File's trailing
+      # CRLF doesn't match the LF the GHA heredoc parser expects -
+      # result was an empty `files:` and a release with zero
+      # attachments. Inline YAML blocks dodge the PowerShell
+      # middleman entirely and GitHub's `${{ }}` interpolation
+      # handles the whitelabel paths natively. Only one of the two
+      # steps fires per run; softprops/action-gh-release is
+      # idempotent on tag_name so even if both ran the release row
+      # would resolve cleanly.
+      - name: Create GitHub release (vanilla only)
+        if: steps.wl.outputs.configured != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -304,4 +287,30 @@ jobs:
           # is what makes connected clients pick up the new version.
           make_latest: 'true'
           fail_on_unmatched_files: true
-          files: ${{ steps.files.outputs.files }}
+          files: |
+            target/release/bundle/nsis/SnipDesk-Lite-setup.exe
+            target/release/bundle/nsis/SnipDesk-Lite-setup.exe.sig
+            target/release/bundle/nsis/SnipDesk-Teams-setup.exe
+            target/release/bundle/nsis/SnipDesk-Teams-setup.exe.sig
+            snipdesk-update.json
+            snipdesk-teams-update.json
+
+      - name: Create GitHub release (vanilla + whitelabel)
+        if: steps.wl.outputs.configured == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: SnipDesk ${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
+          make_latest: 'true'
+          fail_on_unmatched_files: true
+          files: |
+            target/release/bundle/nsis/SnipDesk-Lite-setup.exe
+            target/release/bundle/nsis/SnipDesk-Lite-setup.exe.sig
+            target/release/bundle/nsis/SnipDesk-Teams-setup.exe
+            target/release/bundle/nsis/SnipDesk-Teams-setup.exe.sig
+            snipdesk-update.json
+            snipdesk-teams-update.json
+            target/release/bundle/nsis/${{ steps.wl.outputs.installer_prefix }}-Teams-setup.exe
+            target/release/bundle/nsis/${{ steps.wl.outputs.installer_prefix }}-Teams-setup.exe.sig
+            ${{ steps.wl.outputs.manifest_prefix }}-teams-update.json

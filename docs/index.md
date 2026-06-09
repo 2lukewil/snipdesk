@@ -3,10 +3,10 @@ layout: home
 
 hero:
   name: SnipDesk
-  text: A fast snippet launcher for support agents.
+  text: Fast snippet launcher for support agents.
   tagline: >-
     Hit a global hotkey, type a few characters, press Enter. The canned reply
-    pastes into whatever window you were just using.
+    pastes into whatever window you were just in.
   actions:
     - theme: brand
       text: Install (5 min)

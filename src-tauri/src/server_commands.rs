@@ -163,6 +163,27 @@ pub fn server_logout(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
+/// Build-time defaults baked in by `scripts/brand.mjs`. Returned from
+/// the `brand_defaults` IPC so the frontend can collapse the "Server
+/// URL" input when a whitelabel build has the URL pre-filled, and so
+/// it can reflect the SSO-only default. A `server_url` of `""` means
+/// the upstream vanilla build (no brand bundle); anything else is the
+/// brand's pre-configured server endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct BrandDefaults {
+    pub server_url: String,
+    pub sso_only: bool,
+}
+
+#[tauri::command]
+pub fn brand_defaults() -> BrandDefaults {
+    let defaults = snipdesk_core::settings::Settings::default();
+    BrandDefaults {
+        server_url: defaults.server_url,
+        sso_only: defaults.prefer_sso_signin,
+    }
+}
+
 #[tauri::command]
 pub fn server_status(state: State<'_, AppState>) -> CmdResult<ServerStatus> {
     let server_url = current_server_url(&state);

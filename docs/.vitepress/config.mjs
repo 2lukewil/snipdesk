@@ -15,7 +15,7 @@ export default defineConfig({
   lang: "en-US",
   title: "SnipDesk",
   description:
-    "Fast snippet launcher for support agents. Hotkey, search, paste. Built with Tauri (Rust + web UI), with an optional self-hosted Teams backend.",
+    "Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in.",
   cleanUrls: true,
   lastUpdated: true,
 
@@ -35,7 +35,7 @@ export default defineConfig({
       {
         name: "og:description",
         content:
-          "Hotkey-driven snippet launcher with optional self-hosted Teams sync.",
+          "Fast snippet launcher for support agents. Hotkey, search, paste.",
       },
     ],
   ],

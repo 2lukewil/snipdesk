@@ -1,6 +1,6 @@
 # SnipDesk
 
-A fast, searchable snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply gets pasted into whatever window you were just using.
+Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in.
 
 Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. Ships in two editions: **Lite** (free, offline) and **Teams** (server-backed sync + shared library + SSO + admin dashboard).
 

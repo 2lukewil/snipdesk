@@ -363,6 +363,16 @@ html, body {
    drives the rule so JS can toggle it in one place. */
 body[data-sso-only="true"] .signin-credentials { display: none; }
 
+/* Whitelabel server-URL collapse. When scripts/brand.mjs has baked a
+   server_url into Settings::default(), main.js sets
+   body[data-brand-locked="true"] at startup. Inputs that would let the
+   user point this build elsewhere (Settings -> Team Library, the
+   onboarding sign-in panel) hide; small read-only labels showing the
+   baked URL take their place. */
+.brand-locked-show { display: none; }
+body[data-brand-locked="true"] .brand-locked-hide { display: none; }
+body[data-brand-locked="true"] .brand-locked-show { display: block; }
+
 /* SSO affordances in the server-signed-out panel. The divider is a
    horizontal line with the word "or" floated centred; pure CSS so we
    don't have to fight a JS-driven layout. */
@@ -385,6 +395,82 @@ body[data-sso-only="true"] .signin-credentials { display: none; }
 }
 .server-oidc-btn {
   width: 100%;
+}
+
+/* Official "Sign in with Google" button. Follows the Google Identity
+   branding guidelines: white background + #DADCE0 border in light mode,
+   #131314 background + #8AB4F8 hover ring in dark mode, fixed-size
+   "G" mark on the left, label centered in the remaining space. We
+   keep the 4-color G unchanged in either theme per Google spec - the
+   logo never tints. Disabled state matches the rest of the app's
+   button vocabulary so a brand-locked-but-unsigned panel looks
+   consistent. The .btn-google-label span carries the text so JS can
+   swap "Sign in with Google" -> "Opening browser..." without blowing
+   away the SVG icon. */
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #DADCE0;
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: #3C4043;
+  font-family: "Roboto", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.25px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-google:hover:not(:disabled) {
+  background: #F8FAFD;
+  border-color: #D2E3FC;
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.15), 0 1px 3px rgba(60, 64, 67, 0.1);
+}
+.btn-google:focus-visible {
+  outline: none;
+  border-color: #4285F4;
+  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.25);
+}
+.btn-google:active:not(:disabled) {
+  background: #F1F3F4;
+}
+.btn-google:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn-google-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.btn-google-label {
+  /* Optical centering: the icon's visual weight nudges the label
+     slightly left of geometric center, so a tiny rightward offset
+     keeps the text in the perceived middle. */
+  padding-right: 2px;
+}
+
+/* Dark-theme variant per Google brand spec. The container background
+   flips dark, the label flips to white; the 4-color G stays exactly
+   the same. data-theme lives on <html> (see applyTheme in main.js),
+   so :root matches. */
+:root[data-theme="dark"] .btn-google {
+  background: #131314;
+  border-color: #8E918F;
+  color: #E8EAED;
+}
+:root[data-theme="dark"] .btn-google:hover:not(:disabled) {
+  background: #1F1F1F;
+  border-color: #8AB4F8;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+:root[data-theme="dark"] .btn-google:active:not(:disabled) {
+  background: #2A2A2A;
 }
 .server-paste-fallback {
   margin-top: 10px;
@@ -1513,11 +1599,25 @@ body.compact .search-bar {
   margin: 0 0 22px;
 }
 .onboarding-progress .dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  border: none;
   background: var(--border);
-  transition: background 0.15s ease;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.onboarding-progress .dot:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.onboarding-progress .dot:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 70%, var(--border));
+}
+.onboarding-progress .dot:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .onboarding-progress .dot.is-done {
   background: color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -1536,6 +1636,13 @@ body.compact .search-bar {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 22px;
+}
+/* Back lives on the left edge of the action row; auto right-margin
+   shoves the remaining buttons (Skip / Continue / etc) to the right.
+   Steps that hide Back fall back to the default right-flush layout
+   without any extra rules. */
+.onboarding-back {
+  margin-right: auto;
 }
 .onboarding-card .btn-block {
   display: block;

@@ -1,7 +1,7 @@
 {
   "name": "snipdesk",
   "version": "1.0.0",
-  "description": "Fast snippet launcher for support agents. Global-hotkey search + paste for canned replies.",
+  "description": "Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in.",
   "license": "MIT",
   "private": true,
   "type": "module",

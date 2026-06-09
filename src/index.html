@@ -191,7 +191,7 @@
 
           <div class="onboarding-panel is-active" data-step="welcome">
             <h2>Welcome to SnipDesk</h2>
-            <p>Fast canned-reply launcher for support agents. A minute of setup and you're ready.</p>
+            <p>Fast snippet launcher for support agents.<br />A minute of setup and you're ready.</p>
             <div class="onboarding-actions">
               <button class="btn-primary" data-onboarding-next>Get started</button>
             </div>
@@ -200,11 +200,22 @@
           <div class="onboarding-panel" data-step="signin" data-teams-only="true">
             <h2>Sign in</h2>
             <p>Connect your SnipDesk Teams account so your snippets stay in sync across devices. Snippets are encrypted at rest; administrators never see your snippet content.</p>
-            <label>
+            <label class="brand-locked-hide">
               <span>Server URL</span>
               <input id="onboarding-server-url" type="text" placeholder="https://snippets.example.com" autocomplete="off" spellcheck="false" />
             </label>
-            <button id="onboarding-signin-oidc" class="btn-primary btn-block" type="button" disabled>Sign in with Google</button>
+            <p class="brand-locked-show hint-inline">
+              Server: <code id="onboarding-brand-server-url"></code>
+            </p>
+            <button id="onboarding-signin-oidc" class="btn-google btn-block" type="button" disabled>
+              <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+                <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+              </svg>
+              <span class="btn-google-label">Sign in with Google</span>
+            </button>
             <details class="onboarding-paste-fallback">
               <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
               <p class="hint-inline">If your browser blocked or timed out the auto-launch, copy the token shown on the sign-in success page and paste it here.</p>
@@ -221,6 +232,7 @@
             </details>
             <p id="onboarding-signin-status" class="hint-inline"></p>
             <div class="onboarding-actions">
+              <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip for now</button>
               <button class="btn-primary" data-onboarding-next disabled>Continue</button>
             </div>
@@ -232,6 +244,7 @@
             <p class="onboarding-instruction">Click below and we'll hide the window so you can try it for real.</p>
             <p id="onboarding-hotkey-status" class="hint-inline"></p>
             <div class="onboarding-actions">
+              <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip</button>
               <button id="onboarding-hotkey-hide" class="btn-primary" type="button">Hide and try</button>
               <button class="btn-primary hidden" data-onboarding-next>Continue</button>
@@ -245,6 +258,7 @@
             <textarea id="onboarding-typing-input" class="onboarding-typing-input" spellcheck="false" autocomplete="off"></textarea>
             <div id="onboarding-typing-result" class="onboarding-result hidden"></div>
             <div class="onboarding-actions">
+              <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip</button>
               <button id="onboarding-typing-restart" class="btn-secondary hidden" type="button">Try again</button>
               <button id="onboarding-typing-use" class="btn-primary hidden" type="button">Use this number</button>
@@ -263,6 +277,7 @@
               <select id="onboarding-currency"></select>
             </label>
             <div class="onboarding-actions">
+              <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip</button>
               <button id="onboarding-wage-save" class="btn-primary" type="button">Save and continue</button>
             </div>
@@ -272,6 +287,7 @@
             <h2>You're set</h2>
             <p>Hit your hotkey anytime to summon SnipDesk. Tweak anything from Settings, and replay this tour from Settings -&gt; General whenever you want.</p>
             <div class="onboarding-actions">
+              <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button id="onboarding-finish" class="btn-primary" type="button">Get to it</button>
             </div>
           </div>
@@ -422,7 +438,7 @@
                 </label>
 
                 <div id="server-signed-out">
-                  <label>
+                  <label class="brand-locked-hide">
                     <span>Server URL <em>- e.g. http://127.0.0.1:8080 for a local server, or your company's https://snippets.example.com</em></span>
                     <input
                       id="set-server-url"
@@ -432,6 +448,9 @@
                       spellcheck="false"
                     />
                   </label>
+                  <p class="brand-locked-show hint-block">
+                    Server: <code id="brand-server-url-display"></code>
+                  </p>
                   <label class="signin-credentials">
                     <span>Email</span>
                     <input id="set-server-email" type="email" autocomplete="email" />
@@ -446,7 +465,15 @@
                     <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
                   </div>
                   <div class="server-sso-divider signin-credentials"><span>or</span></div>
-                  <button id="btn-server-oidc" class="btn-secondary server-oidc-btn" type="button">Sign in with Google</button>
+                  <button id="btn-server-oidc" class="btn-google server-oidc-btn" type="button">
+                    <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+                      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+                      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+                      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+                      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+                    </svg>
+                    <span class="btn-google-label">Sign in with Google</span>
+                  </button>
                   <details class="server-paste-fallback">
                     <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
                     <p class="hint-block">
@@ -618,8 +645,8 @@
             <div class="tab-panel" data-tab="about">
               <div class="about-block">
                 <p>
-                  <strong id="about-version">SnipDesk</strong> - snippet launcher for
-                  support agents.
+                  <strong id="about-version">SnipDesk</strong> - fast snippet launcher
+                  for support agents.
                 </p>
                 <div class="update-row">
                   <button id="btn-check-updates" class="btn-secondary" type="button">Check for updates</button>

@@ -63,7 +63,7 @@
     },
     "licenseFile": "installer-defaults/license.rtf",
     "category": "Productivity",
-    "shortDescription": "Snippet launcher for support agents",
-    "longDescription": "SnipDesk is a fast, searchable snippet launcher triggered by a global hotkey. Built for support agents who send similar replies many times a day."
+    "shortDescription": "Fast snippet launcher for support agents",
+    "longDescription": "Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in."
   }
 }

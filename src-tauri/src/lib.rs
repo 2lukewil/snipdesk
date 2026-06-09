@@ -454,6 +454,8 @@ pub fn run() {
             #[cfg(feature = "teams")]
             server_commands::server_status,
             #[cfg(feature = "teams")]
+            server_commands::brand_defaults,
+            #[cfg(feature = "teams")]
             server_commands::server_sync_now,
             #[cfg(feature = "teams")]
             server_commands::server_migrate_local_snippets,

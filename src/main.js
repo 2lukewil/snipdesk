@@ -281,6 +281,10 @@ const state = {
   pendingDuplicateSave: null,
   // Mirrors backend SyncStatus.
   teamStatus: { fetched_at_unix: null, snippet_count: 0, last_error: null },
+  // Build-time defaults baked in by scripts/brand.mjs. Populated once
+  // in init() on Teams builds. When `server_url` is non-empty, the
+  // build is whitelabel-locked and the UI hides the URL inputs.
+  brandDefaults: { server_url: "", sso_only: false },
   // { start, end, scrollTop } captured when Link button was clicked.
   pendingLinkInsert: null,
 };
@@ -444,6 +448,30 @@ async function init() {
   applyTheme(state.settings.theme);
   applyAccentColor(state.settings.accent_color);
   applyCompact(state.settings.compact);
+
+  // Whitelabel detection. The brand_defaults IPC returns the build-time
+  // baked-in server URL + sso_only flag from Settings::default(). A
+  // non-empty server_url means scripts/brand.mjs ran a substitution and
+  // this is a customer-locked build; the UI hides the URL fields so the
+  // user can't accidentally point a branded client at a different server.
+  if (TEAMS_BUILD) {
+    try {
+      state.brandDefaults = await invoke("brand_defaults");
+    } catch (err) {
+      console.warn("brand_defaults failed", err);
+    }
+    if (state.brandDefaults?.server_url) {
+      document.body.dataset.brandLocked = "true";
+      // Populate the read-only "Server: <url>" labels that replace the
+      // text inputs in this build. Looked up once; the elements live in
+      // the static markup so we don't need to re-render on settings save.
+      const teamLabel = document.getElementById("brand-server-url-display");
+      if (teamLabel) teamLabel.textContent = state.brandDefaults.server_url;
+      const onbLabel = document.getElementById("onboarding-brand-server-url");
+      if (onbLabel) onbLabel.textContent = state.brandDefaults.server_url;
+    }
+  }
+
   await refresh();
   // Supplier reads state.folders live so new folders show up without a refresh hop.
   attachCombobox(els.editorFolderInput, () => state.folders.map((f) => f.path));
@@ -580,6 +608,11 @@ function onboardingSteps() {
 const onboarding = {
   steps: [],
   index: 0,
+  // Step indexes the user has "visited" (been the active step on at
+  // least once). Used by gotoStep() to gate forward jumps: clicking a
+  // progress dot ahead of the current step is allowed only when every
+  // intermediate step has been visited. Back jumps are always allowed.
+  visited: new Set(),
   typing: null, // { startedAt, finishedAt, wpm }
   signinPoll: null,
   hotkeyUnlisten: null,
@@ -588,6 +621,7 @@ const onboarding = {
     if (!els.onboarding) return;
     this.steps = onboardingSteps();
     this.index = 0;
+    this.visited = new Set();
     closeAllModals();
     els.onboarding.classList.remove("hidden");
     this.show(this.steps[0]);
@@ -597,6 +631,16 @@ const onboarding = {
     document.querySelectorAll("#onboarding .onboarding-panel").forEach((p) => {
       p.classList.toggle("is-active", p.dataset.step === step);
     });
+    // Mark the current step as visited the moment it becomes active.
+    // This is what makes future forward-jumps via dots possible: once
+    // a step has been on screen, it counts as visited even if the user
+    // navigated away with Back.
+    this.visited.add(this.index);
+    // Welcome is the first step; nothing to go back to.
+    const backBtn = document.querySelector(
+      `#onboarding [data-step="${step}"] [data-onboarding-back]`,
+    );
+    if (backBtn) backBtn.disabled = this.index === 0;
     this.renderProgress();
     if (step === "signin") this.primeSigninPanel();
     if (step === "hotkey") this.primeHotkeyPanel();
@@ -609,16 +653,51 @@ const onboarding = {
     if (!container) return;
     container.innerHTML = "";
     for (let i = 0; i < this.steps.length; i++) {
-      const dot = document.createElement("span");
+      const dot = document.createElement("button");
+      dot.type = "button";
       const klass =
         i < this.index ? "dot is-done" : i === this.index ? "dot is-current" : "dot";
       dot.className = klass;
+      dot.setAttribute(
+        "aria-label",
+        `Go to step ${i + 1} of ${this.steps.length}: ${this.steps[i]}`,
+      );
+      if (i === this.index) dot.setAttribute("aria-current", "step");
+      // A dot is clickable when:
+      //   - It's the current step (no-op, but not disabled for affordance).
+      //   - It's a previous step (back jumps always allowed).
+      //   - It's a forward step AND every intermediate step has been visited.
+      const reachable = i <= this.index || this.canJumpForwardTo(i);
+      if (!reachable) dot.disabled = true;
+      dot.addEventListener("click", () => this.gotoStep(i));
       container.appendChild(dot);
     }
   },
 
+  canJumpForwardTo(target) {
+    for (let i = this.index; i < target; i++) {
+      if (!this.visited.has(i)) return false;
+    }
+    return true;
+  },
+
+  gotoStep(target) {
+    if (target === this.index) return;
+    if (target < 0 || target >= this.steps.length) return;
+    if (target > this.index && !this.canJumpForwardTo(target)) return;
+    this.cleanupCurrentStep();
+    this.index = target;
+    this.show(this.steps[this.index]);
+  },
+
+  back() {
+    if (this.index === 0) return;
+    this.gotoStep(this.index - 1);
+  },
+
   advance() {
     this.cleanupCurrentStep();
+    this.visited.add(this.index);
     this.index++;
     if (this.index >= this.steps.length) {
       this.complete();
@@ -661,7 +740,13 @@ const onboarding = {
     if (urlInput) {
       urlInput.value = state.settings?.server_url || "";
       const refreshOidc = () => {
-        if (oidcBtn) oidcBtn.disabled = !urlInput.value.trim();
+        if (!oidcBtn) return;
+        // Brand-locked builds always have a URL to use, so the button
+        // is enabled unconditionally. The vanilla build still gates on
+        // the user typing something.
+        const haveUrl =
+          !!state.brandDefaults?.server_url || !!urlInput.value.trim();
+        oidcBtn.disabled = !haveUrl;
       };
       // Avoid stacking listeners across Replays.
       urlInput.oninput = refreshOidc;
@@ -681,8 +766,12 @@ const onboarding = {
       '#onboarding [data-step="signin"] [data-onboarding-next]',
     );
     if (state.serverStatus?.signed_in) {
-      const display =
-        state.serverStatus.display_name || state.serverStatus.email || "(signed in)";
+      // serverStatus carries the user under `.user` (UserDto with
+      // display_name + email + role). The previous code reached
+      // for serverStatus.display_name / .email directly, which are
+      // always undefined, and fell through to the literal sentinel.
+      const u = state.serverStatus.user;
+      const display = u?.display_name || u?.email || "(signed in)";
       if (status) status.textContent = `Signed in as ${display}.`;
       if (next) next.removeAttribute("disabled");
     } else {
@@ -695,7 +784,11 @@ const onboarding = {
     if (!TEAMS_BUILD) return;
     const urlInput = document.getElementById("onboarding-server-url");
     const status = document.getElementById("onboarding-signin-status");
-    const url = urlInput ? urlInput.value.trim() : "";
+    // Whitelabel builds hide the URL input and pre-fill from
+    // brandDefaults; fall back to that so the user can't be stuck on a
+    // disabled button just because the input is collapsed.
+    const url =
+      (urlInput && urlInput.value.trim()) || state.brandDefaults?.server_url || "";
     if (!url) return;
     // Persist the URL so the OIDC handshake + later sync paths can
     // pick it up via the existing settings.server_url channel.
@@ -742,7 +835,9 @@ const onboarding = {
       }
       return;
     }
-    const url = (urlInput?.value || "").trim();
+    // Whitelabel: URL input is hidden; fall back to the baked default.
+    const url =
+      (urlInput?.value || "").trim() || state.brandDefaults?.server_url || "";
     if (!url) {
       if (errEl) {
         errEl.textContent = "Enter the server URL above before pasting a token.";
@@ -3766,14 +3861,20 @@ async function doServerLogin() {
 /// covers the case where the OS didn't claim the URL scheme.
 async function doServerOidcStart() {
   if (!TEAMS_BUILD) return;
-  const server_url = els.setServerUrl.value.trim();
+  // Whitelabel builds hide the URL input; fall back to the build-time
+  // baked default so the SSO flow has something to talk to.
+  const server_url =
+    els.setServerUrl.value.trim() || state.brandDefaults?.server_url || "";
   if (!server_url) {
     showServerError("Enter the server URL before signing in with Google.");
     return;
   }
   clearServerError();
   els.btnServerOidc.disabled = true;
-  els.btnServerOidc.textContent = "Opening browser...";
+  // Update only the label span; assigning textContent on the button
+  // itself would wipe out the inline Google SVG.
+  const oidcLabel = els.btnServerOidc.querySelector(".btn-google-label");
+  if (oidcLabel) oidcLabel.textContent = "Opening browser...";
   let startUrl = null;
   try {
     startUrl = await invoke("server_oidc_start_url", { serverUrl: server_url });
@@ -3807,7 +3908,8 @@ async function doServerOidcStart() {
     }
   } finally {
     els.btnServerOidc.disabled = false;
-    els.btnServerOidc.textContent = "Sign in with Google";
+    const lbl = els.btnServerOidc.querySelector(".btn-google-label");
+    if (lbl) lbl.textContent = "Sign in with Google";
   }
 }
 
@@ -4339,6 +4441,9 @@ function bindEvents() {
   });
   document.querySelectorAll("#onboarding [data-onboarding-skip]").forEach((b) => {
     b.addEventListener("click", () => onboarding.skip());
+  });
+  document.querySelectorAll("#onboarding [data-onboarding-back]").forEach((b) => {
+    b.addEventListener("click", () => onboarding.back());
   });
   const onbSigninOidc = document.getElementById("onboarding-signin-oidc");
   if (onbSigninOidc) onbSigninOidc.addEventListener("click", () => onboarding.startOidc());

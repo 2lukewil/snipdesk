@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+#
+# Pre-push gate. Runs `cargo fmt --check` (fast) and
+# `cargo clippy --workspace --all-targets -- -D warnings`
+# (slower; matches CI's strictness) before the push leaves
+# the machine.
+#
+# Bypass with `git push --no-verify` when you need to ship
+# fast and accept the CI roundtrip risk.
+#
+# Wired into the repo via `git config core.hooksPath .githooks`
+# (scripts/setup-hooks.mjs does this on `npm install`).
+
+set -e
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "[pre-push] cargo not on PATH; skipping checks." >&2
+  exit 0
+fi
+
+echo "[pre-push] cargo fmt --all --check"
+if ! cargo fmt --all --check; then
+  echo "" >&2
+  echo "[pre-push] formatting drift. Run \`cargo fmt --all\` then retry the push." >&2
+  exit 1
+fi
+
+echo "[pre-push] cargo clippy --workspace --all-targets -- -D warnings"
+if ! cargo clippy --workspace --all-targets -- -D warnings; then
+  echo "" >&2
+  echo "[pre-push] clippy failed. Fix the warnings above or push with --no-verify." >&2
+  exit 1
+fi
+
+echo "[pre-push] OK"

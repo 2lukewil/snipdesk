@@ -110,17 +110,48 @@ tell you exactly what to fix — re-run after the fix.
 
 ## 5. Create your first admin
 
-The server ships with no users. Bootstrap one via the CLI inside
-the container:
+The server ships with no users; the first account that signs up
+through `POST /api/auth/signup` is auto-promoted to admin. Two
+ways to hit that endpoint:
+
+**Easiest**: install a Teams desktop client (your own SnipDesk
+Teams build or a whitelabel one), point it at the server URL
+(Settings -> Team Library), and click **Create account**. The
+account you create there is the first admin.
+
+**Via the CLI on your host**:
+
+```powershell
+# PowerShell
+$body = @{
+  email = "you@example.com"
+  password = "your-password-here"
+  display_name = "Your Name"
+} | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:8080/api/auth/signup `
+                  -Method POST `
+                  -ContentType "application/json" `
+                  -Body $body
+```
+
+```bash
+# bash / zsh
+curl -X POST http://127.0.0.1:8080/api/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password-here","display_name":"Your Name"}'
+```
+
+A successful response includes a session token; the first signup
+gets `role=admin` automatically because the table was empty.
+Subsequent signups land as `member` and need an existing admin to
+promote them.
+
+Confirm via the in-container CLI:
 
 ```
 docker exec -it snipdesk-server snipdesk-server \
-  --config /etc/snipdesk/config.toml \
-  users signup-admin you@example.com
+  --config /etc/snipdesk/config.toml users list
 ```
-
-Enter a password when prompted. That account is now an admin with
-full dashboard access.
 
 ## 6. Sign in
 
@@ -165,6 +196,31 @@ docker compose logs -f snipdesk-server
 Updating: `docker compose pull && docker compose up -d`. The
 running container's dashboard shows a banner when a newer
 `server-v*` release exists, so you'll see it before you need it.
+
+## Server admin commands
+
+Everything operational happens via `docker exec` against the
+running container. The pattern:
+
+```
+docker exec -it snipdesk-server snipdesk-server \
+  --config /etc/snipdesk/config.toml <subcommand>
+```
+
+Available subcommands:
+
+| Command | What it does |
+| --- | --- |
+| `users list` | List every account with role, status, snippet count |
+| `users promote <email>` | Promote a user to admin |
+| `users demote <email>` | Demote an admin to member (refuses if it would leave zero admins) |
+| `users disable <email>` | Disable account |
+| `users enable <email>` | Re-enable a disabled account |
+| `users delete <email>` | Permanently delete (cascades to their snippets; prompts for confirmation) |
+| `users reset-password <email>` | Set a new password (prompts on stdin) |
+| `users info <email>` | Diagnostic dump: id, role, snippet count, first few snippet ids |
+| `gen-key` | Print a fresh master encryption key (does NOT touch a running server) |
+| `gen-jwt-secret` | Print a fresh JWT signing secret |
 
 ## Next steps
 

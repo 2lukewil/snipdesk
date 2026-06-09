@@ -490,34 +490,13 @@
                     <button id="btn-server-sync" class="btn-secondary" type="button">Sync now</button>
                     <button id="btn-server-logout" class="btn-secondary" type="button">Sign out</button>
                   </div>
-                  <details class="server-wage-section">
-                    <summary>Hours/money saved estimate (personal)</summary>
-                    <p class="hint-block">
-                      The admin dashboard estimates the time and money your
-                      pastes have saved. Set your own numbers here for a
-                      more accurate estimate, or leave blank to use the
-                      server's defaults (typically 80 wpm at $25/hr AUD).
-                    </p>
-                    <div class="two-col">
-                      <label>
-                        <span>Typing speed (wpm) <em>- 1 to 500</em></span>
-                        <input id="set-profile-wpm" type="number" min="1" max="500" step="1" placeholder="server default" />
-                      </label>
-                      <label>
-                        <span>Hourly wage</span>
-                        <input id="set-profile-wage" type="number" min="0" max="100000" step="0.01" placeholder="server default" />
-                      </label>
-                    </div>
-                    <label>
-                      <span>Currency <em>- ISO code; must be on the server's FX list</em></span>
-                      <input id="set-profile-currency" type="text" maxlength="3" placeholder="AUD" autocapitalize="characters" />
-                    </label>
-                    <div id="server-profile-error" class="editor-error hidden"></div>
-                    <div class="server-auth-actions">
-                      <button id="btn-server-profile-save" class="btn-primary" type="button">Save</button>
-                      <button id="btn-server-profile-clear" class="btn-secondary" type="button">Use server defaults</button>
-                    </div>
-                  </details>
+                  <p class="hint-inline">
+                    Your typing speed / hourly wage / currency drive the
+                    admin dashboard's per-user hours-and-money-saved
+                    estimate. Set them in the
+                    <strong>Savings</strong> tab; changes sync to the
+                    server when you save.
+                  </p>
                 </div>
               </div>
 

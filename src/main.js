@@ -385,14 +385,6 @@ const els = {
   serverLastSync: document.getElementById("server-last-sync"),
   serverSyncDetail: document.getElementById("server-sync-detail"),
   serverLastResult: document.getElementById("server-last-result"),
-  // Per-user wpm/wage/currency overrides for the admin dashboard's
-  // hours/money saved estimate. Empty = "use server default".
-  setProfileWpm: document.getElementById("set-profile-wpm"),
-  setProfileWage: document.getElementById("set-profile-wage"),
-  setProfileCurrency: document.getElementById("set-profile-currency"),
-  serverProfileError: document.getElementById("server-profile-error"),
-  btnServerProfileSave: document.getElementById("btn-server-profile-save"),
-  btnServerProfileClear: document.getElementById("btn-server-profile-clear"),
   // Trash modal (Teams only)
   trashModal: document.getElementById("trash-modal"),
   trashList: document.getElementById("trash-list"),
@@ -3717,17 +3709,9 @@ function renderServerStatus() {
     els.serverUserEmail.textContent = st.user.email;
     els.serverUserRole.textContent = st.user.role;
     els.serverUrlDisplay.textContent = st.server_url;
-    // Reflect the user's saved wage/wpm/currency. Empty inputs map to
-    // "use server defaults"; the placeholder already says so.
-    if (els.setProfileWpm) {
-      els.setProfileWpm.value = st.user.wpm ?? "";
-    }
-    if (els.setProfileWage) {
-      els.setProfileWage.value = st.user.hourly_wage ?? "";
-    }
-    if (els.setProfileCurrency) {
-      els.setProfileCurrency.value = st.user.currency ?? "";
-    }
+    // The user's per-server wpm/wage/currency overrides are now
+    // synced from the Savings tab on every saveSettings(); no
+    // dedicated inputs to re-populate here.
     els.serverLastSync.textContent = st.last_sync
       ? formatSyncTimestamp(st.last_sync.at)
       : "Never";
@@ -3973,90 +3957,40 @@ async function doServerSyncNow() {
   }
 }
 
-// PATCH /api/me with the user's wpm/wage/currency. Empty inputs send
-// `null` to clear the override and revert to the server default;
-// non-empty inputs send the parsed value. Errors (validation, network)
-// are surfaced inline.
-async function doServerProfileSave() {
+// Mirror the user's local Savings-tab wpm/wage/currency to the
+// server's per-user override (PATCH /api/me). Called from
+// saveSettings after the local save succeeds. Only runs when
+// Teams + signed in; silent no-op otherwise.
+//
+// Field translation:
+//   - wpm always pushes (always meaningful for the dashboard estimate).
+//   - hourly_wage > 0 pushes, else null (clearing the override =
+//     dashboard uses its server-wide default; local 0 means "don't
+//     show money in the footer").
+//   - currency only pushes when it parses as a 3-letter ISO code
+//     (USD, AUD, EUR ...). The local Savings field accepts a free-
+//     form symbol like "$" for the footer, which isn't ISO; in that
+//     case we pass null so the server uses its dashboard default.
+async function syncProfileToServer(settings) {
   if (!TEAMS_BUILD) return;
-  if (!els.btnServerProfileSave) return;
-  hideServerProfileError();
-  const args = {};
-  const wpmRaw = els.setProfileWpm.value.trim();
-  if (wpmRaw === "") {
-    args.wpm = null;
-  } else {
-    const n = parseInt(wpmRaw, 10);
-    if (!Number.isFinite(n) || n < 1 || n > 500) {
-      showServerProfileError("WPM must be a whole number between 1 and 500.");
-      return;
-    }
-    args.wpm = n;
-  }
-  const wageRaw = els.setProfileWage.value.trim();
-  if (wageRaw === "") {
-    args.hourly_wage = null;
-  } else {
-    const v = parseFloat(wageRaw);
-    if (!Number.isFinite(v) || v <= 0 || v > 100000) {
-      showServerProfileError("Hourly wage must be a positive number.");
-      return;
-    }
-    args.hourly_wage = v;
-  }
-  const currRaw = els.setProfileCurrency.value.trim().toUpperCase();
-  if (currRaw === "") {
-    args.currency = null;
-  } else {
-    if (!/^[A-Z]{3}$/.test(currRaw)) {
-      showServerProfileError("Currency must be a 3-letter ISO code (e.g. USD).");
-      return;
-    }
-    args.currency = currRaw;
-  }
-  els.btnServerProfileSave.disabled = true;
-  els.btnServerProfileSave.textContent = "Saving...";
-  try {
-    await invoke("server_update_profile", { args });
-    await loadServerStatus();
-    setStatus("Profile saved.", "ok");
-  } catch (err) {
-    showServerProfileError(String(err));
-  } finally {
-    els.btnServerProfileSave.disabled = false;
-    els.btnServerProfileSave.textContent = "Save";
-  }
-}
-
-// Reset all three fields to "use server defaults" in one PATCH.
-async function doServerProfileClear() {
-  if (!TEAMS_BUILD) return;
-  if (!els.btnServerProfileClear) return;
-  hideServerProfileError();
-  els.btnServerProfileClear.disabled = true;
+  if (!state.serverStatus?.signed_in) return;
+  const wpm = Number.isFinite(settings.typing_speed_wpm)
+    ? settings.typing_speed_wpm
+    : null;
+  const wage = Number.isFinite(settings.hourly_wage) && settings.hourly_wage > 0
+    ? settings.hourly_wage
+    : null;
+  const currRaw = (settings.wage_currency || "").trim().toUpperCase();
+  const currency = /^[A-Z]{3}$/.test(currRaw) ? currRaw : null;
   try {
     await invoke("server_update_profile", {
-      args: { wpm: null, hourly_wage: null, currency: null },
+      args: { wpm, hourly_wage: wage, currency },
     });
-    await loadServerStatus();
-    setStatus("Reverted to server defaults.", "ok");
   } catch (err) {
-    showServerProfileError(String(err));
-  } finally {
-    els.btnServerProfileClear.disabled = false;
+    // Non-fatal: local settings save already succeeded; the dashboard
+    // override just won't reflect this change. Logged for diagnosis.
+    console.warn("server profile sync failed:", err);
   }
-}
-
-function showServerProfileError(msg) {
-  if (!els.serverProfileError) return;
-  els.serverProfileError.textContent = msg;
-  els.serverProfileError.classList.remove("hidden");
-}
-
-function hideServerProfileError() {
-  if (!els.serverProfileError) return;
-  els.serverProfileError.classList.add("hidden");
-  els.serverProfileError.textContent = "";
 }
 
 // ---------- Settings save ----------
@@ -4137,6 +4071,11 @@ async function saveSettings() {
     applyTheme(state.settings.theme);
     applyAccentColor(state.settings.accent_color);
     applyCompact(state.settings.compact);
+    // Mirror the saved Savings-tab values into the server's
+    // per-user override so the admin dashboard's hours-and-money
+    // estimate reflects this user's actual numbers. Silent no-op
+    // when not Teams or not signed in.
+    await syncProfileToServer(state.settings);
     setStatus("Settings saved", "ok");
     closeSettings();
     await refresh();
@@ -4361,10 +4300,6 @@ function bindEvents() {
     if (els.btnServerOidc) els.btnServerOidc.addEventListener("click", doServerOidcStart);
     if (els.btnServerPasteToken)
       els.btnServerPasteToken.addEventListener("click", doServerPasteToken);
-    if (els.btnServerProfileSave)
-      els.btnServerProfileSave.addEventListener("click", doServerProfileSave);
-    if (els.btnServerProfileClear)
-      els.btnServerProfileClear.addEventListener("click", doServerProfileClear);
     if (els.trashClose) els.trashClose.addEventListener("click", closeTrashModal);
     if (els.trashModal) {
       // Click outside the card closes the modal, same UX as other

@@ -83,8 +83,7 @@ struct ReleaseEntry {
 /// delay. Errors are logged at WARN and otherwise swallowed; a
 /// transient network or rate-limit hiccup doesn't break the loop.
 pub fn spawn_poller(cfg: UpdaterConfig, cache: Arc<UpdateCache>) {
-    let interval =
-        std::time::Duration::from_secs((cfg.check_interval_hours.max(1) as u64) * 3600);
+    let interval = std::time::Duration::from_secs((cfg.check_interval_hours.max(1) as u64) * 3600);
     tokio::spawn(async move {
         loop {
             match fetch_once(&cfg).await {

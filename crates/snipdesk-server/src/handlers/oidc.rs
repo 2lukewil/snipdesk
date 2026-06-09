@@ -208,7 +208,8 @@ pub async fn start(
     // matching callback URL instead of being silently downgraded.
     // Unknown / missing redirect falls back to the first configured
     // scheme - the operator's primary brand, by convention.
-    let client_redirect = resolve_client_redirect(q.redirect.as_deref(), &state_app.oidc_allowed_schemes);
+    let client_redirect =
+        resolve_client_redirect(q.redirect.as_deref(), &state_app.oidc_allowed_schemes);
 
     if let Ok(mut store) = pending_store().lock() {
         // Bound the store so an attacker hammering /api/auth/oidc/start

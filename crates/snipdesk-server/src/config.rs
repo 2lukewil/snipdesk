@@ -577,13 +577,20 @@ mod tests {
     #[test]
     fn env_oidc_schemes_parse_comma_separated() {
         with_env(
-            &[("SNIPDESK_OIDC_ALLOWED_SCHEMES", Some("snipdesk, acme, foo "))],
+            &[(
+                "SNIPDESK_OIDC_ALLOWED_SCHEMES",
+                Some("snipdesk, acme, foo "),
+            )],
             || {
                 let mut cfg = fresh_config();
                 cfg.apply_env_overrides();
                 assert_eq!(
                     cfg.oidc.allowed_deep_link_schemes,
-                    vec!["snipdesk".to_string(), "acme".to_string(), "foo".to_string()]
+                    vec![
+                        "snipdesk".to_string(),
+                        "acme".to_string(),
+                        "foo".to_string()
+                    ]
                 );
             },
         );

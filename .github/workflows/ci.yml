@@ -26,6 +26,18 @@ env:
 jobs:
   validate:
     name: Build + Lint + Test
+    # Skip on pushes whose head commit is a version-bump prep: the
+    # release skill produces "chore: bump <crate> to <version>" and
+    # then pushes the tag, which triggers the much heavier release.yml
+    # against the same SHA. Running fmt/clippy/test here too would
+    # compile + check the same code twice for no signal - a Cargo.toml
+    # version change can't break anything that was already green on
+    # the previous main push.
+    # Pull-request events always run normally; only main pushes
+    # whose head commit message starts with "chore: bump" are skipped.
+    if: >-
+      ${{ github.event_name != 'push'
+          || !startsWith(github.event.head_commit.message, 'chore: bump') }}
     # windows-latest mirrors the local build environment exactly. We're
     # Windows-only, so Linux/macOS runners would either skip Win32 syscalls
     # entirely (defeating the point) or fail to link windows-sys.

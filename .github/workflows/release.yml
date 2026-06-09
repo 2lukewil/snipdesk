@@ -130,21 +130,22 @@ jobs:
       #
       #   acme/
       #     brand.json
+      #     icon.png
       #     installer-assets/
       #       header.bmp
       #       sidebar.bmp
       #       installer.ico
       #       license.rtf
       #
-      # To produce the secret value on a workstation:
-      #   tar -czf bundle.tgz -C path/to/acme .
-      #   base64 -w0 bundle.tgz | pbcopy   # or `base64 -w0 bundle.tgz > out.txt`
+      # Produce the secret value on a workstation:
+      #   node scripts/pack-brand.mjs brands/acme
+      # The script writes <slug>-bundle.b64 to the OS temp dir and
+      # prints the clipboard one-liner for your shell. Paste the
+      # contents into the BRAND_BUNDLE_WHITELABEL secret.
       #
-      # The base64 string is the entire secret payload. CI decodes
-      # it into $RUNNER_TEMP/brand/ which becomes the bundle root
-      # brand.mjs reads (brand.json + installer-assets/ side by
-      # side). Vanilla builds are unaffected when the secret is
-      # absent.
+      # CI decodes the base64 into $RUNNER_TEMP/brand/ which
+      # becomes the bundle root brand.mjs reads. Vanilla builds
+      # are unaffected when the secret is absent.
       - name: Resolve whitelabel inputs
         id: wl
         shell: pwsh

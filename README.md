@@ -159,7 +159,8 @@ The frontend calls Rust via `invoke("command_name", args)`; all file I/O, SQLite
 
 If you want server-backed sync, shared library, and SSO, run `snipdesk-server` on a box you control. See:
 
-- [docs/deploy.md](docs/deploy.md) - production deployment walkthrough (Docker, reverse proxy, OIDC setup, backups)
+- [docs/docker-quickstart.md](docs/docker-quickstart.md) - 5-minute fresh-machine-to-working-dashboard walkthrough
+- [docs/deploy.md](docs/deploy.md) - production deployment walkthrough (TLS, reverse proxy, OIDC setup, backups, whitelabel)
 - [docs/server-design.md](docs/server-design.md) - architecture, schema, security posture, sync algorithm
 
 Quick local dev:

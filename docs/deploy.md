@@ -1,8 +1,11 @@
 # Deploying snipdesk-server
 
-This is the production deployment guide. For local development, the
-quick-start in [`README.md`](../README.md#self-hosting-the-teams-server)
-covers it in five lines.
+This is the production deployment guide. For a 5-minute walk
+from a fresh machine to a working dashboard, see
+[`docker-quickstart.md`](docker-quickstart.md). For local
+development, the quick-start in
+[`README.md`](../README.md#self-hosting-the-teams-server) covers
+it in five lines.
 
 Audience: an ops or platform engineer setting up a real Teams
 deployment for their organization. Expects familiarity with Docker,

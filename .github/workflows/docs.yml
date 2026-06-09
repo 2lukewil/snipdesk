@@ -1,0 +1,83 @@
+name: Docs site
+
+# Builds the VitePress docs under docs/ and publishes the result to GitHub
+# Pages. Runs on every push to main that touches the docs source, the config,
+# the workflow itself, or the lockfile. Manual dispatch is also wired up so
+# you can republish without a code change.
+#
+# One-time setup (per repo): Settings -> Pages -> Build and deployment ->
+# Source = "GitHub Actions". Without that flip the deploy step errors with
+# "Get Pages site failed".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+# Allow only one in-flight deploy at a time. A newer push cancels an older
+# pending run (skipping the queue), and we don't cancel a run that's already
+# uploading the artifact, to avoid leaving Pages in a half-published state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # VitePress's "last updated" timestamp pulls from git log; without
+          # full history it falls back to the file mtime, which on CI is
+          # always the checkout time. Cheap enough to fetch full history.
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        # npm ci uses the lockfile and skips lifecycle scripts that would
+        # need a checked-out git working tree (the postinstall hook
+        # installer is a no-op outside a local clone anyway).
+        run: npm ci
+
+      - name: Build VitePress site
+        run: npm run docs:build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

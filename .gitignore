@@ -1,6 +1,11 @@
 node_modules/
 dist/
 
+# VitePress docs site build artifacts. The source pages are tracked
+# (docs/*.md, docs/.vitepress/config.mjs); the generated site is not.
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # Cargo build output. The workspace puts its target/ at the repo root;
 # the legacy src-tauri/target/ entry stays for anyone who built before
 # the workspace conversion (cargo will recreate it as a no-op symlink-

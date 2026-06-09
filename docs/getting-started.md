@@ -235,7 +235,7 @@ both offline, the second one to sync wins.
   Settings -> General as a workaround; or report a bug with your OS
   + which apps you have open.
 - **Snippets aren't syncing.** Check Settings -> Team Library that
-  the server URL is set and "signed in as <you>" appears. Click
+  the server URL is set and `signed in as <you>` appears. Click
   **Sync now** to force. If it errors, the error message says why
   (network unreachable, server expired your session, etc.).
 - **Sign-in with Google opens the browser but doesn't come back.**

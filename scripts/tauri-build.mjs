@@ -20,13 +20,24 @@ runPreflight();
 
 // Lift --whitelabel=<slug|path> out of the forwarded args. When
 // present, BRAND_CONFIG gets pointed at the resolved bundle and
-// the leftover args travel on to tauri. Either of these works:
-//   npm run tauri:build -- --whitelabel=acme
-//   npm run tauri:build -- --whitelabel=acme --bundles nsis
-//   BRAND_CONFIG=brands/acme/brand.json npm run tauri:build
+// the leftover args travel on to tauri.
+//
+// Note this is the Lite wrapper - the release pipeline only
+// ships customer Teams installers (whitelabel is Teams-only by
+// design; a Lite-flavoured customer build has no audience). A
+// --whitelabel here is still useful for local-only experiments,
+// so we warn but don't refuse - just nudge the operator at the
+// supported path. Set BRAND_LITE_OK=1 to silence the warning.
 const { brandConfigPath, remainingArgs } = parseBrandFlag(process.argv.slice(2));
 if (brandConfigPath) {
   process.env.BRAND_CONFIG = brandConfigPath;
+  if (!process.env.BRAND_LITE_OK) {
+    console.warn(
+      "[brand] heads up: --whitelabel on the Lite wrapper is for local " +
+        "experimentation only. CI ships customer Teams builds via " +
+        "`npm run tauri:build:teams`. Set BRAND_LITE_OK=1 to silence.",
+    );
+  }
   console.log(`[brand] using bundle: ${brandConfigPath}`);
 }
 const extraArgs = remainingArgs;

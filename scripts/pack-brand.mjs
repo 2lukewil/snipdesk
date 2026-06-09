@@ -51,7 +51,12 @@ try {
   console.error(`[pack-brand] brand.json is not valid JSON: ${e.message}`);
   process.exit(1);
 }
-for (const required of ["name", "identifier", "teams_identifier"]) {
+// Whitelabel is Teams-only by design (the release pipeline only
+// builds + ships customer Teams installers). `identifier` (the
+// Lite bundle id) is left optional - present in legacy bundles,
+// silently ignored when missing; the substitution rule for it
+// in brand.mjs is a no-op without a value.
+for (const required of ["name", "teams_identifier"]) {
   if (typeof cfg[required] !== "string" || !cfg[required]) {
     console.error(`[pack-brand] brand.json missing required field: ${required}`);
     process.exit(1);
@@ -129,10 +134,8 @@ console.log(`  Linux (Wayland):      wl-copy < "${b64Path}"`);
 console.log(`  Linux (X11):          xclip -selection clipboard < "${b64Path}"`);
 console.log("");
 console.log("Once the secret is in, the next tag push produces:");
-console.log("  Desktop (on a `v*` tag):");
-console.log(`    target/release/bundle/nsis/${installerPrefix}-Lite-setup.exe`);
+console.log("  Desktop (on a `v*` tag, Teams-only - whitelabel skips Lite):");
 console.log(`    target/release/bundle/nsis/${installerPrefix}-Teams-setup.exe`);
-console.log(`    snipdesk-${slug}-update.json`);
 console.log(`    snipdesk-${slug}-teams-update.json`);
 console.log("  Server (on a `server-v*` tag):");
 console.log(`    ghcr.io/2lukewil/snipdesk/snipdesk-server-${slug}:<version>`);

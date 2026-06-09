@@ -22,22 +22,31 @@ cp -r brands/_template brands/acme
 Copy-Item -Recurse brands/_template brands/acme
 ```
 
+**Whitelabel ships Teams-only.** A customer deployment always
+pairs the desktop client with a snipdesk-server, so building +
+shipping a Lite (free, no-server) flavour for each customer
+just costs CI minutes for a binary nobody installs. The vanilla
+Lite build is unaffected; only the whitelabel matrix is
+Teams-only.
+
 Then edit `brands/acme/brand.json`:
 
 - `name` -> display name shown in window title, tray menu, About panel.
-- `slug` -> filename-safe identifier used for installer filenames
-  (e.g. `Acme-Lite-setup.exe`) and the manifest filename in the
-  updater URL.
-- `identifier` / `teams_identifier` -> reverse-DNS bundle ids the
-  OS treats as unique. Lite + Teams differ so both can be
-  installed side-by-side.
-- `updater_url` / `teams_updater_url` -> where the customer's
-  installation polls for updates. Default convention is a
-  per-customer manifest filename inside this project's GitHub
-  releases (`snipdesk-<slug>-update.json`).
+- `slug` -> filename-safe identifier used for the installer
+  filename (e.g. `Acme-Teams-setup.exe`) and the manifest
+  filename in the updater URL.
+- `teams_identifier` -> reverse-DNS bundle id the OS treats as
+  unique. Required. (Optional `identifier` is the Lite bundle id;
+  ignored by the release pipeline but accepted for local
+  experimentation.)
+- `teams_updater_url` -> where the customer's installation polls
+  for updates. Convention is a per-customer manifest filename
+  inside this project's GitHub releases
+  (`snipdesk-<slug>-teams-update.json`).
 - `deep_link_scheme` -> custom URL scheme for OIDC callback. Must
   also be registered on the OAuth provider side (e.g. Google
-  Cloud Console authorised redirect URIs).
+  Cloud Console authorised redirect URIs) and on the server side
+  via `[oidc].allowed_deep_link_schemes`.
 - `server_url` -> default snipdesk-server URL pre-filled in
   Settings. End users can override.
 - `sso_only` -> when true, hides username/password sign-in in the
@@ -66,7 +75,6 @@ e.g. `magick in.png -type truecolor -depth 24 out.bmp`.
 ## Build locally
 
 ```bash
-npm run tauri:build -- --whitelabel=acme
 npm run tauri:build:teams -- --whitelabel=acme
 ```
 
@@ -75,6 +83,13 @@ short alias `--wl=acme` works too, and you can pass a full path
 (`--whitelabel=/abs/path/brand.json` or a relative one with a
 slash in it) when the bundle lives outside `brands/`. The build
 script itself runs vanilla when the flag is omitted.
+
+The Lite wrapper (`npm run tauri:build`) also accepts the flag
+for local experimentation but the CI release pipeline never
+builds Lite customer installers - if you do build one locally
+you'll get a warning suggesting the Teams path. Silence it with
+`BRAND_LITE_OK=1` in the environment if you genuinely want a
+Lite customer build for testing.
 
 If you'd rather set the environment variable directly (useful in
 CI / scripts), the older form still works:
@@ -124,9 +139,9 @@ Get-Content "$env:TEMP\snipdesk-brand-bundles\acme-bundle.b64" -Raw | Set-Clipbo
 
 Once the secret is in place, every subsequent tag push triggers:
 
-- **Desktop** (on a `v*` tag): customer-branded Lite + Teams
-  installers + signed update manifests alongside the vanilla
-  artifacts in the same GitHub release.
+- **Desktop** (on a `v*` tag): a customer-branded Teams installer
+  + signed update manifest alongside the vanilla Lite + Teams
+  artifacts in the same GitHub release. (Whitelabel skips Lite.)
 - **Server** (on a `server-v*` tag): a per-customer Docker image
   at `ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:<version>`
   + `:latest` with the brand name + OIDC scheme baked in as env

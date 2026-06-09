@@ -1,10 +1,8 @@
 {
   "name": "Example Brand",
   "slug": "example",
-  "identifier": "com.example.snippets",
   "teams_identifier": "com.example.snippets.teams",
   "icon_source": "icon.png",
-  "updater_url": "https://github.com/2lukewil/snipdesk/releases/latest/download/snipdesk-example-update.json",
   "teams_updater_url": "https://github.com/2lukewil/snipdesk/releases/latest/download/snipdesk-example-teams-update.json",
   "deep_link_scheme": "example",
   "server_url": "https://snippets.example.com",

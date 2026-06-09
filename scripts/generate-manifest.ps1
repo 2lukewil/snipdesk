@@ -44,7 +44,13 @@ param(
   # snipdesk-teams-update.json. Whitelabel builds pass their own
   # kebab-case prefix (e.g. "snipdesk-acme") so each customer gets a
   # distinct manifest URL in the same GitHub release.
-  [string]$ManifestPrefix = "snipdesk"
+  [string]$ManifestPrefix = "snipdesk",
+  # Skip the Lite manifest entirely. Set for whitelabel builds where
+  # we deliberately only ship the Teams installer (whitelabel = Teams
+  # only; building Lite for every customer wastes minutes for a flavour
+  # nobody ships). Vanilla call sites leave this off so both manifests
+  # still get produced as before.
+  [switch]$TeamsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,47 +64,33 @@ Set-Location $repoRoot
 # just build Teams; this script expects the canonical names below.)
 $nsisDir = "target\release\bundle\nsis"
 
-$offlineExe = Join-Path $nsisDir "$InstallerPrefix-Lite-setup.exe"
-$teamsExe   = Join-Path $nsisDir "$InstallerPrefix-Teams-setup.exe"
-
-if (-not (Test-Path $offlineExe)) {
-  throw "Couldn't find $offlineExe. Did the offline build + rename run?"
-}
+$teamsExe = Join-Path $nsisDir "$InstallerPrefix-Teams-setup.exe"
 if (-not (Test-Path $teamsExe)) {
   throw "Couldn't find $teamsExe. Did you run npm run tauri:build:teams?"
 }
-
-$offlineSig = "$offlineExe.sig"
-$teamsSig   = "$teamsExe.sig"
-
-if (-not (Test-Path $offlineSig)) {
-  throw "Missing $offlineSig - build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
-}
+$teamsSig = "$teamsExe.sig"
 if (-not (Test-Path $teamsSig)) {
   throw "Missing $teamsSig - build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
 }
+$teamsSigContent = (Get-Content $teamsSig -Raw).Trim()
 
-# .sig files are single-line base64. Strip whitespace defensively.
-$offlineSigContent = (Get-Content $offlineSig -Raw).Trim()
-$teamsSigContent   = (Get-Content $teamsSig -Raw).Trim()
+if (-not $TeamsOnly) {
+  $offlineExe = Join-Path $nsisDir "$InstallerPrefix-Lite-setup.exe"
+  if (-not (Test-Path $offlineExe)) {
+    throw "Couldn't find $offlineExe. Did the offline build + rename run?"
+  }
+  $offlineSig = "$offlineExe.sig"
+  if (-not (Test-Path $offlineSig)) {
+    throw "Missing $offlineSig - build with TAURI_SIGNING_PRIVATE_KEY set so the .sig is emitted."
+  }
+  $offlineSigContent = (Get-Content $offlineSig -Raw).Trim()
+}
 
 $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 # Both URLs use GitHub Releases' "/latest/download/" pattern: GitHub auto-
 # redirects to whatever release is marked latest, so we never bake a
 # version-specific URL into the running binary's auto-updater config.
-$offlineManifest = [ordered]@{
-  version  = $Version
-  notes    = $Notes
-  pub_date = $pubDate
-  platforms = @{
-    "windows-x86_64" = @{
-      signature = $offlineSigContent
-      url       = "$RepoUrl/releases/download/v$Version/$InstallerPrefix-Lite-setup.exe"
-    }
-  }
-}
-
 $teamsManifest = [ordered]@{
   version  = $Version
   notes    = $Notes
@@ -110,27 +102,26 @@ $teamsManifest = [ordered]@{
     }
   }
 }
+$teamsOut = Join-Path $repoRoot "$ManifestPrefix-teams-update.json"
+$teamsManifest | ConvertTo-Json -Depth 6 | Set-Content -Path $teamsOut -Encoding UTF8
 
-$offlineOut = Join-Path $repoRoot "$ManifestPrefix-update.json"
-$teamsOut   = Join-Path $repoRoot "$ManifestPrefix-teams-update.json"
-
-$offlineManifest | ConvertTo-Json -Depth 6 | Set-Content -Path $offlineOut -Encoding UTF8
-$teamsManifest   | ConvertTo-Json -Depth 6 | Set-Content -Path $teamsOut   -Encoding UTF8
+if (-not $TeamsOnly) {
+  $offlineManifest = [ordered]@{
+    version  = $Version
+    notes    = $Notes
+    pub_date = $pubDate
+    platforms = @{
+      "windows-x86_64" = @{
+        signature = $offlineSigContent
+        url       = "$RepoUrl/releases/download/v$Version/$InstallerPrefix-Lite-setup.exe"
+      }
+    }
+  }
+  $offlineOut = Join-Path $repoRoot "$ManifestPrefix-update.json"
+  $offlineManifest | ConvertTo-Json -Depth 6 | Set-Content -Path $offlineOut -Encoding UTF8
+}
 
 Write-Host ""
 Write-Host "Generated:"
-Write-Host "  $offlineOut"
+if (-not $TeamsOnly) { Write-Host "  $offlineOut" }
 Write-Host "  $teamsOut"
-Write-Host ""
-Write-Host "Next: create a GitHub release tagged v$Version and attach these six files:"
-Write-Host "  $offlineExe"
-Write-Host "  $offlineSig"
-Write-Host "  $offlineOut"
-Write-Host "  $teamsExe"
-Write-Host "  $teamsSig"
-Write-Host "  $teamsOut"
-Write-Host ""
-Write-Host "Or use gh:"
-Write-Host "  gh release create v$Version -t `"SnipDesk $Version`" -n `"$Notes`" ``"
-Write-Host "    `"$offlineExe`" `"$offlineSig`" `"$offlineOut`" ``"
-Write-Host "    `"$teamsExe`" `"$teamsSig`" `"$teamsOut`""

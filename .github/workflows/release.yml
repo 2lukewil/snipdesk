@@ -180,7 +180,12 @@ jobs:
           }
           try { $cfg = Get-Content $brandJson -Raw | ConvertFrom-Json -ErrorAction Stop }
           catch { Write-Error "brand.json is not valid JSON: $_"; exit 1 }
-          foreach ($key in 'name','identifier','teams_identifier') {
+          # `identifier` (the Lite bundle id) is no longer required:
+          # the whitelabel pipeline only builds the Teams flavour.
+          # `teams_identifier` is still required because we always
+          # ship the Teams installer; `name` because every chrome
+          # surface needs a display string.
+          foreach ($key in 'name','teams_identifier') {
             if (-not $cfg.$key) { Write-Error "brand.json missing required field: $key"; exit 1 }
           }
           # PascalCase ASCII prefix for installer filenames; defaults
@@ -200,32 +205,11 @@ jobs:
           Write-Host "Whitelabel configured: $($cfg.name) -> installer prefix '$installerPrefix', manifest prefix 'snipdesk-$slugLower'"
           Write-Host ("Installer-assets present in bundle: " + $(if ($hasAssets) { 'yes' } else { 'no' }))
 
-      - name: Build whitelabel Lite (signed)
-        if: steps.wl.outputs.configured == 'true'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          BRAND_CONFIG: ${{ steps.wl.outputs.config_path }}
-        run: npm run tauri:build -- --bundles nsis
-
-      - name: Normalize whitelabel Lite installer name
-        if: steps.wl.outputs.configured == 'true'
-        shell: pwsh
-        env:
-          PRODUCT_NAME: ${{ steps.wl.outputs.product_name }}
-          INSTALLER_PREFIX: ${{ steps.wl.outputs.installer_prefix }}
-        run: |
-          $nsis = "target\release\bundle\nsis"
-          $filter = "$($env:PRODUCT_NAME) Lite_*_x64-setup.exe"
-          $exe = Get-ChildItem $nsis -Filter $filter | Select-Object -First 1
-          if (-not $exe) { Write-Error "Whitelabel Lite NSIS installer not found (filter: $filter)"; exit 1 }
-          $target = "$($env:INSTALLER_PREFIX)-Lite-setup.exe"
-          if (Test-Path "$($exe.FullName).sig") {
-            Rename-Item "$($exe.FullName).sig" "$target.sig"
-          }
-          Rename-Item $exe.FullName $target
-          Write-Host "Renamed $($exe.Name) -> $target"
-
+      # Whitelabel is Teams-only by design: a customer deployment
+      # always pairs the desktop client with a snipdesk-server, so
+      # the Lite (free, no-server) flavour doesn't have a customer
+      # audience. Skipping the Lite build saves ~5 minutes of CI
+      # per release and keeps the asset list short.
       - name: Build whitelabel Teams (signed)
         if: steps.wl.outputs.configured == 'true'
         env:
@@ -234,11 +218,11 @@ jobs:
           BRAND_CONFIG: ${{ steps.wl.outputs.config_path }}
         run: npm run tauri:build:teams -- --bundles nsis
 
-      - name: Generate whitelabel update manifests
+      - name: Generate whitelabel Teams manifest
         if: steps.wl.outputs.configured == 'true'
         shell: pwsh
         run: |
-          .\scripts\generate-manifest.ps1 `
+          .\scripts\generate-manifest.ps1 -TeamsOnly `
             -Version "${{ steps.version.outputs.VERSION }}" `
             -Notes "Release ${{ steps.version.outputs.VERSION }}. See commit history for changes." `
             -InstallerPrefix "${{ steps.wl.outputs.installer_prefix }}" `
@@ -261,12 +245,11 @@ jobs:
             "snipdesk-teams-update.json"
           )
           if ($env:WL_CONFIGURED -eq 'true') {
+            # Whitelabel ships Teams only - see the build section
+            # above for the rationale.
             $expected += @(
-              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe",
-              "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe.sig",
               "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe",
               "target\release\bundle\nsis\$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe.sig",
-              "$($env:WL_MANIFEST_PREFIX)-update.json",
               "$($env:WL_MANIFEST_PREFIX)-teams-update.json"
             )
           }
@@ -299,11 +282,8 @@ jobs:
           )
           if ($env:WL_CONFIGURED -eq 'true') {
             $lines += @(
-              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe",
-              "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Lite-setup.exe.sig",
               "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe",
               "target/release/bundle/nsis/$($env:WL_INSTALLER_PREFIX)-Teams-setup.exe.sig",
-              "$($env:WL_MANIFEST_PREFIX)-update.json",
               "$($env:WL_MANIFEST_PREFIX)-teams-update.json"
             )
           }

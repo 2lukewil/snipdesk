@@ -56,7 +56,9 @@ export default defineConfig({
       {
         text: "Development",
         items: [
+          { text: "Build from source", link: "/build" },
           { text: "Releases & Auto-update", link: "/auto-update" },
+          { text: "Whitelabel brand bundles", link: "/whitelabel" },
           { text: "Roadmap", link: "/ROADMAP" },
           { text: "Browser integration (design)", link: "/browser-integration" },
         ],
@@ -86,9 +88,10 @@ export default defineConfig({
           ],
         },
         {
-          text: "Releases & whitelabel",
+          text: "Building & releasing",
           collapsed: false,
           items: [
+            { text: "Build from source", link: "/build" },
             { text: "Auto-update & release flow", link: "/auto-update" },
             { text: "Whitelabel brand bundles", link: "/whitelabel" },
           ],

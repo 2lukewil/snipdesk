@@ -1,15 +1,8 @@
 # Installer asset drop-zone
 
-Place the per-customer NSIS installer chrome here. Each file is
-optional - declared-but-missing files fall back to the project
-default at build time.
+Per-customer NSIS installer chrome lives here: `header.bmp`, `sidebar.bmp`,
+`installer.ico`, `license.rtf`. Each file is optional and falls back to
+the project default in `src-tauri/installer-defaults/`.
 
-| Filename        | Format        | Standard dims |
-| --------------- | ------------- | ------------- |
-| `header.bmp`    | 24-bit BMP    | 150 x 57      |
-| `sidebar.bmp`   | 24-bit BMP    | 164 x 314     |
-| `installer.ico` | .ico (multi-res) | n/a        |
-| `license.rtf`   | plain text or RTF | n/a       |
-
-NSIS rejects PNG/JPG for the bitmap fields; convert to 24-bit BMP
-first.
+Asset specs, formats, and the full whitelabel flow:
+<https://2lukewil.github.io/snipdesk/whitelabel#step-3-drop-in-the-asset-files>

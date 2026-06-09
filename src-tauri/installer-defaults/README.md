@@ -1,32 +1,20 @@
 # Default NSIS installer chrome
 
-Drop the project's default Windows-installer assets in this
-directory and reference them from `src-tauri/tauri.conf.json`'s
-`bundle.windows.nsis` block. They ship with every stock build and
-act as the per-field fallback when a whitelabel build doesn't
-provide its own override.
+The project's stock Windows-installer assets live here. They ship with
+every vanilla build and act as the per-field fallback when a whitelabel
+build doesn't provide its own override.
 
-## Expected filenames + formats
+Expected files: `header.bmp`, `sidebar.bmp`, `installer.ico`,
+`license.rtf`. Asset specs (formats, dimensions, conversion command)
+are documented once on the docs site:
+<https://2lukewil.github.io/snipdesk/whitelabel#step-3-drop-in-the-asset-files>
 
-| File           | Format         | Standard dimensions |
-| -------------- | -------------- | ------------------- |
-| `header.bmp`   | 24-bit BMP     | 150 x 57            |
-| `sidebar.bmp` | 24-bit BMP     | 164 x 314           |
-| `installer.ico`| .ico (16/32/48/256 multi-res ideal) | n/a |
-| `license.rtf` | plain text or RTF | n/a              |
+## Wiring into `tauri.conf.json`
 
-NSIS literally rejects PNG/JPG for the bitmap fields; convert to
-24-bit BMP first (`magick in.png -type truecolor -depth 24 out.bmp`
-or similar). The `.ico` should bundle multiple resolutions so
-SmartScreen and Explorer render crisply at any size.
-
-## Wiring
-
-Add the relevant fields to `src-tauri/tauri.conf.json`. Header,
-sidebar, and installer icon live under `bundle.windows.nsis`; the
-license file is a top-level `bundle.licenseFile` (Tauri's NSIS
-bundler picks it up automatically from there, and the same field
-covers the license shown in any other installer format we might
+Add the relevant fields to `src-tauri/tauri.conf.json`. Header, sidebar,
+and installer icon live under `bundle.windows.nsis`; the license file is
+a top-level `bundle.licenseFile` (Tauri's NSIS bundler picks it up from
+there, and the same field covers any other installer format we might
 add later).
 
 ```json
@@ -43,23 +31,20 @@ add later).
 }
 ```
 
-The paths are resolved by Tauri relative to `src-tauri/`. Omit any
-field you don't want to override; Tauri's built-in NSIS default
-fills in for it.
+Paths are resolved by Tauri relative to `src-tauri/`. Omit any field
+you don't want to override; Tauri's built-in NSIS default fills in for it.
 
 ## Interaction with whitelabel builds
 
-`scripts/brand.mjs` (for whitelabel builds) only patches the
-fields a customer's `brand.json` explicitly provides an
-`installer.<field>` entry for AND whose file is actually present in
-their bundle. Any other field keeps its tracked value above. So
-the matrix is:
+`scripts/brand.mjs` (for whitelabel builds) only patches the fields a
+customer's `brand.json` explicitly provides an `installer.<field>` entry
+for AND whose file is actually present in their bundle. Any other field
+keeps its tracked value above. The matrix:
 
-- whitelabel declares + ships the asset: their file wins
-- whitelabel declares but file missing: warning + the default
-  above wins
-- whitelabel silent on that field: the default above wins
-- no default wired here either: Tauri's built-in fallback applies
+- Whitelabel declares + ships the asset: their file wins.
+- Whitelabel declares but file missing: warning + the default above wins.
+- Whitelabel silent on that field: the default above wins.
+- No default wired here either: Tauri's built-in fallback applies.
 
-This means a whitelabel can selectively rebrand (e.g., just the
-sidebar) without having to ship a full asset set.
+So a whitelabel can selectively rebrand (e.g. just the sidebar) without
+having to ship a full asset set.

@@ -47,6 +47,7 @@ features:
 - **[Docker quickstart](/docker-quickstart)** - fresh-machine-to-working-dashboard in about five minutes for the self-hosted server.
 - **[Production deploy](/deploy)** - TLS, reverse proxy, OIDC (Google Workspace), backups, retention, security checklist.
 - **[Server architecture](/server-design)** - schema, sync algorithm, encryption posture, JWT + refresh-token rotation.
+- **[Build from source](/build)** - prerequisites, dev loops for both editions, local server, edition flags, the docs site itself.
 - **[Auto-update & releases](/auto-update)** - how tagged pushes build, sign, and publish installers; one-time signing-key setup.
 - **[Whitelabel brand bundles](/whitelabel)** - rebuild the client and server for a customer-branded image without touching the upstream repo.
 - **[Roadmap](/ROADMAP)** - what is shipped, what is next, ordered by impact-per-effort.

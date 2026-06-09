@@ -146,31 +146,52 @@ pub async fn update_user(
     };
 
     if let Some(role) = &body.role {
-        // Prevent demoting the last remaining admin. If the caller is
-        // demoting someone other than themselves and they're the only
-        // other admin, we'd be leaving zero admins. Block it.
         if role == "member" {
-            let admin_count: (i64,) =
-                sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-                    .fetch_one(&mut *tx)
-                    .await?;
-            let target_is_admin: Option<(String,)> =
-                sqlx::query_as("SELECT role FROM users WHERE id = ?")
-                    .bind(&id)
-                    .fetch_optional(&mut *tx)
-                    .await?;
-            if target_is_admin.map(|r| r.0) == Some("admin".to_string()) && admin_count.0 <= 1 {
+            // Demotion: guarded by the WHERE clause so two concurrent
+            // demotions of two different admins cannot both pass.
+            // Previously the check was three statements (SELECT count,
+            // SELECT target role, UPDATE) inside a DEFERRED transaction,
+            // so two callers could both read count=2 and both UPDATE,
+            // leaving zero admins (audit Tier 1 #7).
+            //
+            // The atomic form: UPDATE only fires when either (a) the
+            // target isn't currently admin (harmless rewrite of
+            // member -> member) or (b) more than one admin remains.
+            // SQLite runs the whole statement, including the COUNT
+            // subquery, under one write lock; two concurrent
+            // demotions serialize and the second sees the first's
+            // committed state. rows_affected == 0 means the guard
+            // fired (target is admin AND would have been the last).
+            //
+            // The pre-SELECT above already verified the target row
+            // exists, so 0 rows here can only be the guard, not a
+            // missing target.
+            let result = sqlx::query(
+                "UPDATE users \
+                 SET role = 'member' \
+                 WHERE id = ? \
+                   AND ( \
+                     role != 'admin' \
+                     OR (SELECT COUNT(*) FROM users WHERE role = 'admin') > 1 \
+                   )",
+            )
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+            if result.rows_affected() == 0 {
                 return Err(ApiError::bad_request(
                     "last_admin",
                     "can't demote the last admin",
                 ));
             }
+        } else {
+            // Promotion has no last-admin concern; a simple UPDATE.
+            sqlx::query("UPDATE users SET role = ? WHERE id = ?")
+                .bind(role)
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
         }
-        sqlx::query("UPDATE users SET role = ? WHERE id = ?")
-            .bind(role)
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
     }
     if let Some(disabled) = body.is_disabled {
         sqlx::query("UPDATE users SET is_disabled = ? WHERE id = ?")

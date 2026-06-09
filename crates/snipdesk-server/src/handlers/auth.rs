@@ -97,27 +97,24 @@ pub async fn signup(
         ));
     }
 
-    // Uniqueness check up front so we don't run an expensive Argon2 hash
-    // for a request we already know will fail. The DB has a UNIQUE
-    // constraint on email too - that's the real guardrail; this is just
-    // a faster failure path.
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
-        .bind(&email)
-        .fetch_optional(&state.pool)
-        .await?;
-    if existing.is_some() {
-        return Err(ApiError::conflict(
-            "email_taken",
-            "an account with this email already exists",
-        ));
-    }
-
+    // Always hash the password before any DB write. The previous
+    // SELECT-then-INSERT pre-check was a faster failure path for
+    // already-registered emails but it leaked which emails exist via
+    // a distinct `email_taken` / 409 response (CWE-203). It also
+    // leaked via timing: the duplicate path was much faster than the
+    // ~50ms Argon2 cost on a fresh signup (CWE-208). Hashing up
+    // front and relying on the UNIQUE(email) index to reject
+    // duplicates eliminates both leaks - every signup attempt pays
+    // the same wall-clock cost.
     let password_hash = hash_password(&body.password)?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
 
     // First-admin auto-promotion: if no admins exist yet, this signup
     // becomes the admin. Subsequent signups all land as 'member'.
+    // (Note: this admin_count check + INSERT pair has a known race
+    // condition flagged by the audit. The transactional fix lands in
+    // a separate commit so the enumeration fix here stays focused.)
     let admin_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
         .fetch_one(&state.pool)
         .await?;
@@ -127,10 +124,12 @@ pub async fn signup(
         "member"
     };
 
-    // last_seen_at is set on signup too - a brand-new account just
-    // signed in, so showing "never" in the dashboard would be wrong
-    // (their account literally exists because they're here right now).
-    sqlx::query(
+    // INSERT relies on the UNIQUE(email) index to reject duplicates.
+    // On UniqueViolation we return a generic `signup_failed` (400) -
+    // no hint about which field tripped the check, no 409 status to
+    // disambiguate from other 400s. Any other DB error bubbles up as
+    // a 500 with the cause logged server-side only.
+    let insert_result = sqlx::query(
         "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, last_seen_at, password_hash) \
          VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
     )
@@ -142,7 +141,20 @@ pub async fn signup(
     .bind(now)
     .bind(&password_hash)
     .execute(&state.pool)
-    .await?;
+    .await;
+
+    match insert_result {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(db_err))
+            if db_err.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+        {
+            return Err(ApiError::bad_request(
+                "signup_failed",
+                "signup failed; if you already have an account, sign in instead",
+            ));
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     let token = issue_token(&id, role, &state.jwt_secret)?;
     let user = UserDto {

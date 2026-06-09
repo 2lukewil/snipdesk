@@ -260,10 +260,18 @@ async fn me_requires_valid_token() {
     assert_eq!(body["error"], "invalid_token");
 }
 
-// Duplicate email signup must conflict (409) instead of silently
-// overwriting or 500'ing.
+// Duplicate-email signup is collapsed to a generic `signup_failed`
+// (400) so an attacker can't enumerate registered emails by probing
+// signup with candidate addresses (CWE-203). The status code is 400
+// not 409 - using 409 would itself hint that the email is the
+// specific reason. The Argon2 hash now runs unconditionally so the
+// duplicate path pays the same ~50ms cost as a successful signup
+// (CWE-208).
+//
+// If this is ever softened, document the security tradeoff in
+// deploy.md and update this test.
 #[tokio::test]
-async fn signup_rejects_duplicate_email() {
+async fn signup_with_duplicate_email_returns_generic_failure() {
     let app = make_app().await;
     let body = serde_json::json!({
         "email": "dup@example.com",
@@ -273,8 +281,8 @@ async fn signup_rejects_duplicate_email() {
     let (s1, _) = post_json(&app, "/api/auth/signup", body.clone()).await;
     assert_eq!(s1, StatusCode::CREATED);
     let (s2, b2) = post_json(&app, "/api/auth/signup", body).await;
-    assert_eq!(s2, StatusCode::CONFLICT);
-    assert_eq!(b2["error"], "email_taken");
+    assert_eq!(s2, StatusCode::BAD_REQUEST);
+    assert_eq!(b2["error"], "signup_failed");
 }
 
 async fn patch_with_bearer(

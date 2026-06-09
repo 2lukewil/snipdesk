@@ -15,8 +15,10 @@ import { fileURLToPath } from "node:url";
 
 import { loadEnv } from "./load-env.mjs";
 import { withBrand, parseBrandFlag } from "./brand.mjs";
+import { runPreflight } from "./preflight.mjs";
 
 loadEnv();
+runPreflight();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");

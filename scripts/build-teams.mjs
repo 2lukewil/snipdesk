@@ -20,6 +20,7 @@ import { readdirSync, renameSync, existsSync, readFileSync } from "node:fs";
 
 import { loadEnv } from "./load-env.mjs";
 import { withBrand, parseBrandFlag } from "./brand.mjs";
+import { runPreflight } from "./preflight.mjs";
 
 // Resolve the brand-derived names this build will produce. Reads
 // $BRAND_CONFIG up front (before withBrand restores) so the
@@ -44,6 +45,7 @@ function resolveBrandNames() {
 // Pull signing key + passphrase from .env if present so local builds can
 // sign updater artifacts without per-shell env-var ceremony. No-op in CI.
 loadEnv();
+runPreflight();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");

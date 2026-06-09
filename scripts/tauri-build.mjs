@@ -13,8 +13,10 @@ import process from "node:process";
 
 import { loadEnv } from "./load-env.mjs";
 import { withBrand, parseBrandFlag } from "./brand.mjs";
+import { runPreflight } from "./preflight.mjs";
 
 loadEnv();
+runPreflight();
 
 // Lift --whitelabel=<slug|path> out of the forwarded args. When
 // present, BRAND_CONFIG gets pointed at the resolved bundle and

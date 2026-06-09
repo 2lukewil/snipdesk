@@ -180,13 +180,18 @@ async fn login_returns_valid_token_for_correct_credentials() {
     assert!(!token.is_empty());
 }
 
-// Login distinguishes wrong-password from unknown-email. This is the
-// "verbose errors" deliberate tradeoff for an internal-tool deployment:
-// the small enumeration leak is worth the clearer UX. If this server
-// ever ships to an untrusted audience, collapse both branches back to
-// one generic `invalid_credentials` message and update this test.
+// Login collapses every failure mode (wrong password, unknown email,
+// disabled account, SSO-only account) into one generic
+// `invalid_credentials` response. Differential responses would let an
+// attacker enumerate registered emails (CWE-203). The Argon2 verify
+// is run unconditionally (against a sentinel hash when the email is
+// missing) so timing doesn't leak the distinction either (CWE-208).
+//
+// If this is ever softened (e.g. to surface disabled-account as a
+// distinct response for UX), document the security tradeoff in
+// deploy.md and update this test.
 #[tokio::test]
-async fn login_distinguishes_failure_modes() {
+async fn login_failure_modes_collapse_to_invalid_credentials() {
     let app = make_app().await;
     post_json(
         &app,
@@ -199,6 +204,7 @@ async fn login_distinguishes_failure_modes() {
     )
     .await;
 
+    // Wrong password for an existing account.
     let (status1, body1) = post_json(
         &app,
         "/api/auth/login",
@@ -206,8 +212,9 @@ async fn login_distinguishes_failure_modes() {
     )
     .await;
     assert_eq!(status1, StatusCode::UNAUTHORIZED);
-    assert_eq!(body1["error"], "wrong_password");
+    assert_eq!(body1["error"], "invalid_credentials");
 
+    // Email that doesn't exist.
     let (status2, body2) = post_json(
         &app,
         "/api/auth/login",
@@ -215,7 +222,13 @@ async fn login_distinguishes_failure_modes() {
     )
     .await;
     assert_eq!(status2, StatusCode::UNAUTHORIZED);
-    assert_eq!(body2["error"], "no_account");
+    assert_eq!(body2["error"], "invalid_credentials");
+
+    // Both wire responses are identical: same error code AND same
+    // message. An attacker observing only the response can't tell the
+    // two cases apart.
+    assert_eq!(body1["error"], body2["error"]);
+    assert_eq!(body1["message"], body2["message"]);
 }
 
 // /api/me with a valid token returns the authenticated user; without a

@@ -182,8 +182,9 @@ pub async fn login(
 ) -> Result<Json<AuthResponse>, ApiError> {
     let email = body.email.trim().to_lowercase();
 
-    // Fetch by email; may be None. Either way we run the verify path
-    // below so timing doesn't disclose whether the email is registered.
+    // Fetch by email; may be None. We run the verify path below
+    // unconditionally so timing doesn't disclose whether the email is
+    // registered (CWE-208).
     let row: Option<LoginRow> = sqlx::query_as(
         "SELECT id, email, display_name, role, created_at, password_hash, is_disabled \
          FROM users WHERE email = ?",
@@ -192,40 +193,30 @@ pub async fn login(
     .fetch_optional(&state.pool)
     .await?;
 
-    // We deliberately give specific messages here rather than a generic
-    // "invalid credentials". This is an internal-tool deployment - the
-    // small enumeration risk of distinguishing "no such email" from
-    // "wrong password" is outweighed by users wasting time guessing
-    // which one their actual mistake is. If this ever ships to a wider
-    // audience, this branch should collapse back to one opaque message.
+    // Always perform the Argon2 verify. When the row is missing or the
+    // user has no password (SSO-only) the helper falls back to a
+    // pre-computed SENTINEL_HASH, so the wall-clock cost is identical
+    // whether the email exists, is disabled, is SSO-only, or has a
+    // wrong password.
+    let password_hash = row.as_ref().and_then(|r| r.password_hash.as_deref());
+    let password_ok = verify_password_constant_time(&body.password, password_hash);
+
+    // Collapse every failure mode (missing email, disabled, SSO-only,
+    // wrong password) into one generic response. Differential responses
+    // would let an attacker enumerate registered emails (CWE-203) -
+    // valuable input for targeted brute force or phishing. The cost is
+    // slightly worse UX for legitimate users with disabled or SSO-only
+    // accounts: they receive the same opaque "invalid email or password"
+    // and need to contact their administrator to learn why.
     let row = match row {
-        None => {
+        Some(r) if r.is_disabled == 0 && r.password_hash.is_some() && password_ok => r,
+        _ => {
             return Err(ApiError::unauthorized(
-                "no_account",
-                "no account found for this email - check the address or sign up",
+                "invalid_credentials",
+                "invalid email or password",
             ));
         }
-        Some(r) => r,
     };
-    if row.is_disabled != 0 {
-        return Err(ApiError::forbidden(
-            "account_disabled",
-            "your account is disabled - contact your administrator",
-        ));
-    }
-    if row.password_hash.is_none() {
-        return Err(ApiError::unauthorized(
-            "no_password",
-            "this account signs in via SSO; password login isn't enabled for it",
-        ));
-    }
-    let ok = verify_password_constant_time(&body.password, row.password_hash.as_deref());
-    if !ok {
-        return Err(ApiError::unauthorized(
-            "wrong_password",
-            "incorrect password for this account",
-        ));
-    }
 
     let now = Utc::now().timestamp();
     sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")

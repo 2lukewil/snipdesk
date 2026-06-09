@@ -4253,9 +4253,12 @@ fn line_diff(a: &str, b: &str) -> Vec<(DiffKind, String)> {
     let n = a_lines.len();
     let m = b_lines.len();
     let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in 0..n {
-        for j in 0..m {
-            dp[i + 1][j + 1] = if a_lines[i] == b_lines[j] {
+    // enumerate() on both axes so clippy doesn't flag the
+    // index-into-Vec pattern; we still need i + 1 / j + 1 to
+    // step the DP table.
+    for (i, a_line) in a_lines.iter().enumerate() {
+        for (j, b_line) in b_lines.iter().enumerate() {
+            dp[i + 1][j + 1] = if a_line == b_line {
                 dp[i][j] + 1
             } else {
                 dp[i + 1][j].max(dp[i][j + 1])

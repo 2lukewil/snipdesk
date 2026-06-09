@@ -134,11 +134,18 @@ fn hidden_actions_sql_list() -> String {
 /// SQL fragment that excludes hidden actions from a query against
 /// the `audit_log` table. Returns an empty string when no actions
 /// are hidden so the caller can append unconditionally.
+///
+/// Checks the rendered list rather than the const itself so clippy
+/// doesn't flag the dead branch when HIDDEN_ACTIONS is known to be
+/// non-empty - and the protection survives a future change that
+/// empties the list (which would otherwise produce invalid SQL
+/// like `WHERE action NOT IN ()`).
 pub fn hidden_actions_filter_sql(prefix: &str) -> String {
-    if HIDDEN_ACTIONS.is_empty() {
+    let list = hidden_actions_sql_list();
+    if list.is_empty() {
         String::new()
     } else {
-        format!(" {prefix} action NOT IN ({})", hidden_actions_sql_list())
+        format!(" {prefix} action NOT IN ({list})")
     }
 }
 

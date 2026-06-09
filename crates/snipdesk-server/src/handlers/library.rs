@@ -302,22 +302,25 @@ pub async fn update(
     // the existing title/body/tags/folder_path so the audit log can
     // render a field-by-field diff, and the version/created_at/
     // is_deleted columns for the existing conflict + flag checks.
-    let current: Option<(String, String, String, Option<String>, i64, i64, i64)> = sqlx::query_as(
+    // Named fields via #[derive(FromRow)] so the call site stays
+    // readable and clippy's type-complexity lint isn't triggered
+    // by a positional 7-tuple.
+    let row: Option<BeforeUpdateRow> = sqlx::query_as(
         "SELECT title, body, tags, folder_path, version, created_at, is_deleted \
          FROM library_snippets WHERE id = ?",
     )
     .bind(&id)
     .fetch_optional(&mut *tx)
     .await?;
-    let (
-        before_title,
-        before_body,
-        before_tags,
-        before_folder,
-        current_version,
+    let BeforeUpdateRow {
+        title: before_title,
+        body: before_body,
+        tags: before_tags,
+        folder_path: before_folder,
+        version: current_version,
         created_at,
         is_deleted,
-    ) = current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
+    } = row.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
 
     if is_deleted != 0 {
         return Err(ApiError::bad_request(
@@ -461,5 +464,21 @@ struct LibraryRow {
     version: i64,
     created_at: i64,
     updated_at: i64,
+    is_deleted: i64,
+}
+
+/// The subset of library_snippets columns the update() handler
+/// needs to read BEFORE applying its edit: existing payload (for
+/// audit-diff), version (for optimistic-concurrency conflict),
+/// created_at (to round-trip in the response), is_deleted (to
+/// reject edits to a soft-deleted row).
+#[derive(sqlx::FromRow)]
+struct BeforeUpdateRow {
+    title: String,
+    body: String,
+    tags: String,
+    folder_path: Option<String>,
+    version: i64,
+    created_at: i64,
     is_deleted: i64,
 }

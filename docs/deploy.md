@@ -57,27 +57,45 @@ offline, multiple custodians, never committed.
 
 ## 3. Generate the secrets
 
-On any machine with the snipdesk-server binary:
+The image ships with two one-shot subcommands that print a fresh
+secret and exit. `docker run --rm` runs them without leaving a
+container behind:
 
 ```
-snipdesk-server gen-key         # base64 master encryption key
-snipdesk-server gen-jwt-secret  # base64 HS256 signing secret
+docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-key
+docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret
 ```
 
-Each prints one line. Pipe to your secret store of choice.
+Each prints one base64 line to stdout. Pipe to your secret store
+of choice, or capture in a shell variable:
+
+```powershell
+# PowerShell
+$masterKey = docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-key
+$jwtSecret = docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret
+```
+
+```bash
+# bash / zsh
+master_key=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-key)
+jwt_secret=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret)
+```
+
+For a whitelabel image, substitute `snipdesk-server-<slug>` in the
+image path.
 
 The master key is the more sensitive of the two:
 
-- Lose the JWT secret -> users get bounced on next request, fix by
-  putting the secret back. No data lost.
-- Lose the master key -> every encrypted personal snippet is now
+- Lose the JWT secret: users get bounced on the next request, fix
+  by putting the secret back. No data lost.
+- Lose the master key: every encrypted personal snippet is now
   unrecoverable. Library snippets are still readable (they're
   plaintext at rest).
 
 ## 4. Write the config
 
-Create `snipdesk-server.toml` next to where the binary will run
-(or wherever you'll mount it inside the container):
+Create `snipdesk-server.toml` in the working directory you'll mount
+into the container (typically alongside your `docker-compose.yml`):
 
 ```toml
 # Public bind address. 0.0.0.0:8080 listens on all interfaces; the
@@ -89,7 +107,7 @@ bind_addr = "0.0.0.0:8080"
 data_dir = "/var/lib/snipdesk"
 
 # HS256 signing secret for session JWTs. Output of
-# `snipdesk-server gen-jwt-secret`.
+# `docker run --rm <image> gen-jwt-secret`.
 jwt_secret = "<base64 from gen-jwt-secret>"
 
 # How long soft-deleted snippets stay around before the hourly purge
@@ -124,10 +142,15 @@ required_hd = "yourcompany.com"
 allowed_email_domains = ["yourcompany.com"]
 ```
 
-Keep this file out of source control. The
-[`snipdesk-server.example.toml`](../crates/snipdesk-server/snipdesk-server.example.toml)
-template in the repo is gitignored at the real-config name and
-committed at the example name only.
+Keep this file out of source control. The full reference config
+([`snipdesk-server.example.toml`](../crates/snipdesk-server/snipdesk-server.example.toml))
+lives in the repo, and the image ships a copy at
+`/etc/snipdesk/config.toml.example`. To grab it from a running
+container:
+
+```
+docker cp snipdesk-server:/etc/snipdesk/config.toml.example .
+```
 
 ## 5. Set up Google OIDC (optional, recommended)
 
@@ -161,42 +184,52 @@ Skip this section if you're running password-only.
 
 ## 6. Container deployment (recommended)
 
-The repo ships a multi-stage `Dockerfile` at the repo root. To build
-the image yourself:
-
-```
-docker build -t snipdesk-server:latest -f Dockerfile .
-```
-
-(GitHub Actions also builds + publishes the image on `server-v*` tag
-pushes to `ghcr.io/2lukewil/snipdesk-server` - check the release
-workflow if you'd rather pull a pre-built one.)
+Pre-built images are published to GHCR on every `server-v*` tag:
+`ghcr.io/2lukewil/snipdesk/snipdesk-server:latest` (vanilla) or
+`ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:latest`
+(whitelabel). Pull, don't build, unless you have a reason to.
 
 Minimal `docker-compose.yml`:
 
 ```yaml
 services:
   snipdesk-server:
-    image: snipdesk-server:latest
+    image: ghcr.io/2lukewil/snipdesk/snipdesk-server:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/var/lib/snipdesk
-      - ./snipdesk-server.toml:/etc/snipdesk-server.toml:ro
+      - ./snipdesk-server.toml:/etc/snipdesk/config.toml:ro
     environment:
-      # Picking the master key up from an env var is preferred over
-      # the inline `master_key` in the TOML for containers - the env
-      # is orchestrator-managed, the TOML can be checked into
-      # configuration-management more safely.
+      # The master key prefers the env var over an inline
+      # `master_key` in the TOML: orchestrator-managed and easier
+      # to keep out of configuration-management.
       SNIPDESK_MASTER_KEY: "${SNIPDESK_MASTER_KEY}"
       RUST_LOG: "info,sqlx=warn,tower_http=info"
-    command: ["snipdesk-server", "--config", "/etc/snipdesk-server.toml"]
 ```
 
-The container exposes only `127.0.0.1:8080` to the host - put it
-behind your reverse proxy (next section), don't open 8080 to the
+Save the master key in a sibling `.env` so Compose can interpolate
+`${SNIPDESK_MASTER_KEY}` at startup:
+
+```
+SNIPDESK_MASTER_KEY=<base64 from step 3>
+```
+
+The image's default command is
+`snipdesk-server --config /etc/snipdesk/config.toml`, so the
+compose file doesn't need a `command:` override as long as the
+config is mounted at that path.
+
+The container exposes only `127.0.0.1:8080` to the host. Put it
+behind a reverse proxy (next section); don't open 8080 to the
 internet.
+
+To build the image locally instead of pulling:
+
+```
+docker build -t snipdesk-server:local -f Dockerfile .
+```
 
 ## 7. Reverse proxy + TLS
 
@@ -344,19 +377,26 @@ useless for personal snippets (library snippets stay readable).
 
 ### CLI / interactive console
 
-The server has user-management commands you can run from the same
-host:
+User-management commands run inside the running container via
+`docker compose exec`. The pattern:
 
 ```
-docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users list
-docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users promote alice@example.com
-docker compose exec snipdesk-server snipdesk-server -c /etc/snipdesk-server.toml users reset-password alice@example.com
+docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/config.toml <subcommand>
 ```
 
-When the server is started attached to a TTY (no `-d` on
-docker-compose up), it also drops into an interactive console that
-accepts `users list`, `users promote <email>`, `stop`, etc. - useful
-for poking at things during incident response.
+Common subcommands:
+
+```
+docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/config.toml users list
+docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/config.toml users promote alice@example.com
+docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/config.toml users reset-password alice@example.com
+```
+
+If the container is started attached to a TTY (`docker compose up`
+without `-d`), the server also drops into an interactive console
+that accepts the same `users list`, `users promote <email>`,
+`stop`, etc. inputs directly. Useful for incident response, less
+useful for routine ops.
 
 ### Updates
 
@@ -569,7 +609,7 @@ fix, restart.
 sign in: your account is `member` not `admin`. Promote via the CLI:
 
 ```
-snipdesk-server -c /etc/snipdesk-server.toml users promote you@example.com
+docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/config.toml users promote you@example.com
 ```
 
 **OIDC returns `redirect_uri_mismatch`**: the `redirect_uri` in your

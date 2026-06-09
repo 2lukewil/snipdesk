@@ -32,7 +32,7 @@ mkdir -p snipdesk-server/data && cd snipdesk-server
 
 The server uses AES-256-GCM for personal snippet bodies. The key
 never leaves the operator's environment; **save the output
-somewhere safe** (password manager, secrets store) — losing it
+somewhere safe** (password manager, secrets store) - losing it
 makes existing encrypted rows unreadable.
 
 ```powershell
@@ -67,7 +67,7 @@ EOF
 ```
 
 That's enough to boot. JWT secret, OIDC, brand, retention tuning,
-CORS, etc. are all optional and have sensible defaults — see
+CORS, etc. are all optional and have sensible defaults - see
 [deploy.md](deploy.md) and the
 [example.toml](../crates/snipdesk-server/snipdesk-server.example.toml)
 for the full schema when you're ready.
@@ -106,7 +106,7 @@ docker logs snipdesk-server
 
 You should see `snipdesk-server listening on 0.0.0.0:8080` and
 a few migration lines. If you instead see a config error, it'll
-tell you exactly what to fix — re-run after the fix.
+tell you exactly what to fix - re-run after the fix.
 
 ## 5. Create your first admin
 
@@ -167,10 +167,13 @@ this server: Settings → Team Library → Server URL =
 
 Once you've confirmed the above works, the compose form is easier
 to maintain (config + env are all in one file, restarts pick up
-changes cleanly):
+changes cleanly). Two files in the same directory:
+
+**1. Save the following as `docker-compose.yml`** (Compose looks
+for this filename automatically, so it must be named exactly this
+or `compose.yaml`):
 
 ```yaml
-# docker-compose.yml
 services:
   snipdesk-server:
     image: ghcr.io/2lukewil/snipdesk/snipdesk-server:latest
@@ -185,8 +188,26 @@ services:
       RUST_LOG: "info,sqlx=warn,tower_http=info"
 ```
 
-Put the master key in a sibling `.env` file (`SNIPDESK_MASTER_KEY=...`)
-or your secrets store, then:
+Whitelabel deployments swap the image line for their per-customer
+tag (`ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:latest`)
+and rename the config volume to match the file they wrote in
+step 3. Everything else stays the same.
+
+**2. Save the master key as `.env`** in the same directory so
+Compose can interpolate `${SNIPDESK_MASTER_KEY}` at startup:
+
+```
+SNIPDESK_MASTER_KEY=<the key from step 2>
+```
+
+If you already have a container from the docker-run step above,
+stop it first so the port and name aren't taken:
+
+```
+docker rm -f snipdesk-server
+```
+
+Then:
 
 ```
 docker compose up -d
@@ -235,19 +256,64 @@ When you're ready to put this in front of real users:
 
 ## Troubleshooting
 
-**Container exits immediately with `read config /etc/snipdesk/config.toml`** —
+**Container exits immediately with `read config /etc/snipdesk/config.toml`**:
 your config volume isn't mounted, or the path on the host doesn't
 exist. The error now prints the full docker-run command to fix it;
 follow that and you're back on track.
 
-**Container exits with a master-key error** — the
+**Container exits with `Is a directory (os error 21)` reading the
+config**: classic Docker bind-mount gotcha on Windows / macOS.
+When `-v "${PWD}/your-config.toml:/etc/snipdesk/config.toml:ro"`
+is given and the host path *doesn't exist as a file*, Docker
+silently creates it as an empty *directory* and mounts that. The
+server then reads the path and gets EISDIR.
+
+Fix:
+
+```powershell
+# PowerShell - verify it's a file with content
+Get-ChildItem your-config.toml
+Get-Content your-config.toml
+
+# If you instead see a directory (mode d----), Docker auto-created it.
+# Remove it, recreate the config as a real file:
+Remove-Item -Recurse -Force your-config.toml
+@'
+bind_addr = "0.0.0.0:8080"
+data_dir = "/var/lib/snipdesk"
+'@ | Out-File -Encoding utf8 your-config.toml
+```
+
+Then `docker rm -f snipdesk-server` and re-run the docker command.
+
+**Container exits with a master-key error**: the
 `SNIPDESK_MASTER_KEY` env var either wasn't passed in (`-e
 SNIPDESK_MASTER_KEY=...`) or is the wrong shape (not base64 of 32
-bytes). Re-run step 2 + 4.
+bytes). Re-run step 2 + 4. If you opened a fresh shell since
+generating the key, the `$key` variable is empty; either save the
+key to your password manager and paste it back as a literal, or
+regenerate (only safe on a clean install with no encrypted data
+yet).
 
-**`gen-key` output looks like a base64 string with `+` / `/`** —
+**`docker run` says the name is already in use**: a previous run
+crashed and the dead container still holds the name. Force-remove
+it and re-run:
+
+```
+docker rm -f snipdesk-server
+```
+
+**`gen-key` output looks like a base64 string with `+` / `/`**:
 that's normal. Pass the whole string verbatim; don't quote it
 unnecessarily in your shell or strip characters.
+
+**`docker compose pull` says "no configuration file provided: not
+found"**: Compose looks for a `docker-compose.yml` (or
+`compose.yaml`) in the current directory. You haven't saved the
+YAML from the Compose section above to a file yet. Save it
+verbatim as `docker-compose.yml` in your working directory, save
+your master key to a sibling `.env` file as
+`SNIPDESK_MASTER_KEY=<key>`, then re-run.
 
 **Want the example TOML inside the container?** It's there:
 

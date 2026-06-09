@@ -39,8 +39,15 @@ pub mod action {
 /// caller fills the struct inline. `details` is an arbitrary JSON
 /// value the caller composes; see `record()` for the serialise
 /// strategy.
+///
+/// `actor_id` is optional because the schema's FK (`REFERENCES users(id)
+/// ON DELETE SET NULL`) permits NULL. API handlers always have an
+/// authenticated user and pass `Some(&auth.0.sub)`; the CLI has no
+/// session and passes `None` so the audit row records the action
+/// without faking a user reference (`actor_email` carries `"<cli>"`
+/// in that case so the dashboard view stays legible).
 pub struct AuditEvent<'a> {
-    pub actor_id: &'a str,
+    pub actor_id: Option<&'a str>,
     pub actor_email: &'a str,
     pub action: &'a str,
     pub target_kind: Option<&'a str>,
@@ -80,7 +87,7 @@ pub async fn record(pool: &SqlitePool, event: AuditEvent<'_>) {
     .await;
     if let Err(e) = res {
         tracing::warn!(
-            actor = event.actor_id,
+            actor = event.actor_id.unwrap_or("<none>"),
             action = event.action,
             "audit: insert failed: {e}"
         );

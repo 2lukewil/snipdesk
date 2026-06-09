@@ -1529,7 +1529,7 @@ pub async fn user_create_row(
     crate::audit::record(
         &state.pool,
         crate::audit::AuditEvent {
-            actor_id: admin.user_id(),
+            actor_id: Some(admin.user_id()),
             actor_email: &actor_email,
             action: crate::audit::action::USER_CREATE,
             target_kind: Some("user"),
@@ -3245,7 +3245,7 @@ pub async fn library_folder_create(
     crate::audit::record(
         &state.pool,
         crate::audit::AuditEvent {
-            actor_id: admin.user_id(),
+            actor_id: Some(admin.user_id()),
             actor_email: &actor_email,
             action: "library.folder.create",
             target_kind: Some("folder"),
@@ -3589,7 +3589,7 @@ pub async fn library_folder_move(
     crate::audit::record(
         &state.pool,
         crate::audit::AuditEvent {
-            actor_id: admin.user_id(),
+            actor_id: Some(admin.user_id()),
             actor_email: &actor_email,
             action: "library.folder.move",
             target_kind: Some("folder"),

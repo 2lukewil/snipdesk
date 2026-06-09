@@ -264,7 +264,7 @@ pub async fn create(
     audit::record(
         &state.pool,
         AuditEvent {
-            actor_id: &auth.0.sub,
+            actor_id: Some(&auth.0.sub),
             actor_email: &actor_email,
             action: audit_action::LIBRARY_CREATE,
             target_kind: Some("library"),
@@ -368,7 +368,7 @@ pub async fn update(
     audit::record(
         &state.pool,
         AuditEvent {
-            actor_id: &auth.0.sub,
+            actor_id: Some(&auth.0.sub),
             actor_email: &actor_email,
             action: audit_action::LIBRARY_UPDATE,
             target_kind: Some("library"),
@@ -441,7 +441,7 @@ pub async fn delete(
     audit::record(
         &state.pool,
         AuditEvent {
-            actor_id: &auth.0.sub,
+            actor_id: Some(&auth.0.sub),
             actor_email: &actor_email,
             action: audit_action::LIBRARY_DELETE,
             target_kind: Some("library"),

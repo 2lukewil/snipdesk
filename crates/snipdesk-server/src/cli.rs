@@ -32,6 +32,15 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePo
 use sqlx::ConnectOptions;
 use std::str::FromStr;
 
+use crate::audit::{self, action as audit_action, AuditEvent};
+
+/// Email shown in the audit dashboard for CLI-driven mutations. The
+/// CLI has no authenticated session (the operator runs `docker exec`
+/// against the container), so `actor_id` lands NULL and this string
+/// stands in for `actor_email`. The angle brackets make it visually
+/// distinct from a real user's email in the audit listing.
+const CLI_ACTOR_EMAIL: &str = "<cli>";
+
 #[derive(Subcommand, Debug)]
 pub enum UsersCmd {
     /// List every account with role, status, snippet count, and last
@@ -283,6 +292,20 @@ async fn set_role(pool: &SqlitePool, email: &str, role: &str) -> Result<()> {
         .bind(&user.id)
         .execute(pool)
         .await?;
+    audit::record(
+        pool,
+        AuditEvent {
+            actor_id: None,
+            actor_email: CLI_ACTOR_EMAIL,
+            action: audit_action::USER_UPDATE,
+            target_kind: Some("user"),
+            target_id: Some(&user.id),
+            details: Some(serde_json::json!({
+                "role": { "from": user.role, "to": role }
+            })),
+        },
+    )
+    .await;
     let action = if role == "admin" {
         "promoted"
     } else {
@@ -307,6 +330,20 @@ async fn set_disabled(pool: &SqlitePool, email: &str, disabled: bool) -> Result<
         .bind(&user.id)
         .execute(pool)
         .await?;
+    audit::record(
+        pool,
+        AuditEvent {
+            actor_id: None,
+            actor_email: CLI_ACTOR_EMAIL,
+            action: audit_action::USER_UPDATE,
+            target_kind: Some("user"),
+            target_id: Some(&user.id),
+            details: Some(serde_json::json!({
+                "is_disabled": { "from": user.is_disabled != 0, "to": disabled }
+            })),
+        },
+    )
+    .await;
     let verb = if disabled { "disabled" } else { "enabled" };
     println!("{} {email}.", capitalize(verb));
     Ok(())
@@ -338,6 +375,23 @@ async fn delete(pool: &SqlitePool, email: &str, skip_confirm: bool) -> Result<()
     if res.rows_affected() == 0 {
         bail!("delete affected 0 rows - did someone else delete them first?");
     }
+    // The user row is gone now, so the audit row's actor_id FK would
+    // dangle if we set it; the CLI's None for actor_id avoids the
+    // problem entirely. We keep the deleted user's email in details
+    // so the audit page can show "deleted <email>" without joining
+    // back to a row that no longer exists.
+    audit::record(
+        pool,
+        AuditEvent {
+            actor_id: None,
+            actor_email: CLI_ACTOR_EMAIL,
+            action: audit_action::USER_DELETE,
+            target_kind: Some("user"),
+            target_id: Some(&user.id),
+            details: Some(serde_json::json!({ "email": user.email })),
+        },
+    )
+    .await;
     println!("Deleted {email}.");
     Ok(())
 }
@@ -393,6 +447,21 @@ async fn reset_password(pool: &SqlitePool, email: &str, from_stdin: bool) -> Res
         .bind(&user.id)
         .execute(pool)
         .await?;
+    audit::record(
+        pool,
+        AuditEvent {
+            actor_id: None,
+            actor_email: CLI_ACTOR_EMAIL,
+            action: audit_action::USER_UPDATE,
+            target_kind: Some("user"),
+            target_id: Some(&user.id),
+            // No password material in the details - just the fact
+            // that the credential was rotated. The audit page reads
+            // this as "CLI reset password for <user>".
+            details: Some(serde_json::json!({ "password_reset": true })),
+        },
+    )
+    .await;
     println!(
         "Reset password for {email}. Their existing JWT(s) remain valid \
          until expiry (24h) - rotate the server's jwt_secret if you need \

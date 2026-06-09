@@ -241,7 +241,7 @@ pub async fn update_user(
     audit::record(
         &state.pool,
         AuditEvent {
-            actor_id: &auth.0.sub,
+            actor_id: Some(&auth.0.sub),
             actor_email: &actor_email,
             action: audit_action::USER_UPDATE,
             target_kind: Some("user"),
@@ -306,7 +306,7 @@ pub async fn delete_user(
     audit::record(
         &state.pool,
         AuditEvent {
-            actor_id: &auth.0.sub,
+            actor_id: Some(&auth.0.sub),
             actor_email: &actor_email,
             action: audit_action::USER_DELETE,
             target_kind: Some("user"),

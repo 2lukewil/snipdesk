@@ -9,11 +9,11 @@
 // Forty lines of bespoke parsing buys us a much cleaner DX.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, resolve } from "node:path";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, "..");
+// `import.meta.dirname` is the Node 20.11+ canonical replacement for the
+// older `dirname(fileURLToPath(import.meta.url))` polyfill.
+const repoRoot = resolve(import.meta.dirname, "..");
 // Both files are gitignored. `.env.local` matches the convention used by
 // Vite/Next.js (a local-only override) and is checked first; `.env`
 // follows as a fallback. Existing process.env values still win over both

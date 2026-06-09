@@ -78,9 +78,11 @@ import {
 } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `import.meta.dirname` is the Node 20.11+ replacement for the
+// `dirname(fileURLToPath(import.meta.url))` polyfill. `dirname` is kept
+// in scope for other uses below (bundleDir resolution, mkdirSync).
+const repoRoot = resolve(import.meta.dirname, "..");
 const INSTALLER_ASSETS_DIR = join(repoRoot, "src-tauri", "installer-assets");
 const APP_ICONS_DIR = join(repoRoot, "src-tauri", "icons");
 

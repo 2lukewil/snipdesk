@@ -10,8 +10,7 @@
 // env so it propagates to tauri AND down to its vite child.
 
 import { spawn } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
 import { loadEnv } from "./load-env.mjs";
 import { withBrand, parseBrandFlag } from "./brand.mjs";
@@ -20,7 +19,9 @@ import { runPreflight } from "./preflight.mjs";
 loadEnv();
 runPreflight();
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `import.meta.dirname` is the Node 20.11+ canonical replacement for the
+// older `dirname(fileURLToPath(import.meta.url))` polyfill.
+const repoRoot = resolve(import.meta.dirname, "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
 
 const { brandConfigPath, remainingArgs } = parseBrandFlag(process.argv.slice(2));

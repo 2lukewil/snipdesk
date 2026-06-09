@@ -14,8 +14,7 @@
 
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { readdirSync, renameSync, existsSync, readFileSync } from "node:fs";
 
 import { loadEnv } from "./load-env.mjs";
@@ -47,7 +46,9 @@ function resolveBrandNames() {
 loadEnv();
 runPreflight();
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `import.meta.dirname` is the Node 20.11+ canonical replacement for the
+// older `dirname(fileURLToPath(import.meta.url))` polyfill.
+const repoRoot = resolve(import.meta.dirname, "..");
 const teamsConfigPath = join(repoRoot, "src-tauri", "tauri.teams.conf.json");
 
 // Lift --whitelabel=<slug|path> out of the forwarded args. When

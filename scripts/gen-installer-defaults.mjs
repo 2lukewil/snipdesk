@@ -20,10 +20,11 @@
 // src-tauri/installer-defaults/README.md for the full picture).
 
 import { writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `import.meta.dirname` is the Node 20.11+ canonical replacement for the
+// older `dirname(fileURLToPath(import.meta.url))` polyfill.
+const repoRoot = resolve(import.meta.dirname, "..");
 const outDir = join(repoRoot, "src-tauri", "installer-defaults");
 
 // Project palette. Same accent the dashboard CSS uses (var(--accent)

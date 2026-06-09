@@ -77,15 +77,28 @@ console.log(`[pack-brand]   slug:  ${slug}`);
 // `tar -czf <tgz> -C <dir> .` packs the bundle contents (not the
 // dir itself) so the extracted layout matches what brand.mjs +
 // release.yml expect (brand.json at the bundle root, not nested).
-// --force-local stops GNU tar (default on Git Bash for Windows)
-// from misreading the colon in a Windows path like `C:\...` as a
-// remote-host separator. bsdtar (Windows native tar.exe + macOS)
-// accepts the flag as a documented synonym, so it's portable.
-const tar = spawnSync(
-  "tar",
-  ["--force-local", "-czf", tgzPath, "-C", bundleDir, "."],
-  { stdio: "inherit" },
-);
+//
+// Two tar variants live in the wild on the platforms we care about:
+//   - GNU tar (Git Bash on Windows; default on Linux): treats
+//     "C:\foo" as the remote "C:" host + "\foo" path. Needs
+//     `--force-local` to disable that. The flag is its native
+//     escape hatch and is widely available.
+//   - bsdtar (Windows 10+ system tar.exe; macOS default): doesn't
+//     do the host:path parsing, doesn't understand
+//     `--force-local`, and errors out if you pass it.
+//
+// Detect once + branch. Sub-second probe.
+const supportsForceLocal = (() => {
+  const probe = spawnSync("tar", ["--force-local", "--version"], {
+    stdio: "ignore",
+    shell: true,
+  });
+  return probe.status === 0;
+})();
+const tarArgs = supportsForceLocal
+  ? ["--force-local", "-czf", tgzPath, "-C", bundleDir, "."]
+  : ["-czf", tgzPath, "-C", bundleDir, "."];
+const tar = spawnSync("tar", tarArgs, { stdio: "inherit", shell: true });
 if (tar.status !== 0) {
   console.error(`[pack-brand] tar failed (exit ${tar.status})`);
   process.exit(1);

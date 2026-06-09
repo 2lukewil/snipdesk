@@ -1,0 +1,15 @@
+# Cargo configuration shared across the workspace.
+#
+# Today this only swaps the Windows linker to rust-lld, which ships with
+# the rustup toolchain and links 2-3x faster than the default MSVC
+# link.exe for incremental rebuilds. The actual emitted object format is
+# unchanged - just a faster path to the final .exe / .dll - so signing,
+# the Tauri updater, and Windows-specific syscalls all behave
+# identically to a link.exe build.
+#
+# The `-fuse-ld=lld` flag tells the rustc linker driver to invoke
+# rust-lld (bundled with the toolchain) instead of locating link.exe
+# through the MSVC env vars; no extra install needed.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-Clink-arg=-fuse-ld=lld"]

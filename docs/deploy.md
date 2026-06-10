@@ -214,6 +214,113 @@ Two Kubernetes-specific notes:
 Liveness/readiness probes point at `GET /api/health` (200 healthy,
 503 when the database is unreachable).
 
+### Kubernetes reference manifests
+
+The complete set of objects a deployment needs, wired together.
+Use directly with `kubectl apply`, or as the specification a Helm
+chart's templates should produce - every value a chart needs to
+expose appears here. TLS/Ingress is omitted (use whatever your
+cluster already runs; point it at the Service below and set
+`SNIPDESK_SECURE_COOKIES=true`, which this spec already does).
+
+```yaml
+# Secrets first. Generate the two values with:
+#   docker run --rm <image> gen-jwt-secret
+#   docker run --rm <image> gen-key
+# kubectl create secret generic snipdesk \
+#   --from-literal=jwt-secret=<...> --from-literal=master-key=<...>
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: snipdesk-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi          # SQLite; grows slowly, see sizing notes
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snipdesk-server
+spec:
+  replicas: 1               # MUST stay 1: SQLite + in-process OIDC state
+  strategy:
+    type: Recreate          # two pods can't share the SQLite file
+  selector:
+    matchLabels: { app: snipdesk-server }
+  template:
+    metadata:
+      labels: { app: snipdesk-server }
+    spec:
+      securityContext:
+        runAsUser: 10001    # the image's non-root user
+        runAsGroup: 10001
+        fsGroup: 10001      # makes the PVC writable
+      containers:
+        - name: snipdesk-server
+          image: <your-registry>/snipdesk-server:<tag>
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SNIPDESK_DATA_DIR
+              value: /var/lib/snipdesk
+            - name: SNIPDESK_SECURE_COOKIES
+              value: "true"
+            - name: SNIPDESK_JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: snipdesk, key: jwt-secret }
+            - name: SNIPDESK_MASTER_KEY
+              valueFrom:
+                secretKeyRef: { name: snipdesk, key: master-key }
+            # Optional from here down. Keycloak SSO:
+            # - name: SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID
+            #   value: snipdesk
+            # - name: SNIPDESK_OIDC_KEYCLOAK_CLIENT_SECRET
+            #   valueFrom:
+            #     secretKeyRef: { name: snipdesk, key: keycloak-secret }
+            # - name: SNIPDESK_OIDC_KEYCLOAK_ISSUER_URL
+            #   value: https://kc.yourcompany.com/realms/main
+            # - name: SNIPDESK_OIDC_KEYCLOAK_REDIRECT_URI
+            #   value: https://snippets.yourcompany.com/api/auth/oidc/keycloak/callback
+            # No outbound HTTP at all:
+            # - name: SNIPDESK_UPDATER_ENABLED
+            #   value: "false"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/snipdesk
+          livenessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: snipdesk-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snipdesk-server
+spec:
+  selector: { app: snipdesk-server }
+  ports:
+    - port: 8080
+      targetPort: 8080
+```
+
+After the first apply: `kubectl port-forward deploy/snipdesk-server
+8080:8080`, open `http://127.0.0.1:8080/`, and create the admin
+account before wiring up the Ingress.
+
 ## 5. Boot it
 
 Create `docker-compose.yml`:

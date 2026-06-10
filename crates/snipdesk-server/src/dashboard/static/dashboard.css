@@ -242,6 +242,18 @@ textarea {
 }
 .library-toolbar .btn:hover { border-color: var(--accent); color: var(--accent); }
 
+/* Template variables inside library snippet bodies. Values copied
+   verbatim from the desktop client's .preview-var so {placeholders}
+   read identically on both surfaces. */
+.preview-var {
+  background: rgba(76, 154, 255, 0.2);
+  border: 1px solid rgba(76, 154, 255, 0.5);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
 /* --- Selection modal (library export picker / import preview) --- */
 
 .dash-modal {

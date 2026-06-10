@@ -55,6 +55,9 @@
           <span id="status" class="status"></span>
           <span id="savings" class="savings hidden" title="Estimated time and money saved from pasted snippets"></span>
           <span class="hint">Enter: paste | Shift+Enter: copy | Ctrl+E: edit | Del: delete | Right-click: menu</span>
+          <!-- Sync state at the bottom-right corner. Teams-only;
+               state + tooltip driven by renderServerStatus. -->
+          <span id="sync-indicator" class="sync-indicator hidden">☁</span>
         </footer>
 
         <!-- Auto-update toast. Non-blocking; appears bottom-right on launch

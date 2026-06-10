@@ -431,6 +431,7 @@ const els = {
   btnExport: document.getElementById("btn-export"),
   btnImport: document.getElementById("btn-import"),
   btnTrash: document.getElementById("btn-trash"),
+  syncIndicator: document.getElementById("sync-indicator"),
   importPreview: document.getElementById("import-preview"),
   impTitle: document.getElementById("imp-title"),
   impHint: document.getElementById("imp-hint"),
@@ -2124,6 +2125,37 @@ function showBulkFolderContextMenu(x, y, paths) {
 }
 
 // ---------- Rendering ----------
+
+/// Append `text` to `el`, wrapping case-insensitive occurrences of
+/// the search query in a highlight span. DOM nodes, never innerHTML,
+/// so snippet content can't inject markup. Empty/whitespace queries
+/// append plain text.
+function appendHighlighted(el, text, query) {
+  const q = (query || "").trim();
+  if (!q) {
+    el.textContent = text;
+    return;
+  }
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  let pos = 0;
+  for (;;) {
+    const hit = lower.indexOf(needle, pos);
+    if (hit === -1) break;
+    if (hit > pos) {
+      el.appendChild(document.createTextNode(text.slice(pos, hit)));
+    }
+    const mark = document.createElement("span");
+    mark.className = "search-match";
+    mark.textContent = text.slice(hit, hit + needle.length);
+    el.appendChild(mark);
+    pos = hit + needle.length;
+  }
+  if (pos < text.length) {
+    el.appendChild(document.createTextNode(text.slice(pos)));
+  }
+}
+
 function renderList() {
   els.list.innerHTML = "";
   if (state.snippets.length === 0) {
@@ -2181,7 +2213,7 @@ function renderList() {
     }
     const titleText = document.createElement("span");
     titleText.className = "snip-title-text";
-    titleText.textContent = s.title;
+    appendHighlighted(titleText, s.title, els.search.value);
     titleHead.appendChild(titleText);
     title.appendChild(titleHead);
     const showUsage = state.settings?.show_usage_count ?? true;
@@ -2195,7 +2227,11 @@ function renderList() {
 
     const body = document.createElement("div");
     body.className = "snip-body";
-    body.textContent = s.body.replace(/\n/g, " | ").slice(0, 140);
+    appendHighlighted(
+      body,
+      s.body.replace(/\n/g, " | ").slice(0, 140),
+      els.search.value,
+    );
     li.appendChild(body);
 
     if (s.folder_path) {
@@ -3877,6 +3913,24 @@ function renderServerStatus() {
   // Footer trash icon: server-side trash only exists while signed in.
   if (els.btnTrash) {
     els.btnTrash.classList.toggle("hidden", !(st.signed_in && st.user));
+  }
+  // Bottom-right sync glyph: green cloud when the last sync was
+  // clean, red when it reported errors, hidden when signed out.
+  // Tooltip carries the detail so Settings -> Server isn't needed
+  // just to check on sync health.
+  if (els.syncIndicator) {
+    const signedIn = Boolean(st.signed_in && st.user);
+    els.syncIndicator.classList.toggle("hidden", !signedIn);
+    if (signedIn) {
+      const ls = st.last_sync;
+      const hasErrors = Boolean(ls && ls.errors);
+      els.syncIndicator.classList.toggle("err", hasErrors);
+      els.syncIndicator.classList.toggle("ok", !hasErrors);
+      els.syncIndicator.title = ls
+        ? `Last sync ${formatSyncTimestamp(ls.at)} - ${ls.pushed} pushed, ${ls.pulled} pulled` +
+          (ls.errors ? `, ${ls.errors} errors` : "")
+        : "Signed in - no sync yet";
+    }
   }
   if (st.signed_in && st.user) {
     els.serverSignedOut.classList.add("hidden");

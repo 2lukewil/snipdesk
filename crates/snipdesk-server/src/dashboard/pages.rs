@@ -3085,12 +3085,50 @@ fn render_library_card(r: &LibraryRow) -> String {
         id_attr = escape_html(&r.id),
         title = escape_html(&r.title),
         title_attr = escape_html(&r.title),
-        body = escape_html(&r.body),
+        body = render_body_with_vars(&r.body),
         when = format_relative(r.updated_at),
         tags = tags_html,
         folder = folder,
         usage_pill = usage_pill,
     )
+}
+
+/// HTML-escape a snippet body and wrap `{variable_name}` tokens in
+/// the same chip styling the desktop client's preview uses, so
+/// template placeholders read identically on both surfaces. The
+/// token pattern mirrors the client's extractVarNames regex
+/// (`[A-Za-z0-9_-]+` between braces). Escaping happens per-piece
+/// BEFORE markup is added, so body content can't inject HTML.
+fn render_body_with_vars(body: &str) -> String {
+    let mut out = String::with_capacity(body.len() + 32);
+    let bytes = body.as_bytes();
+    let mut plain_start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // Find a closing brace with a valid token between.
+            if let Some(rel_end) = body[i + 1..].find('}') {
+                let token = &body[i + 1..i + 1 + rel_end];
+                let valid = !token.is_empty()
+                    && token
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+                if valid {
+                    out.push_str(&escape_html(&body[plain_start..i]));
+                    out.push_str(&format!(
+                        "<span class=\"preview-var\">{{{}}}</span>",
+                        escape_html(token)
+                    ));
+                    i += rel_end + 2;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&escape_html(&body[plain_start..]));
+    out
 }
 
 /// The inline edit form, rendered into the slot where a library card

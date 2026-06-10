@@ -1797,6 +1797,24 @@ body.compact .search-bar {
   margin-left: 6px;
 }
 
+/* --- Search match highlighting --- */
+
+.search-match {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* --- Footer sync indicator (bottom-right) --- */
+
+.sync-indicator {
+  margin-left: 8px;
+  font-size: 12px;
+  cursor: default;
+  line-height: 1;
+}
+.sync-indicator.ok { color: var(--success); }
+.sync-indicator.err { color: var(--danger); }
+
 /* --- Footer trash icon --- */
 
 .trash-btn {

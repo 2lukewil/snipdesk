@@ -46,7 +46,9 @@ pub struct FolderInfo {
     pub path: String,
     /// True if at least one snippet is directly in this folder (not just descendants).
     pub has_snippets: bool,
-    /// Number of snippets directly in this folder (not counting descendants).
+    /// Number of snippets in this folder INCLUDING descendants -
+    /// the same number the user sees when they click the folder
+    /// (the view filter matches the path and everything under it).
     pub count: i64,
 }
 
@@ -593,7 +595,16 @@ impl Db {
         Ok(paths
             .into_iter()
             .map(|p| {
-                let count = direct_counts.get(&p).copied().unwrap_or(0);
+                // Recursive count: this folder plus every descendant.
+                // Matches the dashboard sidebar's semantics - clicking
+                // a parent shows every descendant's snippets, so the
+                // badge should show the number the user will see.
+                let prefix = format!("{p}/");
+                let count = direct_counts
+                    .iter()
+                    .filter(|(k, _)| *k == &p || k.starts_with(&prefix))
+                    .map(|(_, c)| *c)
+                    .sum::<i64>();
                 FolderInfo {
                     path: p,
                     has_snippets: count > 0,

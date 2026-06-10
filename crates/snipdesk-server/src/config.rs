@@ -627,6 +627,16 @@ impl Config {
         if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
             self.oidc.allowed_deep_link_schemes = list;
         }
+        if let Some(v) = env_string("SNIPDESK_UPDATER_ENABLED") {
+            match parse_env_bool(&v) {
+                Some(b) => self.updater.enabled = b,
+                None => tracing::warn!(
+                    value = %v,
+                    "SNIPDESK_UPDATER_ENABLED is not a boolean (true/false); keeping {}",
+                    self.updater.enabled
+                ),
+            }
+        }
         apply_google_env(&mut self.oidc.google);
         apply_keycloak_env(&mut self.oidc.keycloak);
     }
@@ -1092,6 +1102,16 @@ mod tests {
                 assert_eq!(cfg.bind_addr, "127.0.0.1:7777");
             },
         );
+    }
+
+    #[test]
+    fn updater_disabled_from_env() {
+        with_env(&[("SNIPDESK_UPDATER_ENABLED", Some("false"))], || {
+            let mut cfg = fresh_config();
+            assert!(cfg.updater.enabled, "default is on");
+            cfg.apply_env_overrides();
+            assert!(!cfg.updater.enabled);
+        });
     }
 
     #[test]

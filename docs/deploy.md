@@ -161,9 +161,11 @@ for the stable knobs, env for the secrets).
 | `SNIPDESK_OIDC_GOOGLE_REQUIRED_HD` / `_ALLOWED_EMAIL_DOMAINS` | optional Google gating |
 | `SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID` / `_CLIENT_SECRET` / `_ISSUER_URL` / `_REDIRECT_URI` | `[oidc.keycloak]` (all four required to enable) |
 | `SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE` / `_ADMIN_ROLE` / `_ALLOWED_EMAIL_DOMAINS` / `_DISPLAY_NAME` | optional Keycloak gating + label |
+| `SNIPDESK_UPDATER_ENABLED` | `[updater].enabled` - set `false` for zero outbound HTTP from the server |
 
-The niche tuning tables (`[stats]`, `[fx]`, `[updater]`) stay
-TOML-only; deployments that tune those mount a file.
+The remaining tuning tables (`[stats]`, `[fx]`, the rest of
+`[updater]`) stay TOML-only; deployments that tune those mount a
+file.
 
 A minimal Kubernetes-style env set:
 

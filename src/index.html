@@ -167,6 +167,29 @@
         </div>
       </section>
 
+      <!-- Import preview modal: folder tree with per-snippet
+           checkboxes. Populated by buildImportTree() in main.js from
+           the parse_snippet_file IPC result. -->
+      <section id="import-preview" class="modal hidden">
+        <div class="modal-card wide">
+          <h2>Import preview</h2>
+          <p class="hint-block">
+            Everything new starts selected; duplicates of existing titles
+            start deselected. Expand folders to cherry-pick.
+          </p>
+          <div class="imp-toolbar">
+            <label><input type="checkbox" id="imp-master" /> Select all</label>
+            <input id="imp-search" type="search" placeholder="Filter by title" autocomplete="off" />
+            <span id="imp-count" class="hint-inline"></span>
+          </div>
+          <div id="imp-tree" class="modal-body imp-tree"></div>
+          <div class="modal-actions">
+            <button id="imp-cancel" class="btn-secondary" type="button">Cancel</button>
+            <button id="imp-confirm" class="btn-primary" type="button">Import selected</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Variable prompt modal -->
       <section id="var-prompt" class="modal hidden">
         <div class="modal-card">
@@ -631,8 +654,14 @@
               <hr class="settings-divider" />
               <p class="hint-block">
                 Export your snippets to JSON or CSV, or import from a previous
-                export. Imports skip duplicate titles automatically.
+                export. Imports open a preview where you pick exactly what to
+                bring in; duplicate titles start deselected.
               </p>
+              <label>
+                <span>Export filter <em>- leave empty to export everything</em></span>
+                <input id="export-filter" type="text" placeholder="Search title, body, tags" autocomplete="off" />
+              </label>
+              <div id="export-filter-count" class="hint-block"></div>
               <div class="maint-buttons">
                 <button id="btn-export" class="btn-secondary" type="button">Export</button>
                 <button id="btn-import" class="btn-secondary" type="button">Import</button>

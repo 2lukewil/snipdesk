@@ -430,6 +430,15 @@ const els = {
   setCancel: document.getElementById("set-cancel"),
   btnExport: document.getElementById("btn-export"),
   btnImport: document.getElementById("btn-import"),
+  exportFilter: document.getElementById("export-filter"),
+  exportFilterCount: document.getElementById("export-filter-count"),
+  importPreview: document.getElementById("import-preview"),
+  impMaster: document.getElementById("imp-master"),
+  impSearch: document.getElementById("imp-search"),
+  impCount: document.getElementById("imp-count"),
+  impTree: document.getElementById("imp-tree"),
+  impCancel: document.getElementById("imp-cancel"),
+  impConfirm: document.getElementById("imp-confirm"),
 
   // Onboarding modal (driven by the controller in the Onboarding section
   // further down; individual sub-element lookups happen lazily inside it
@@ -1311,6 +1320,7 @@ function closeAllModals() {
   els.linkPrompt.classList.add("hidden");
   els.settings.classList.add("hidden");
   els.dupWarn.classList.add("hidden");
+  if (els.importPreview) els.importPreview.classList.add("hidden");
   state.pendingLinkInsert = null;
   hideContextMenu();
 }
@@ -4338,8 +4348,53 @@ async function withDialogSuppressed(fn) {
   }
 }
 
+/// Snippets matching the export-filter input, via the same Rust
+/// matcher the launcher search uses (list_snippets). Empty filter
+/// means "no filter" and returns null so callers can take the
+/// export-everything path.
+async function exportFilterMatches() {
+  const q = (els.exportFilter?.value || "").trim();
+  if (!q) return null;
+  return (
+    (await invoke("list_snippets", {
+      query: q,
+      tag: null,
+      folder: null,
+      sort: null,
+    })) || []
+  );
+}
+
+/// Keep the "N of M match" line under the export filter current.
+let exportCountTimer = null;
+function scheduleExportFilterCount() {
+  clearTimeout(exportCountTimer);
+  exportCountTimer = setTimeout(async () => {
+    if (!els.exportFilterCount) return;
+    const q = (els.exportFilter?.value || "").trim();
+    if (!q) {
+      els.exportFilterCount.textContent = "";
+      return;
+    }
+    try {
+      const matches = await exportFilterMatches();
+      const total = (state.allSnippets || []).length;
+      els.exportFilterCount.textContent = `${matches.length} of ${total} match - only these will export`;
+    } catch (_e) {
+      els.exportFilterCount.textContent = "";
+    }
+  }, 200);
+}
+
 async function exportSnippets() {
   try {
+    // Resolve the filter BEFORE the save dialog so the user knows
+    // what they're about to write. Null = export everything.
+    const matches = await exportFilterMatches();
+    if (matches && matches.length === 0) {
+      setStatus("Export filter matches nothing - clear it or refine it", "err");
+      return;
+    }
     const path = await withDialogSuppressed(() =>
       saveDialog({
         defaultPath: "snippets.json",
@@ -4351,11 +4406,149 @@ async function exportSnippets() {
     );
     if (!path) return;
     const format = path.toLowerCase().endsWith(".csv") ? "csv" : "json";
-    const n = await invoke("export_snippets", { args: { path, format } });
-    setStatus(`Exported ${n} snippet${n === 1 ? "" : "s"}`, "ok");
+    const ids = matches ? matches.map((s) => s.id) : null;
+    const n = await invoke("export_snippets", { args: { path, format, ids } });
+    setStatus(
+      `Exported ${n} snippet${n === 1 ? "" : "s"}${matches ? " (filtered)" : ""}`,
+      "ok",
+    );
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
   }
+}
+
+// ---- Import preview (folder tree) ----
+
+/// Parsed entries for the open preview modal; indices line up with
+/// the data-idx attributes in the rendered tree.
+let importPreviewEntries = null;
+
+/// Group entries by folder_path into a nested tree. Folderless
+/// entries land under a "(no folder)" group at the root.
+function buildImportTreeModel(entries) {
+  const root = { children: new Map(), items: [] };
+  entries.forEach((entry, idx) => {
+    const folder = (entry.folder_path || "").trim();
+    let node = root;
+    const segs = folder
+      ? folder.split("/").map((s) => s.trim()).filter(Boolean)
+      : ["(no folder)"];
+    for (const seg of segs) {
+      if (!node.children.has(seg)) {
+        node.children.set(seg, { children: new Map(), items: [] });
+      }
+      node = node.children.get(seg);
+    }
+    node.items.push(idx);
+  });
+  return root;
+}
+
+function importNodeSize(node) {
+  let n = node.items.length;
+  for (const child of node.children.values()) n += importNodeSize(child);
+  return n;
+}
+
+/// Render the tree model into #imp-tree. Folders collapsed, items
+/// checked unless flagged duplicate - per the shared preview spec.
+function renderImportTree(node, container, entries) {
+  const sortedFolders = [...node.children.keys()].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  for (const name of sortedFolders) {
+    const child = node.children.get(name);
+    const folderEl = document.createElement("div");
+    folderEl.className = "imp-folder";
+    const row = document.createElement("div");
+    row.className = "imp-folder-row";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "imp-toggle";
+    toggle.textContent = "▸";
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "imp-folder-cb";
+    const nameEl = document.createElement("strong");
+    nameEl.textContent = name;
+    const count = document.createElement("span");
+    count.className = "hint-inline";
+    count.textContent = ` (${importNodeSize(child)})`;
+    label.append(cb, " ", nameEl, count);
+    row.append(toggle, label);
+    const childrenEl = document.createElement("div");
+    childrenEl.className = "imp-children";
+    childrenEl.hidden = true;
+    renderImportTree(child, childrenEl, entries);
+    folderEl.append(row, childrenEl);
+    container.appendChild(folderEl);
+  }
+  for (const idx of node.items) {
+    const entry = entries[idx];
+    const itemEl = document.createElement("div");
+    itemEl.className = "imp-item";
+    itemEl.dataset.title = (entry.title || "").toLowerCase();
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "imp-item-cb";
+    cb.dataset.idx = String(idx);
+    cb.checked = !entry.duplicate;
+    label.append(cb, " ", document.createTextNode(entry.title || "(untitled)"));
+    if (entry.duplicate) {
+      const badge = document.createElement("span");
+      badge.className = "imp-badge";
+      badge.textContent = "duplicate";
+      label.append(" ", badge);
+    }
+    itemEl.appendChild(label);
+    container.appendChild(itemEl);
+  }
+}
+
+function impItemCbs() {
+  return [...els.impTree.querySelectorAll(".imp-item-cb")];
+}
+
+function updateImportCounts() {
+  const cbs = impItemCbs();
+  const sel = cbs.filter((c) => c.checked).length;
+  els.impCount.textContent = `${sel} of ${cbs.length} selected`;
+  els.impConfirm.disabled = sel === 0;
+  els.impMaster.checked = sel === cbs.length && cbs.length > 0;
+  els.impMaster.indeterminate = sel > 0 && sel < cbs.length;
+  // Folder tri-states, deepest first so parents see settled children.
+  [...els.impTree.querySelectorAll(".imp-folder")].reverse().forEach((f) => {
+    const inner = f.querySelectorAll(".imp-item-cb");
+    const innerSel = [...inner].filter((c) => c.checked).length;
+    const fcb = f.querySelector(":scope > .imp-folder-row .imp-folder-cb");
+    if (!fcb) return;
+    fcb.checked = inner.length > 0 && innerSel === inner.length;
+    fcb.indeterminate = innerSel > 0 && innerSel < inner.length;
+  });
+}
+
+function applyImportSearch() {
+  const q = (els.impSearch.value || "").trim().toLowerCase();
+  els.impTree.querySelectorAll(".imp-item").forEach((it) => {
+    it.style.display = !q || it.dataset.title.includes(q) ? "" : "none";
+  });
+  [...els.impTree.querySelectorAll(".imp-folder")].reverse().forEach((f) => {
+    const anyVisible = [...f.querySelectorAll(".imp-item")].some(
+      (it) => it.style.display !== "none",
+    );
+    f.style.display = anyVisible ? "" : "none";
+    const children = f.querySelector(":scope > .imp-children");
+    const toggle = f.querySelector(":scope > .imp-folder-row .imp-toggle");
+    if (q && anyVisible) {
+      children.hidden = false;
+      if (toggle) toggle.textContent = "▾";
+    } else if (!q) {
+      children.hidden = true;
+      if (toggle) toggle.textContent = "▸";
+    }
+  });
 }
 
 async function importSnippets() {
@@ -4372,12 +4565,44 @@ async function importSnippets() {
     );
     const path = asPath(picked);
     if (!path) return;
-    const lower = path.toLowerCase();
-    let format;
-    if (lower.endsWith(".csv")) format = "csv";
-    else format = "json";
+    const format = path.toLowerCase().endsWith(".csv") ? "csv" : "json";
 
-    const result = await invoke("import_snippets", { args: { path, format } });
+    const entries = await invoke("parse_snippet_file", { args: { path, format } });
+    if (!entries || entries.length === 0) {
+      setStatus("No snippets found in that file", "err");
+      return;
+    }
+    importPreviewEntries = entries;
+    els.impTree.replaceChildren();
+    els.impSearch.value = "";
+    renderImportTree(buildImportTreeModel(entries), els.impTree, entries);
+    updateImportCounts();
+    els.importPreview.classList.remove("hidden");
+  } catch (err) {
+    const message = typeof err === "string" ? err : err?.message || String(err);
+    setStatus(`Import failed`, "err");
+    alert(`Import failed:\n\n${message}`);
+  }
+}
+
+async function confirmImportSelection() {
+  if (!importPreviewEntries) return;
+  const selected = impItemCbs()
+    .filter((c) => c.checked)
+    .map((c) => importPreviewEntries[parseInt(c.dataset.idx, 10)])
+    .filter(Boolean)
+    .map((e) => ({
+      title: e.title,
+      body: e.body,
+      tags: e.tags || [],
+      folder_path: e.folder_path || null,
+    }));
+  if (selected.length === 0) return;
+  els.impConfirm.disabled = true;
+  try {
+    const result = await invoke("import_snippet_items", {
+      args: { items: selected },
+    });
     const imported = result?.imported ?? 0;
     const skipped = result?.skipped_duplicates ?? 0;
     const parts = [`Imported ${imported} snippet${imported === 1 ? "" : "s"}`];
@@ -4385,11 +4610,13 @@ async function importSnippets() {
       parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
     }
     setStatus(parts.join(" - "), skipped > 0 && imported === 0 ? "err" : "ok");
+    els.importPreview.classList.add("hidden");
+    importPreviewEntries = null;
     await refresh();
   } catch (err) {
-    const message = typeof err === "string" ? err : err?.message || String(err);
-    setStatus(`Import failed`, "err");
-    alert(`Import failed:\n\n${message}`);
+    setStatus(`Import failed: ${err}`, "err");
+  } finally {
+    els.impConfirm.disabled = false;
   }
 }
 
@@ -4586,6 +4813,46 @@ function bindEvents() {
   els.setCancel.addEventListener("click", closeSettings);
   els.btnExport.addEventListener("click", exportSnippets);
   els.btnImport.addEventListener("click", importSnippets);
+  if (els.exportFilter)
+    els.exportFilter.addEventListener("input", scheduleExportFilterCount);
+  if (els.impCancel)
+    els.impCancel.addEventListener("click", () => {
+      els.importPreview.classList.add("hidden");
+      importPreviewEntries = null;
+    });
+  if (els.impConfirm)
+    els.impConfirm.addEventListener("click", confirmImportSelection);
+  if (els.impMaster)
+    els.impMaster.addEventListener("change", () => {
+      const on = els.impMaster.checked;
+      impItemCbs().forEach((c) => {
+        c.checked = on;
+      });
+      updateImportCounts();
+    });
+  if (els.impSearch) els.impSearch.addEventListener("input", applyImportSearch);
+  if (els.impTree) {
+    els.impTree.addEventListener("click", (e) => {
+      const toggle = e.target.closest(".imp-toggle");
+      if (!toggle) return;
+      const children = toggle
+        .closest(".imp-folder")
+        .querySelector(":scope > .imp-children");
+      children.hidden = !children.hidden;
+      toggle.textContent = children.hidden ? "▸" : "▾";
+    });
+    els.impTree.addEventListener("change", (e) => {
+      if (e.target.classList.contains("imp-folder-cb")) {
+        e.target
+          .closest(".imp-folder")
+          .querySelectorAll(".imp-item-cb")
+          .forEach((c) => {
+            c.checked = e.target.checked;
+          });
+      }
+      updateImportCounts();
+    });
+  }
 
   // Dismiss context menu on outside click / blur / resize.
   document.addEventListener("mousedown", (e) => {

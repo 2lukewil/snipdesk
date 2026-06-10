@@ -1716,3 +1716,52 @@ body.compact .search-bar {
   border: 1px solid var(--border);
   border-bottom-width: 2px;
 }
+
+/* --- Import preview tree (Settings -> Import) --- */
+
+.imp-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.imp-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+.imp-tree {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.imp-folder { margin: 2px 0; }
+.imp-folder-row { display: flex; align-items: center; gap: 4px; }
+.imp-toggle {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.imp-children { margin-left: 22px; }
+.imp-item { margin: 2px 0 2px 26px; }
+.imp-item label,
+.imp-folder-row label { cursor: pointer; }
+.imp-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--danger-bg, rgba(220, 80, 80, 0.15));
+  color: var(--danger, #e06c6c);
+  margin-left: 6px;
+}

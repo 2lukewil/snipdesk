@@ -38,6 +38,25 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_OUTPUT"
           echo "Releasing snipdesk-server $version"
 
+      # Same guard release.yml runs for the desktop tags. The server
+      # binary reports CARGO_PKG_VERSION on /api/health and in the
+      # dashboard, and its update banner compares that against the
+      # latest server-v* tag in the releases feed. Tagging without
+      # bumping the crate ships a binary that thinks it's outdated
+      # forever - the server-side flavour of the desktop auto-update
+      # loop. Fail before any image is built or pushed.
+      - name: Verify tag matches the server crate version
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#server-v}"
+          crate_version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/snipdesk-server/Cargo.toml | head -1)
+          if [ "$tag_version" != "$crate_version" ]; then
+            echo "::error::Tag server-v$tag_version does not match crates/snipdesk-server/Cargo.toml version $crate_version."
+            echo "::error::Bump the crate version, commit, then re-tag. The deployed binary reports the crate version; a mismatch makes every running server believe it is permanently outdated."
+            exit 1
+          fi
+          echo "Tag and crate version agree: $tag_version"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

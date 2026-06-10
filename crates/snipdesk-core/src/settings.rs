@@ -184,6 +184,36 @@ fn default_format_rules() -> Vec<FormatRule> {
     ]
 }
 
+/// Compile-time default server URL for deployment builds. Two
+/// sources, highest priority first:
+///
+///   1. A whitelabel brand bundle: `scripts/brand.mjs` rewrites the
+///      `brand_url` literal below at build time.
+///   2. The `SNIPDESK_DEFAULT_SERVER_URL` environment variable at
+///      compile time. Lets a fork or CI pipeline bake the URL
+///      without a brand bundle and without a source diff - set it
+///      as a CI variable and every tagged build carries it.
+///
+/// Both empty (the stock open-source build) means no default: the
+/// user types the server URL themselves. When non-empty, the client
+/// treats the baked URL as authoritative - the URL field is hidden
+/// in Settings and onboarding, and app startup re-adopts the baked
+/// value over a previously persisted one so a new release can move
+/// the fleet to a new URL via auto-update.
+fn default_server_url() -> String {
+    // brand.mjs rewrites the next line's empty literal for
+    // whitelabel builds; keep the binding's exact shape (name, type
+    // annotation, one line) or the substitution silently stops
+    // matching.
+    let brand_url: &str = "";
+    let baked = if brand_url.is_empty() {
+        option_env!("SNIPDESK_DEFAULT_SERVER_URL").unwrap_or("")
+    } else {
+        brand_url
+    };
+    baked.trim().trim_end_matches('/').to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -214,7 +244,7 @@ impl Default for Settings {
             team_library_sync_on_startup: true,
             team_library_folder_name: default_team_folder_name(),
             show_team_snippets_inline: true,
-            server_url: String::new(),
+            server_url: default_server_url(),
             prefer_sso_signin: false,
             format_rules: default_format_rules(),
             backup_retention_days: default_backup_retention_days(),

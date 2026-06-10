@@ -110,6 +110,27 @@ pub fn run() {
             // Settings before logging/backup - both read retention windows from it.
             let settings = settings::Settings::load_or_default(&settings_path);
 
+            // Deployment builds bake a default server URL (brand
+            // bundle or SNIPDESK_DEFAULT_SERVER_URL at compile time).
+            // The baked value is authoritative: if an update ships a
+            // new URL, adopt it over whatever an older release
+            // persisted, so the operator can move the fleet by
+            // pushing a tag. Stock builds bake "" and never enter
+            // this branch, so a self-managed user's hand-entered URL
+            // is untouched.
+            #[cfg(feature = "teams")]
+            let settings = {
+                let mut settings = settings;
+                let baked = settings::Settings::default().server_url;
+                if !baked.is_empty() && settings.server_url != baked {
+                    settings.server_url = baked;
+                    if let Err(e) = settings.save(&settings_path) {
+                        eprintln!("failed to persist baked server URL: {e}");
+                    }
+                }
+                settings
+            };
+
             // Logging before Db::open so a corrupt-schema panic lands in snipdesk.log.
             logging::init(&data_dir, settings.log_retention_days);
 

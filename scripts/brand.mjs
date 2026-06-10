@@ -119,12 +119,17 @@ const RULES = [
   // dodges accidental hits on "snipdesk" inside URLs / identifiers.
   { from: "\"snipdesk\"", to: (c) => c.deep_link_scheme && `"${c.deep_link_scheme}"` },
   // Settings::default seeds. The `from` patterns match the exact
-  // lines in settings.rs's Default impl; the replacement keeps the
-  // surrounding context so future readers still see a stock-style
-  // initializer (just with a non-empty / true literal).
+  // lines in settings.rs; the replacement keeps the surrounding
+  // context so future readers still see a stock-style initializer
+  // (just with a non-empty / true literal).
+  //
+  // server_url lands inside default_server_url(), where the brand
+  // literal outranks the SNIPDESK_DEFAULT_SERVER_URL compile-time
+  // env fallback. The substituted line must keep the exact
+  // `let brand_url: &str = ...;` shape that function documents.
   {
-    from: "server_url: String::new(),",
-    to: (c) => c.server_url && `server_url: String::from(${rustStringLiteral(c.server_url)}),`,
+    from: 'let brand_url: &str = "";',
+    to: (c) => c.server_url && `let brand_url: &str = ${rustStringLiteral(c.server_url)};`,
   },
   {
     from: "prefer_sso_signin: false,",

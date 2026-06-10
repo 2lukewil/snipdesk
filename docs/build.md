@@ -108,6 +108,39 @@ cargo run -p snipdesk-server -- --config snipdesk-server.toml
 Visit `http://127.0.0.1:8080/` in a browser for the admin dashboard,
 or point a Teams desktop client at `http://127.0.0.1:8080` to sync.
 
+## Bake a default server URL
+
+Deployment builds can carry the organisation's server URL inside
+the binary, so end users never see or type it. Set the
+`SNIPDESK_DEFAULT_SERVER_URL` environment variable when compiling:
+
+```bash
+SNIPDESK_DEFAULT_SERVER_URL=https://snippets.yourcompany.com npm run tauri:build:teams
+```
+
+What a baked URL changes in the client:
+
+- The server URL field disappears from Settings and onboarding;
+  the configured host is shown as a read-only label instead.
+- The baked value is authoritative. On every launch the client
+  adopts it over whatever an earlier release persisted, so moving
+  the fleet to a new URL is: change the variable, push a release
+  tag, and installed clients pick up the new URL through
+  auto-update. (Users sign in again after a URL change - the auth
+  token is keyed to the server it was issued by.)
+- A stock build (variable unset) behaves exactly as before: the
+  user types the URL themselves and it persists normally.
+
+In CI, define the variable where your pipeline runs the build:
+GitHub Actions env/secret, GitLab CI/CD variable, or a plain
+`export` in the job script. Forks that mirror this repo get a
+baked-URL build with zero source changes - the URL lives in the
+pipeline configuration, not the tree.
+
+A whitelabel brand bundle's `server_url` field does the same thing
+and takes precedence over the environment variable when both are
+present.
+
 ## Whitelabel (per-customer builds)
 
 Building a customer-branded installer or server image is its own flow.

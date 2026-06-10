@@ -2,6 +2,13 @@
 # (e.g. /etc/snipdesk/config.toml in Docker, or alongside the binary
 # locally) and edit the values. Never commit a config with a real
 # master_key or jwt_secret.
+#
+# Every practical field below also has a SNIPDESK_* environment
+# variable (env > TOML > default), and the file itself is optional
+# when SNIPDESK_JWT_SECRET is set - Kubernetes/Helm deployments can
+# configure the container entirely through the environment. The
+# variable table lives in docs/deploy.md. Only the niche tuning
+# tables ([stats], [fx], [updater]) are TOML-only.
 
 # Address the HTTP server binds to. 0.0.0.0 listens on all interfaces.
 bind_addr = "0.0.0.0:8080"

@@ -137,6 +137,54 @@ Notes:
 
 Keep this file out of source control: it contains the JWT secret.
 
+### No config file at all (Kubernetes / Helm)
+
+Every practical config field has a `SNIPDESK_*` environment
+variable, and the config file is optional when `SNIPDESK_JWT_SECRET`
+is set - the natural shape for Helm charts where values flow in as
+env and secrets rather than mounted files. Precedence is
+env > TOML > default everywhere, so the two styles also mix (file
+for the stable knobs, env for the secrets).
+
+| Variable | Maps to |
+| --- | --- |
+| `SNIPDESK_BIND_ADDR` | `bind_addr` (default `0.0.0.0:8080`) |
+| `SNIPDESK_DATA_DIR` | `data_dir` - point at your persistent volume mount |
+| `SNIPDESK_JWT_SECRET` | `jwt_secret` (required; also the env-only-mode signal) |
+| `SNIPDESK_MASTER_KEY` | the master encryption key (no TOML needed) |
+| `SNIPDESK_SECURE_COOKIES` | `secure_cookies` (`true`/`false`) |
+| `SNIPDESK_TOMBSTONE_RETENTION_DAYS` | `tombstone_retention_days` |
+| `SNIPDESK_CORS_ALLOWED_ORIGINS` | `cors_allowed_origins` (comma-separated) |
+| `SNIPDESK_BRAND_NAME` | `[brand].name` |
+| `SNIPDESK_OIDC_ALLOWED_SCHEMES` | `[oidc].allowed_deep_link_schemes` (comma-separated) |
+| `SNIPDESK_OIDC_GOOGLE_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` | `[oidc.google]` (all three required to enable) |
+| `SNIPDESK_OIDC_GOOGLE_REQUIRED_HD` / `_ALLOWED_EMAIL_DOMAINS` | optional Google gating |
+| `SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID` / `_CLIENT_SECRET` / `_ISSUER_URL` / `_REDIRECT_URI` | `[oidc.keycloak]` (all four required to enable) |
+| `SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE` / `_ADMIN_ROLE` / `_ALLOWED_EMAIL_DOMAINS` / `_DISPLAY_NAME` | optional Keycloak gating + label |
+
+The niche tuning tables (`[stats]`, `[fx]`, `[updater]`) stay
+TOML-only; deployments that tune those mount a file.
+
+A minimal Kubernetes-style env set:
+
+```yaml
+env:
+  - name: SNIPDESK_DATA_DIR
+    value: /var/lib/snipdesk          # your PVC mountPath
+  - name: SNIPDESK_SECURE_COOKIES
+    value: "true"
+  - name: SNIPDESK_JWT_SECRET
+    valueFrom:
+      secretKeyRef: { name: snipdesk, key: jwt-secret }
+  - name: SNIPDESK_MASTER_KEY
+    valueFrom:
+      secretKeyRef: { name: snipdesk, key: master-key }
+```
+
+An OIDC provider enabled from env needs its full required set
+(listed above); an incomplete set logs a warning at boot and leaves
+the provider disabled rather than half-configured.
+
 ## 5. Boot it
 
 Create `docker-compose.yml`:

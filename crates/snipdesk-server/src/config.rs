@@ -25,10 +25,15 @@ pub const MASTER_KEY_LEN: usize = 32;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// e.g. "0.0.0.0:8080".
+    /// e.g. "0.0.0.0:8080". Defaults to that value so an env-only
+    /// deployment (no config file) binds sensibly out of the box.
+    #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
     /// Where the SQLite DB lives. The directory is created on startup if
-    /// missing; the file is created by sqlx on first connect.
+    /// missing; the file is created by sqlx on first connect. Defaults
+    /// to "./data"; container deployments set SNIPDESK_DATA_DIR (or
+    /// the TOML field) to their mounted volume path.
+    #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     /// 256-bit secret for signing JWTs (HS256). Generate one with `openssl
     /// rand -hex 32` or `snipdesk-server gen-jwt-secret` (later phase).
@@ -319,6 +324,33 @@ fn default_tombstone_retention_days() -> u32 {
     90
 }
 
+fn default_bind_addr() -> String {
+    "0.0.0.0:8080".to_string()
+}
+
+fn default_data_dir() -> PathBuf {
+    PathBuf::from("./data")
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            bind_addr: default_bind_addr(),
+            data_dir: default_data_dir(),
+            jwt_secret: None,
+            crypto: CryptoConfig::default(),
+            tombstone_retention_days: default_tombstone_retention_days(),
+            oidc: OidcConfig::default(),
+            secure_cookies: false,
+            cors_allowed_origins: Vec::new(),
+            stats: StatsConfig::default(),
+            fx: None,
+            brand: BrandConfig::default(),
+            updater: UpdaterConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct CryptoConfig {
     /// Inline base64 master key. Lowest priority.
@@ -480,15 +512,34 @@ impl std::fmt::Debug for KeycloakOidcConfig {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let raw = std::fs::read_to_string(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Env-only mode: Kubernetes / Helm deployments prefer
+                // passing everything as environment variables and may
+                // not mount a config file at all. SNIPDESK_JWT_SECRET
+                // being set is the signal that this is deliberate -
+                // it's mandatory anyway (the server refuses to boot
+                // without a JWT secret), so an env-driven deployment
+                // must have set it, and a forgotten config mount on a
+                // TOML-driven deployment won't have.
+                if env_string("SNIPDESK_JWT_SECRET").is_some() {
+                    tracing::info!(
+                        path = %path.display(),
+                        "config file not found; SNIPDESK_JWT_SECRET is set, \
+                         continuing with environment-only configuration"
+                    );
+                    let mut cfg = Config::default();
+                    cfg.apply_env_overrides();
+                    return Ok(cfg);
+                }
                 // Most common first-run failure: operator pulled the
                 // image + `docker run` without mounting their config.
                 // The default error ("read config: No such file...")
                 // told them the path but not what to do about it.
                 // Spell the full fix out so the next message they see
                 // includes the answer.
-                anyhow!(
+                return Err(anyhow!(
                     "config file not found at {}\n\
                      \n\
                      Mount your snipdesk-server.toml at this path when you start \
@@ -501,52 +552,226 @@ impl Config {
                      \n\
                      A minimal config that just gets the server running:\n  \
                          bind_addr = \"0.0.0.0:8080\"\n  \
-                         data_dir = \"/var/lib/snipdesk\"\n\
+                         data_dir = \"/var/lib/snipdesk\"\n  \
+                         jwt_secret = \"<from gen-jwt-secret>\"\n\
+                     \n\
+                     Alternatively, run without any config file by supplying \
+                     SNIPDESK_JWT_SECRET (and the other SNIPDESK_* variables) \
+                     in the environment - see docs/deploy.md.\n\
                      \n\
                      See snipdesk-server.example.toml for the full schema or \
                      docs/deploy.md for a complete walkthrough.\n\
                      Generate a fresh master key with: snipdesk-server gen-key",
                     path.display(),
                     path.display(),
-                )
-            } else {
-                anyhow::Error::new(e).context(format!("read config {}", path.display()))
+                ));
             }
-        })?;
+            Err(e) => {
+                return Err(
+                    anyhow::Error::new(e).context(format!("read config {}", path.display()))
+                )
+            }
+        };
         let mut cfg: Config =
             toml::from_str(&raw).with_context(|| format!("parse config {}", path.display()))?;
         cfg.apply_env_overrides();
         Ok(cfg)
     }
 
-    /// Apply env-var overlays for the small set of fields a Docker
-    /// image baker is likely to want pinned at image-build time
-    /// (whitelabel branding, OIDC scheme allowlist). Mirrors the
-    /// env > TOML > default precedence used by `SNIPDESK_MASTER_KEY`
-    /// in `load_master_key` so operators learn one convention.
+    /// Apply env-var overlays. Every practical config field has a
+    /// `SNIPDESK_*` counterpart so container platforms (Kubernetes /
+    /// Helm, ECS, plain docker) can configure the server entirely
+    /// through the environment - the TOML file is optional when
+    /// `SNIPDESK_JWT_SECRET` is present (see `load`). Precedence is
+    /// env > TOML > default everywhere, mirroring the convention
+    /// `SNIPDESK_MASTER_KEY` established in `load_master_key`.
     ///
-    /// The intended flow for a per-customer Docker image:
-    ///   - Dockerfile sets `ENV SNIPDESK_BRAND_NAME=...` and
-    ///     `ENV SNIPDESK_OIDC_ALLOWED_SCHEMES=...` from build-args
-    ///   - Operator pulls the customer's image; brand is baked in
-    ///   - Operator's mounted TOML carries only the secrets and
-    ///     deployment-specific knobs - brand fields can be omitted
-    ///   - `docker pull` for an update preserves the env (it lives
-    ///     on the image), so the brand never reverts to stock
+    /// Niche tuning tables ([stats], [fx], [updater]) intentionally
+    /// stay TOML-only: they're maps and nested structs that don't
+    /// flatten well into env strings, and deployments that care about
+    /// them are config-file deployments anyway.
     fn apply_env_overrides(&mut self) {
+        if let Some(v) = env_string("SNIPDESK_BIND_ADDR") {
+            self.bind_addr = v;
+        }
+        if let Some(v) = env_string("SNIPDESK_DATA_DIR") {
+            self.data_dir = PathBuf::from(v);
+        }
+        if let Some(v) = env_string("SNIPDESK_JWT_SECRET") {
+            self.jwt_secret = Some(v);
+        }
+        if let Some(v) = env_string("SNIPDESK_TOMBSTONE_RETENTION_DAYS") {
+            match v.parse::<u32>() {
+                Ok(n) => self.tombstone_retention_days = n,
+                Err(_) => tracing::warn!(
+                    value = %v,
+                    "SNIPDESK_TOMBSTONE_RETENTION_DAYS is not a number; keeping {}",
+                    self.tombstone_retention_days
+                ),
+            }
+        }
+        if let Some(v) = env_string("SNIPDESK_SECURE_COOKIES") {
+            match parse_env_bool(&v) {
+                Some(b) => self.secure_cookies = b,
+                None => tracing::warn!(
+                    value = %v,
+                    "SNIPDESK_SECURE_COOKIES is not a boolean (true/false); keeping {}",
+                    self.secure_cookies
+                ),
+            }
+        }
+        if let Some(list) = env_csv("SNIPDESK_CORS_ALLOWED_ORIGINS") {
+            self.cors_allowed_origins = list;
+        }
         if let Some(v) = env_string("SNIPDESK_BRAND_NAME") {
             self.brand.name = v;
         }
-        if let Some(v) = env_string("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
-            let schemes: Vec<String> = v
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !schemes.is_empty() {
-                self.oidc.allowed_deep_link_schemes = schemes;
+        if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
+            self.oidc.allowed_deep_link_schemes = list;
+        }
+        apply_google_env(&mut self.oidc.google);
+        apply_keycloak_env(&mut self.oidc.keycloak);
+    }
+}
+
+/// Overlay `SNIPDESK_OIDC_GOOGLE_*` onto the Google provider slot.
+/// When the TOML had no `[oidc.google]` block, a complete set of the
+/// required fields (client id, client secret, redirect URI) creates
+/// the block from scratch; an incomplete set warns and is ignored so
+/// a typo'd deployment fails visibly instead of half-configuring.
+fn apply_google_env(slot: &mut Option<GoogleOidcConfig>) {
+    let client_id = env_string("SNIPDESK_OIDC_GOOGLE_CLIENT_ID");
+    let client_secret = env_string("SNIPDESK_OIDC_GOOGLE_CLIENT_SECRET");
+    let redirect_uri = env_string("SNIPDESK_OIDC_GOOGLE_REDIRECT_URI");
+    let required_hd = env_string("SNIPDESK_OIDC_GOOGLE_REQUIRED_HD");
+    let domains = env_csv("SNIPDESK_OIDC_GOOGLE_ALLOWED_EMAIL_DOMAINS");
+
+    match slot {
+        Some(cfg) => {
+            if let Some(v) = client_id {
+                cfg.client_id = v;
+            }
+            if let Some(v) = client_secret {
+                cfg.client_secret = v;
+            }
+            if let Some(v) = redirect_uri {
+                cfg.redirect_uri = v;
+            }
+            if let Some(v) = required_hd {
+                cfg.required_hd = Some(v);
+            }
+            if let Some(v) = domains {
+                cfg.allowed_email_domains = v;
             }
         }
+        None => match (client_id, client_secret, redirect_uri) {
+            (Some(client_id), Some(client_secret), Some(redirect_uri)) => {
+                *slot = Some(GoogleOidcConfig {
+                    client_id,
+                    client_secret,
+                    redirect_uri,
+                    required_hd,
+                    allowed_email_domains: domains.unwrap_or_default(),
+                });
+            }
+            (None, None, None) => {}
+            _ => tracing::warn!(
+                "incomplete SNIPDESK_OIDC_GOOGLE_* environment: client id, client \
+                 secret, and redirect URI are all required to enable the provider \
+                 from env; Google OIDC stays disabled"
+            ),
+        },
+    }
+}
+
+/// Overlay `SNIPDESK_OIDC_KEYCLOAK_*` onto the Keycloak provider
+/// slot. Same create-or-overlay semantics as Google; the issuer URL
+/// joins the required set because Keycloak's discovery endpoint is
+/// per-realm rather than fixed.
+fn apply_keycloak_env(slot: &mut Option<KeycloakOidcConfig>) {
+    let client_id = env_string("SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID");
+    let client_secret = env_string("SNIPDESK_OIDC_KEYCLOAK_CLIENT_SECRET");
+    let issuer_url = env_string("SNIPDESK_OIDC_KEYCLOAK_ISSUER_URL");
+    let redirect_uri = env_string("SNIPDESK_OIDC_KEYCLOAK_REDIRECT_URI");
+    let required_realm_role = env_string("SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE");
+    let admin_role = env_string("SNIPDESK_OIDC_KEYCLOAK_ADMIN_ROLE");
+    let domains = env_csv("SNIPDESK_OIDC_KEYCLOAK_ALLOWED_EMAIL_DOMAINS");
+    let display_name = env_string("SNIPDESK_OIDC_KEYCLOAK_DISPLAY_NAME");
+
+    match slot {
+        Some(cfg) => {
+            if let Some(v) = client_id {
+                cfg.client_id = v;
+            }
+            if let Some(v) = client_secret {
+                cfg.client_secret = v;
+            }
+            if let Some(v) = issuer_url {
+                cfg.issuer_url = v;
+            }
+            if let Some(v) = redirect_uri {
+                cfg.redirect_uri = v;
+            }
+            if let Some(v) = required_realm_role {
+                cfg.required_realm_role = Some(v);
+            }
+            if let Some(v) = admin_role {
+                cfg.admin_role = Some(v);
+            }
+            if let Some(v) = domains {
+                cfg.allowed_email_domains = v;
+            }
+            if let Some(v) = display_name {
+                cfg.display_name = Some(v);
+            }
+        }
+        None => match (client_id, client_secret, issuer_url, redirect_uri) {
+            (Some(client_id), Some(client_secret), Some(issuer_url), Some(redirect_uri)) => {
+                *slot = Some(KeycloakOidcConfig {
+                    client_id,
+                    client_secret,
+                    issuer_url,
+                    redirect_uri,
+                    required_realm_role,
+                    admin_role,
+                    allowed_email_domains: domains.unwrap_or_default(),
+                    display_name,
+                });
+            }
+            (None, None, None, None) => {}
+            _ => tracing::warn!(
+                "incomplete SNIPDESK_OIDC_KEYCLOAK_* environment: client id, client \
+                 secret, issuer URL, and redirect URI are all required to enable the \
+                 provider from env; Keycloak OIDC stays disabled"
+            ),
+        },
+    }
+}
+
+/// "true"/"false" with the common aliases. None = unparseable, the
+/// caller warns and keeps the prior value.
+fn parse_env_bool(v: &str) -> Option<bool> {
+    match v.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Comma-separated env list -> Some(non-empty trimmed entries), or
+/// None when the var is unset / empty / only commas, so a blank env
+/// var can't clobber a TOML-configured list.
+fn env_csv(name: &str) -> Option<Vec<String>> {
+    let raw = env_string(name)?;
+    let list: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if list.is_empty() {
+        None
+    } else {
+        Some(list)
     }
 }
 
@@ -638,29 +863,21 @@ pub fn load_master_key(cfg: &CryptoConfig) -> Result<MasterKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     fn fresh_config() -> Config {
-        Config {
-            bind_addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
-            jwt_secret: None,
-            crypto: CryptoConfig::default(),
-            tombstone_retention_days: 0,
-            oidc: OidcConfig::default(),
-            secure_cookies: false,
-            cors_allowed_origins: Vec::new(),
-            stats: StatsConfig::default(),
-            fx: None,
-            brand: BrandConfig::default(),
-            updater: UpdaterConfig::default(),
-        }
+        Config::default()
     }
 
-    /// Helper that wipes the env vars first so a parallel test or a
-    /// stray external value can't poison the result. Tests still
-    /// run serially via #[serial_test] would be ideal, but for two
-    /// vars in one process the wipe-then-set pattern is enough.
+    /// Process-wide env mutations race across parallel tests, so
+    /// every env-touching test serialises through this lock.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Helper that wipes the env vars first so a stray external
+    /// value can't poison the result, runs `f`, then cleans up.
+    /// Holds ENV_LOCK for the duration so tests can't interleave.
     fn with_env(pairs: &[(&str, Option<&str>)], f: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for (k, _) in pairs {
             std::env::remove_var(k);
         }
@@ -739,6 +956,158 @@ mod tests {
             assert_eq!(
                 cfg.oidc.allowed_deep_link_schemes,
                 vec!["snipdesk".to_string()]
+            );
+        });
+    }
+
+    #[test]
+    fn core_fields_override_from_env() {
+        with_env(
+            &[
+                ("SNIPDESK_BIND_ADDR", Some("127.0.0.1:9999")),
+                ("SNIPDESK_DATA_DIR", Some("/srv/snip")),
+                ("SNIPDESK_JWT_SECRET", Some("env-secret")),
+                ("SNIPDESK_SECURE_COOKIES", Some("true")),
+                ("SNIPDESK_TOMBSTONE_RETENTION_DAYS", Some("30")),
+                (
+                    "SNIPDESK_CORS_ALLOWED_ORIGINS",
+                    Some("https://a.example, https://b.example"),
+                ),
+            ],
+            || {
+                let mut cfg = fresh_config();
+                cfg.apply_env_overrides();
+                assert_eq!(cfg.bind_addr, "127.0.0.1:9999");
+                assert_eq!(cfg.data_dir, PathBuf::from("/srv/snip"));
+                assert_eq!(cfg.jwt_secret.as_deref(), Some("env-secret"));
+                assert!(cfg.secure_cookies);
+                assert_eq!(cfg.tombstone_retention_days, 30);
+                assert_eq!(
+                    cfg.cors_allowed_origins,
+                    vec![
+                        "https://a.example".to_string(),
+                        "https://b.example".to_string()
+                    ]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn bogus_numeric_and_bool_envs_keep_prior_values() {
+        with_env(
+            &[
+                ("SNIPDESK_TOMBSTONE_RETENTION_DAYS", Some("ninety")),
+                ("SNIPDESK_SECURE_COOKIES", Some("maybe")),
+            ],
+            || {
+                let mut cfg = fresh_config();
+                cfg.secure_cookies = true;
+                cfg.tombstone_retention_days = 42;
+                cfg.apply_env_overrides();
+                assert!(cfg.secure_cookies, "unparseable bool must not flip");
+                assert_eq!(cfg.tombstone_retention_days, 42);
+            },
+        );
+    }
+
+    #[test]
+    fn keycloak_block_created_from_complete_env() {
+        with_env(
+            &[
+                ("SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID", Some("snip")),
+                ("SNIPDESK_OIDC_KEYCLOAK_CLIENT_SECRET", Some("s3cret")),
+                (
+                    "SNIPDESK_OIDC_KEYCLOAK_ISSUER_URL",
+                    Some("https://kc.example/realms/main"),
+                ),
+                (
+                    "SNIPDESK_OIDC_KEYCLOAK_REDIRECT_URI",
+                    Some("https://snip.example/api/auth/oidc/keycloak/callback"),
+                ),
+                ("SNIPDESK_OIDC_KEYCLOAK_ADMIN_ROLE", Some("snip-admin")),
+                (
+                    "SNIPDESK_OIDC_KEYCLOAK_DISPLAY_NAME",
+                    Some("Sign in with Acme"),
+                ),
+            ],
+            || {
+                let mut cfg = fresh_config();
+                cfg.apply_env_overrides();
+                let kc = cfg.oidc.keycloak.expect("keycloak built from env");
+                assert_eq!(kc.client_id, "snip");
+                assert_eq!(kc.issuer_url, "https://kc.example/realms/main");
+                assert_eq!(kc.admin_role.as_deref(), Some("snip-admin"));
+                assert_eq!(kc.display_name.as_deref(), Some("Sign in with Acme"));
+                assert!(kc.required_realm_role.is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn incomplete_keycloak_env_leaves_provider_disabled() {
+        with_env(
+            &[
+                ("SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID", Some("snip")),
+                // No secret / issuer / redirect: must not half-enable.
+            ],
+            || {
+                let mut cfg = fresh_config();
+                cfg.apply_env_overrides();
+                assert!(cfg.oidc.keycloak.is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn google_env_overlays_existing_toml_block() {
+        with_env(
+            &[(
+                "SNIPDESK_OIDC_GOOGLE_CLIENT_SECRET",
+                Some("rotated-secret"),
+            )],
+            || {
+                let mut cfg = fresh_config();
+                cfg.oidc.google = Some(GoogleOidcConfig {
+                    client_id: "id".into(),
+                    client_secret: "old-secret".into(),
+                    redirect_uri: "https://x/cb".into(),
+                    required_hd: None,
+                    allowed_email_domains: Vec::new(),
+                });
+                cfg.apply_env_overrides();
+                let g = cfg.oidc.google.unwrap();
+                assert_eq!(g.client_secret, "rotated-secret");
+                assert_eq!(g.client_id, "id", "untouched fields stay");
+            },
+        );
+    }
+
+    #[test]
+    fn missing_config_file_boots_env_only_when_jwt_secret_set() {
+        with_env(
+            &[
+                ("SNIPDESK_JWT_SECRET", Some("env-secret")),
+                ("SNIPDESK_BIND_ADDR", Some("127.0.0.1:7777")),
+            ],
+            || {
+                let cfg = Config::load(Path::new("Z:/definitely/not/a/real/config.toml"))
+                    .expect("env-only boot");
+                assert_eq!(cfg.jwt_secret.as_deref(), Some("env-secret"));
+                assert_eq!(cfg.bind_addr, "127.0.0.1:7777");
+            },
+        );
+    }
+
+    #[test]
+    fn missing_config_file_still_errors_without_jwt_env() {
+        with_env(&[("SNIPDESK_JWT_SECRET", None)], || {
+            let err = Config::load(Path::new("Z:/definitely/not/a/real/config.toml"))
+                .expect_err("should refuse without config or jwt env");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("config file not found"),
+                "unexpected error: {msg}"
             );
         });
     }

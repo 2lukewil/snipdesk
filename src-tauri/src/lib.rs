@@ -453,6 +453,8 @@ pub fn run() {
             commands::update_settings,
             commands::export_snippets,
             commands::import_snippets,
+            commands::parse_snippet_file,
+            commands::import_snippet_items,
             commands::hide_window,
             commands::suspend_hide_on_blur,
             commands::resume_hide_on_blur,

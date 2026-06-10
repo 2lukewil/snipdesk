@@ -376,14 +376,24 @@ pub fn update_settings(
 pub struct ExportArgs {
     pub path: String,
     pub format: String, // "json" | "csv"
+    /// When present, export only these snippet ids (the filtered
+    /// export path - the UI computed exactly which snippets match
+    /// its search bar). Absent = export everything, the historical
+    /// behaviour.
+    #[serde(default)]
+    pub ids: Option<Vec<String>>,
 }
 
 #[tauri::command]
 pub fn export_snippets(state: State<'_, AppState>, args: ExportArgs) -> CmdResult<usize> {
-    let snippets = {
+    let mut snippets = {
         let db = state.db.lock().map_err(e)?;
         db.export_all().map_err(e)?
     };
+    if let Some(ids) = &args.ids {
+        let keep: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        snippets.retain(|s| keep.contains(s.id.as_str()));
+    }
 
     match args.format.as_str() {
         "json" => {
@@ -391,13 +401,17 @@ pub fn export_snippets(state: State<'_, AppState>, args: ExportArgs) -> CmdResul
             std::fs::write(&args.path, json).map_err(e)?;
         }
         "csv" => {
-            let mut out = String::from("title,body,tags\n");
+            // folder_path column added alongside the original three;
+            // the parser is header-driven on both this client and the
+            // dashboard, so older 3-column files keep importing.
+            let mut out = String::from("title,body,tags,folder_path\n");
             for s in &snippets {
                 out.push_str(&format!(
-                    "{},{},{}\n",
+                    "{},{},{},{}\n",
                     csv_field(&s.title),
                     csv_field(&s.body),
-                    csv_field(&s.tags.join(";"))
+                    csv_field(&s.tags.join(";")),
+                    csv_field(s.folder_path.as_deref().unwrap_or("")),
                 ));
             }
             std::fs::write(&args.path, out).map_err(e)?;
@@ -414,36 +428,102 @@ pub struct ImportArgs {
     pub format: String, // "json" | "csv"
 }
 
-#[tauri::command]
-pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResult<ImportResult> {
-    let items: Vec<NewSnippet> = match args.format.as_str() {
+/// Read + parse a snippet file into NewSnippet entries. Shared by
+/// the one-shot import and the preview flow.
+fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String> {
+    match format {
         "json" => {
-            let contents = std::fs::read_to_string(&args.path).map_err(e)?;
+            let contents = std::fs::read_to_string(path).map_err(e)?;
             // Accept NewSnippet[] or full Snippet[] (the export_snippets shape).
             match serde_json::from_str::<Vec<NewSnippet>>(&contents) {
-                Ok(v) => v,
+                Ok(v) => Ok(v),
                 Err(_) => {
                     let full: Vec<Snippet> = serde_json::from_str(&contents).map_err(e)?;
-                    full.into_iter()
+                    Ok(full
+                        .into_iter()
                         .map(|s| NewSnippet {
                             title: s.title,
                             body: s.body,
                             tags: s.tags,
                             folder_path: s.folder_path,
                         })
-                        .collect()
+                        .collect())
                 }
             }
         }
         "csv" => {
-            let contents = std::fs::read_to_string(&args.path).map_err(e)?;
-            parse_csv(&contents).map_err(e)?
+            let contents = std::fs::read_to_string(path).map_err(e)?;
+            parse_csv(&contents).map_err(e)
         }
-        other => return Err(format!("unsupported format: {other}")),
-    };
+        other => Err(format!("unsupported format: {other}")),
+    }
+}
 
+#[tauri::command]
+pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResult<ImportResult> {
+    let items = read_snippet_file(&args.path, &args.format)?;
     let db = state.db.lock().map_err(e)?;
     db.import(items).map_err(e)
+}
+
+/// One parsed entry for the import-preview modal: the snippet plus
+/// whether it would be skipped as a duplicate (same trimmed
+/// lowercase title rule `Db::import` applies).
+#[derive(Debug, Serialize)]
+pub struct ImportPreviewEntry {
+    pub title: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub folder_path: Option<String>,
+    pub duplicate: bool,
+}
+
+/// Parse a file WITHOUT importing. The frontend renders the
+/// folder-tree preview from this and then imports the user's
+/// selection via `import_snippet_items`.
+#[tauri::command]
+pub fn parse_snippet_file(
+    state: State<'_, AppState>,
+    args: ImportArgs,
+) -> CmdResult<Vec<ImportPreviewEntry>> {
+    let items = read_snippet_file(&args.path, &args.format)?;
+    let existing = {
+        let db = state.db.lock().map_err(e)?;
+        db.title_keys().map_err(e)?
+    };
+    // Flag intra-file repeats too, so the preview's badges match
+    // what a full import would actually skip.
+    let mut seen = existing;
+    Ok(items
+        .into_iter()
+        .map(|s| {
+            let key = s.title.trim().to_lowercase();
+            let duplicate = key.is_empty() || !seen.insert(key);
+            ImportPreviewEntry {
+                title: s.title,
+                body: s.body,
+                tags: s.tags,
+                folder_path: s.folder_path,
+                duplicate,
+            }
+        })
+        .collect())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportItemsArgs {
+    pub items: Vec<NewSnippet>,
+}
+
+/// Import an explicit list (the preview modal's checked subset)
+/// through the same dedupe + insert path as the one-shot import.
+#[tauri::command]
+pub fn import_snippet_items(
+    state: State<'_, AppState>,
+    args: ImportItemsArgs,
+) -> CmdResult<ImportResult> {
+    let db = state.db.lock().map_err(e)?;
+    db.import(args.items).map_err(e)
 }
 
 #[tauri::command]
@@ -708,6 +788,10 @@ fn parse_csv(contents: &str) -> anyhow::Result<Vec<NewSnippet>> {
     let title_idx = find("title").ok_or_else(|| anyhow::anyhow!("missing 'title' column"))?;
     let body_idx = find("body").ok_or_else(|| anyhow::anyhow!("missing 'body' column"))?;
     let tags_idx = find("tags");
+    // Optional column written by newer exports (this client and the
+    // dashboard). Header-driven lookup keeps old 3-column files
+    // importing unchanged.
+    let folder_idx = find("folder_path");
 
     let mut out = Vec::new();
     for row in rows {
@@ -725,12 +809,16 @@ fn parse_csv(contents: &str) -> anyhow::Result<Vec<NewSnippet>> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let folder_path = folder_idx
+            .and_then(|i| row.get(i).cloned())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if !title.trim().is_empty() {
             out.push(NewSnippet {
                 title,
                 body,
                 tags,
-                folder_path: None,
+                folder_path,
             });
         }
     }

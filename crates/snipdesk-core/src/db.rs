@@ -787,6 +787,20 @@ impl Db {
         self.list(None, None, None, SortOrder::Alphabetical)
     }
 
+    /// Trimmed lowercase title of every snippet - the duplicate key
+    /// `import` checks against. Import previews use this to badge
+    /// entries the import would skip, with one source of truth for
+    /// the rule.
+    pub fn title_keys(&self) -> Result<std::collections::HashSet<String>> {
+        Ok(self
+            .conn
+            .prepare("SELECT title FROM snippets")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .map(|t| t.trim().to_lowercase())
+            .collect())
+    }
+
     pub fn import(&self, items: Vec<NewSnippet>) -> Result<ImportResult> {
         // Pre-load existing titles for case-insensitive duplicate detection.
         // Imports that bring the same canned reply twice (a common mistake

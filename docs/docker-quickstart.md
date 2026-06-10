@@ -48,6 +48,14 @@ key=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-key)
 echo "Master key (save this!): $key"
 ```
 
+::: warning Keep this terminal open through step 4
+The `$key` variable only exists in the current shell. If you close
+it (or run step 4 in a different terminal), the container starts
+with an empty key and fails at boot. Save the printed key to your
+password manager now; if you do switch shells, paste it back as a
+literal in the step 4 command instead of `$key`.
+:::
+
 ## 3. Write the minimum-viable config
 
 The config needs a JWT secret (the signing key for session tokens;
@@ -74,9 +82,12 @@ jwt_secret = "$jwt"
 EOF
 ```
 
-That's enough to boot in password-only mode. OIDC, brand,
-retention tuning, CORS, etc. are all optional and have sensible
-defaults - see [the production deploy guide](/deploy) and the
+That's enough to boot in password-only mode. The master key from
+step 2 deliberately stays OUT of this file - it travels as the
+`SNIPDESK_MASTER_KEY` environment variable in step 4, which takes
+precedence over anything in the config. OIDC, brand, retention
+tuning, CORS, etc. are all optional and have sensible defaults -
+see [the production deploy guide](/deploy) and the
 [example.toml](https://github.com/2lukewil/snipdesk/blob/main/crates/snipdesk-server/snipdesk-server.example.toml)
 for the full schema when you're ready.
 

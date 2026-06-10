@@ -136,6 +136,15 @@ pub fn run() {
 
             let db = db::Db::open(&db_path).expect("failed to open snippet db");
 
+            // Expire old local-trash snapshots per the retention
+            // setting (0 keeps forever). Startup-only sweep, same
+            // pattern as backup retention below.
+            if let Ok(purged) = db.purge_local_trash(settings.local_trash_retention_days) {
+                if purged > 0 {
+                    eprintln!("local trash: purged {purged} expired snapshot(s)");
+                }
+            }
+
             backup::init_schedule(&data_dir, &db_path, settings.backup_retention_days);
 
             app.manage(AppState {
@@ -455,6 +464,9 @@ pub fn run() {
             commands::import_snippets,
             commands::parse_snippet_file,
             commands::import_snippet_items,
+            commands::local_trash_list,
+            commands::local_trash_restore,
+            commands::local_trash_delete,
             commands::hide_window,
             commands::suspend_hide_on_blur,
             commands::resume_hide_on_blur,

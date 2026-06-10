@@ -157,10 +157,8 @@ for the stable knobs, env for the secrets).
 | `SNIPDESK_CORS_ALLOWED_ORIGINS` | `cors_allowed_origins` (comma-separated) |
 | `SNIPDESK_BRAND_NAME` | `[brand].name` |
 | `SNIPDESK_OIDC_ALLOWED_SCHEMES` | `[oidc].allowed_deep_link_schemes` (comma-separated) |
-| `SNIPDESK_OIDC_GOOGLE_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` | `[oidc.google]` (all three required to enable) |
-| `SNIPDESK_OIDC_GOOGLE_REQUIRED_HD` / `_ALLOWED_EMAIL_DOMAINS` | optional Google gating |
-| `SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID` / `_CLIENT_SECRET` / `_ISSUER_URL` / `_REDIRECT_URI` | `[oidc.keycloak]` (all four required to enable) |
-| `SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE` / `_ADMIN_ROLE` / `_ALLOWED_EMAIL_DOMAINS` / `_DISPLAY_NAME` | optional Keycloak gating + label |
+| `SNIPDESK_OIDC_GOOGLE_*` | `[oidc.google]`. Required set to enable: `SNIPDESK_OIDC_GOOGLE_CLIENT_ID`, `SNIPDESK_OIDC_GOOGLE_CLIENT_SECRET`, `SNIPDESK_OIDC_GOOGLE_REDIRECT_URI`. Optional gating: `SNIPDESK_OIDC_GOOGLE_REQUIRED_HD`, `SNIPDESK_OIDC_GOOGLE_ALLOWED_EMAIL_DOMAINS` |
+| `SNIPDESK_OIDC_KEYCLOAK_*` | `[oidc.keycloak]`. Required set to enable: `SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID`, `SNIPDESK_OIDC_KEYCLOAK_CLIENT_SECRET`, `SNIPDESK_OIDC_KEYCLOAK_ISSUER_URL`, `SNIPDESK_OIDC_KEYCLOAK_REDIRECT_URI`. Optional: `SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE`, `SNIPDESK_OIDC_KEYCLOAK_ADMIN_ROLE`, `SNIPDESK_OIDC_KEYCLOAK_ALLOWED_EMAIL_DOMAINS`, `SNIPDESK_OIDC_KEYCLOAK_DISPLAY_NAME` |
 | `SNIPDESK_UPDATER_ENABLED` | `[updater].enabled` - set `false` for zero outbound HTTP from the server |
 
 The remaining tuning tables (`[stats]`, `[fx]`, the rest of

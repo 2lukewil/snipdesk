@@ -111,6 +111,11 @@ pub struct Settings {
     pub backup_retention_days: u32,
     #[serde(default = "default_log_retention_days")]
     pub log_retention_days: u32,
+    /// How long deleted snippets stay in the local trash before the
+    /// startup purge drops them. 0 keeps them forever (same
+    /// semantics as the server's tombstone_retention_days).
+    #[serde(default = "default_local_trash_retention_days")]
+    pub local_trash_retention_days: u32,
 }
 
 /// `prefix`/`suffix` wrap the current selection (or cursor position).
@@ -156,6 +161,10 @@ fn default_backup_retention_days() -> u32 {
 
 fn default_log_retention_days() -> u32 {
     7
+}
+
+fn default_local_trash_retention_days() -> u32 {
+    30
 }
 
 /// Tuned for WHMCS ticket replies (Markdown-ish).
@@ -249,6 +258,7 @@ impl Default for Settings {
             format_rules: default_format_rules(),
             backup_retention_days: default_backup_retention_days(),
             log_retention_days: default_log_retention_days(),
+            local_trash_retention_days: default_local_trash_retention_days(),
         }
     }
 }

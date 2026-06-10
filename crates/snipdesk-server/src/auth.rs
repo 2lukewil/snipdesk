@@ -7,7 +7,7 @@
 //!     "expensive enough that a single guess takes ~50ms on a modern CPU,"
 //!     which is the right cost for an internal tool.
 //!   - **HS256** JWTs (symmetric HMAC). The server holds the secret;
-//!     clients don't need to verify, just present. 24h TTL.
+//!     clients do not need to verify, just present. 30-day rolling TTL.
 
 use argon2::password_hash::{rand_core::OsRng, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Argon2, PasswordHash};

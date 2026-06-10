@@ -139,11 +139,12 @@ catching it locally is faster than waiting for CI.
 # src-tauri's lock entry matches:
 cargo update --workspace --offline
 
-# Confirm everything aligns before tagging. The grep below should
-# print exactly three lines, all showing the same version:
-grep '^version' src-tauri/Cargo.toml
-grep '"version"' package.json
-grep '"version"' src-tauri/tauri.conf.json
+# Confirm everything aligns before tagging - all three lines must
+# show the same version. (Select-String is the stock-PowerShell
+# equivalent of grep; use grep if you're in Git Bash.)
+Select-String '^version' src-tauri/Cargo.toml
+Select-String '"version"' package.json
+Select-String '"version"' src-tauri/tauri.conf.json
 
 # 2. Commit the bump and push:
 git add -A

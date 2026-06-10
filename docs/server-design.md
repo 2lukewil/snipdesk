@@ -145,9 +145,10 @@ CREATE TABLE audit_log (
   at            INTEGER NOT NULL,
   actor_id      TEXT REFERENCES users(id) ON DELETE SET NULL,
   actor_email   TEXT NOT NULL,                 -- denormalised, survives user deletion
-  action        TEXT NOT NULL,                 -- 'user.promote', 'library.create', ...
-  target        TEXT,
-  details_json  TEXT
+  action        TEXT NOT NULL,                 -- 'user.update', 'library.create', ...
+  target_kind   TEXT,                          -- 'user' | 'library'
+  target_id     TEXT,
+  details       TEXT                           -- small JSON blob
 );
 ```
 

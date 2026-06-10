@@ -526,6 +526,28 @@ pub fn import_snippet_items(
     db.import(args.items).map_err(e)
 }
 
+// ---- Local trash ----
+
+#[tauri::command]
+pub fn local_trash_list(
+    state: State<'_, AppState>,
+) -> CmdResult<Vec<snipdesk_core::db::TrashItem>> {
+    let db = state.db.lock().map_err(e)?;
+    db.list_local_trash().map_err(e)
+}
+
+#[tauri::command]
+pub fn local_trash_restore(state: State<'_, AppState>, id: String) -> CmdResult<Snippet> {
+    let db = state.db.lock().map_err(e)?;
+    db.restore_local_trash(&id).map_err(e)
+}
+
+#[tauri::command]
+pub fn local_trash_delete(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let db = state.db.lock().map_err(e)?;
+    db.delete_local_trash(&id).map_err(e)
+}
+
 #[tauri::command]
 pub fn hide_window(app: AppHandle) -> CmdResult<()> {
     if let Some(win) = app.get_webview_window("main") {

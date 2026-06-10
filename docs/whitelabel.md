@@ -62,10 +62,10 @@ Open `brands/<customer>/brand.json`. Every field, in detail:
 | Field | Required | What it does |
 | --- | --- | --- |
 | `name` | yes | Display name shown in window title, tray menu, About panel. |
-| `slug` | yes | Filename-safe identifier used for the installer filename (e.g. `Acme-Teams-setup.exe`) and the manifest filename in the updater URL. |
+| `slug` | no | Filename-safe identifier used for the installer filename (e.g. `Acme-Teams-setup.exe`) and the manifest filename in the updater URL. Defaults to `name` with non-alphanumeric characters stripped when omitted. |
 | `teams_identifier` | yes | Reverse-DNS bundle id the OS treats as unique (e.g. `com.acme.snippets.teams`). |
 | `identifier` | no | Optional Lite-edition bundle id. Ignored by the release pipeline but accepted for local experimentation. |
-| `icon_source` | yes | Filename of the source PNG inside the bundle, typically `icon.png`. Tauri downscales it into platform-specific icon sets at build time. |
+| `icon_source` | no | Filename of the source PNG inside the bundle, typically `icon.png`. Tauri downscales it into platform-specific icon sets at build time. When omitted, the stock SnipDesk icons ship. |
 | `teams_updater_url` | yes | Where the customer's installation polls for updates. Convention is a per-customer manifest filename inside this project's GitHub releases (e.g. `snipdesk-acme-teams-update.json`). |
 | `deep_link_scheme` | yes | Custom URL scheme for the OIDC callback (e.g. `acme`). Must also be registered on the OAuth provider side (e.g. Google Cloud Console authorised redirect URIs) and on the server side via `[oidc].allowed_deep_link_schemes`. |
 | `server_url` | yes | Default snipdesk-server URL pre-filled in Settings. End users can override. |

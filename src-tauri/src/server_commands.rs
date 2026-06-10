@@ -307,9 +307,38 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
     let me = api::me(&server_url, &token).map_err(map_api_err)?;
     credentials::store(&server_url, &token).map_err(|e| e.to_string())?;
     save_signed_in_user(&state, &me.user)?;
-    refresh_team_snippet_count(app, &state);
-    let _ = app.emit("snipdesk://server-sync", ());
+    // Real sync, not just a notification: without it the team
+    // library stays empty until the background loop's next tick,
+    // which reads as "sign-in worked but nothing appeared".
+    spawn_post_signin_sync(app.clone());
     Ok(())
+}
+
+/// Run one sync on a background thread right after a sign-in, then
+/// notify the UI. The OIDC paths (deep link + pasted token) land
+/// here; the password path gets the same effect from the frontend's
+/// afterSignedIn calling server_sync_now. Off-thread because the
+/// deep-link callback runs on the main thread and a network
+/// round-trip there would freeze the window.
+fn spawn_post_signin_sync(app: AppHandle) {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let server_url = current_server_url(&state);
+        let token = match credentials::load(&server_url) {
+            Ok(Some(t)) => t,
+            _ => return,
+        };
+        match sync::tick(&state.db, &server_url, &token) {
+            Ok(outcome) => {
+                let _ = save_last_sync(&state, &outcome);
+            }
+            Err(e) => eprintln!("post-sign-in sync failed: {e}"),
+        }
+        refresh_team_snippet_count(&app, &state);
+        // Emitted AFTER the sync so the frontend's refresh sees the
+        // freshly-pulled rows.
+        let _ = app.emit("snipdesk://server-sync", ());
+    });
 }
 
 /// Build the URL the user should open in their browser to start the
@@ -377,7 +406,10 @@ pub fn server_oidc_paste_token(app: AppHandle, token: String) -> CmdResult<UserD
     let me = api::me(&server_url, &token).map_err(map_api_err)?;
     credentials::store(&server_url, &token).map_err(|e| e.to_string())?;
     save_signed_in_user(&state, &me.user)?;
-    let _ = app.emit("snipdesk://server-sync", ());
+    // Same immediate sync the deep-link path runs; see
+    // spawn_post_signin_sync for why a notification alone isn't
+    // enough.
+    spawn_post_signin_sync(app.clone());
     Ok(me.user)
 }
 

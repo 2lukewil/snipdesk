@@ -65,6 +65,18 @@ pub struct ImportResult {
     pub skipped_duplicates: usize,
 }
 
+/// One snapshot in the local trash: the content of a deleted snippet
+/// plus when it was deleted. Restoring creates a brand-new snippet.
+#[derive(Debug, Serialize, Clone)]
+pub struct TrashItem {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub folder_path: Option<String>,
+    pub deleted_at: i64,
+}
+
 /// A locally-edited snippet awaiting push to the server. `server_version`
 /// is `None` for rows that have never been synced (the sync engine sends
 /// these via POST); `Some(v)` rows go via PUT with `expected_version = v`.
@@ -215,7 +227,25 @@ impl Db {
                 chars      INTEGER NOT NULL DEFAULT 0,
                 last_used  INTEGER NOT NULL,
                 PRIMARY KEY (kind, snippet_id)
-            );",
+            );
+
+            -- Local trash: a content snapshot of every deleted snippet,
+            -- so deletion is recoverable on-device regardless of
+            -- sign-in state. Independent of pending_deletes (which only
+            -- tells the SERVER about deletions); restore creates a
+            -- brand-new snippet so the sync engine never resurrects an
+            -- id the server already tombstoned. Purged by retention
+            -- (settings.local_trash_retention_days; 0 keeps forever).
+            CREATE TABLE IF NOT EXISTS local_trash (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '',
+                folder_path TEXT,
+                deleted_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_local_trash_deleted
+                ON local_trash(deleted_at DESC);",
         )?;
 
         // Migration: add `folder_path` to snippets if missing.
@@ -425,6 +455,14 @@ impl Db {
             )
             .optional()?
             .flatten();
+        // Snapshot the content into local trash before the row
+        // disappears. A failed delete after this leaves an orphan
+        // trash row, which is harmless (it just expires).
+        self.conn.execute(
+            "INSERT INTO local_trash (id, title, body, tags, folder_path, deleted_at) \
+             SELECT ?2, title, body, tags, folder_path, ?3 FROM snippets WHERE id = ?1",
+            params![id, Uuid::new_v4().to_string(), Utc::now().timestamp()],
+        )?;
         // Cascade variable_history - no FK enforcement.
         self.conn
             .execute("DELETE FROM variable_history WHERE snippet_id = ?1", [id])?;
@@ -699,6 +737,15 @@ impl Db {
                    AND server_version IS NOT NULL",
                 params![path, like, now],
             )?;
+            // Snapshot every doomed snippet into local trash first.
+            // randomblob hex makes a unique key without a per-row
+            // round-trip to generate UUIDs.
+            tx.execute(
+                "INSERT INTO local_trash (id, title, body, tags, folder_path, deleted_at) \
+                 SELECT lower(hex(randomblob(16))), title, body, tags, folder_path, ?3 \
+                 FROM snippets WHERE folder_path = ?1 OR folder_path LIKE ?2",
+                params![path, like, now],
+            )?;
             tx.execute(
                 "DELETE FROM variable_history WHERE snippet_id IN \
                   (SELECT id FROM snippets WHERE folder_path = ?1 OR folder_path LIKE ?2)",
@@ -791,6 +838,69 @@ impl Db {
             out.insert(name.clone(), values);
         }
         Ok(out)
+    }
+
+    // --- Local trash ---
+
+    /// Newest-first content snapshots of deleted snippets.
+    pub fn list_local_trash(&self) -> Result<Vec<TrashItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, body, tags, folder_path, deleted_at \
+             FROM local_trash ORDER BY deleted_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(TrashItem {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                tags: decode_tags(&r.get::<_, String>(3)?),
+                folder_path: r.get(4)?,
+                deleted_at: r.get(5)?,
+            })
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
+    /// Recreate a trashed snippet as a brand-new snippet (fresh id;
+    /// for signed-in users it pushes like any new snippet), then drop
+    /// the trash row.
+    pub fn restore_local_trash(&self, trash_id: &str) -> Result<Snippet> {
+        let (title, body, tags, folder_path): (String, String, String, Option<String>) =
+            self.conn.query_row(
+                "SELECT title, body, tags, folder_path FROM local_trash WHERE id = ?1",
+                [trash_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+        let restored = self.create(NewSnippet {
+            title,
+            body,
+            tags: decode_tags(&tags),
+            folder_path,
+        })?;
+        self.conn
+            .execute("DELETE FROM local_trash WHERE id = ?1", [trash_id])?;
+        Ok(restored)
+    }
+
+    /// Permanently drop one trash row.
+    pub fn delete_local_trash(&self, trash_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM local_trash WHERE id = ?1", [trash_id])?;
+        Ok(())
+    }
+
+    /// Drop snapshots older than the retention window. `0` keeps
+    /// everything forever (same semantics as the server's
+    /// tombstone_retention_days). Returns the number purged.
+    pub fn purge_local_trash(&self, retention_days: u32) -> Result<usize> {
+        if retention_days == 0 {
+            return Ok(0);
+        }
+        let cutoff = Utc::now().timestamp() - i64::from(retention_days) * 86_400;
+        let n = self
+            .conn
+            .execute("DELETE FROM local_trash WHERE deleted_at < ?1", [cutoff])?;
+        Ok(n)
     }
 
     // --- Export / import ---
@@ -1294,6 +1404,44 @@ mod tests {
         // full schema (incl. pending_telemetry) so we can exercise
         // the UPSERT + flush mechanics.
         Db::open(std::path::Path::new(":memory:")).expect("open mem db")
+    }
+
+    // Deleting a snippet snapshots its content into local_trash;
+    // restore recreates it as a NEW snippet (fresh id) and removes
+    // the trash row; retention 0 purges nothing.
+    #[test]
+    fn local_trash_snapshot_restore_purge() {
+        let db = fresh_db();
+        let created = db
+            .create(NewSnippet {
+                title: "Refund intro".into(),
+                body: "Hello {name}".into(),
+                tags: vec!["billing".into()],
+                folder_path: Some("Billing/Refunds".into()),
+            })
+            .unwrap();
+        db.delete(&created.id).unwrap();
+
+        let trash = db.list_local_trash().unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].title, "Refund intro");
+        assert_eq!(trash[0].tags, vec!["billing".to_string()]);
+        assert_eq!(trash[0].folder_path.as_deref(), Some("Billing/Refunds"));
+
+        // Retention 0 = keep forever; nothing purged.
+        assert_eq!(db.purge_local_trash(0).unwrap(), 0);
+        assert_eq!(db.list_local_trash().unwrap().len(), 1);
+
+        let restored = db.restore_local_trash(&trash[0].id).unwrap();
+        assert_ne!(restored.id, created.id, "restore must mint a new id");
+        assert_eq!(restored.title, "Refund intro");
+        assert!(db.list_local_trash().unwrap().is_empty());
+
+        // Folder deletion with snippets snapshots every doomed row.
+        db.delete_folder("Billing", true).unwrap();
+        let trash_after_folder = db.list_local_trash().unwrap();
+        assert_eq!(trash_after_folder.len(), 1);
+        assert_eq!(trash_after_folder[0].title, "Refund intro");
     }
 
     // record_telemetry aggregates repeat bumps onto the same row

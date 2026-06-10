@@ -412,6 +412,7 @@ const els = {
   savings: document.getElementById("savings"),
   // About tab
   setBackupDays: document.getElementById("set-backup-days"),
+  setTrashDays: document.getElementById("set-trash-days"),
   setLogDays: document.getElementById("set-log-days"),
   btnOpenBackups: document.getElementById("btn-open-backups"),
   btnOpenLogs: document.getElementById("btn-open-logs"),
@@ -1856,11 +1857,10 @@ function folderNodeEl(path, label, isActive, depth, hasChildren, expanded, count
   div.appendChild(caret);
 
   const iconSpan = document.createElement("span");
+  iconSpan.className = "folder-icon";
   if (path === null) iconSpan.textContent = "✦ ";
   else if (path === ROOT_FOLDER) iconSpan.textContent = "∘ ";
   else iconSpan.textContent = "📁 ";
-  iconSpan.style.opacity = "0.7";
-  iconSpan.style.fontSize = "11px";
   div.appendChild(iconSpan);
 
   const labelSpan = document.createElement("span");
@@ -2247,7 +2247,7 @@ function renderList() {
       for (const t of s.tags) {
         const tag = document.createElement("span");
         tag.className = "snip-tag";
-        tag.textContent = t;
+        tag.textContent = `#${t}`;
         tags.appendChild(tag);
       }
       li.appendChild(tags);
@@ -3537,6 +3537,7 @@ function openSettings() {
   els.setCurrency.value = s.wage_currency ?? "$";
   // About
   els.setBackupDays.value = s.backup_retention_days ?? 14;
+  els.setTrashDays.value = s.local_trash_retention_days ?? 30;
   els.setLogDays.value = s.log_retention_days ?? 7;
   loadLogPath();
   // Server panel re-load every time settings opens; the background
@@ -3654,89 +3655,154 @@ function formatSyncTimestamp(unixSecs) {
 
 // ---------- Trash ----------
 
-/// Open the trash modal and fetch the user's server-side tombstones.
-/// Content is never cached locally; we always go to the server when
-/// the modal opens so a snippet deleted on another device shows up
-/// without a separate sync.
+/// Open the trash modal: local snapshots always, server tombstones
+/// when signed in. Server content is never cached - we go to the
+/// server every open so a snippet deleted on another device shows
+/// up without a separate sync.
 async function openTrashModal() {
-  if (!TEAMS_BUILD || !els.trashModal) return;
+  if (!els.trashModal) return;
   els.trashList.innerHTML = '<p class="muted">Loading...</p>';
   els.trashModal.classList.remove("hidden");
-  try {
-    const items = await invoke("server_trash_list");
-    renderTrashList(items || []);
-  } catch (err) {
-    els.trashList.innerHTML = `<p class="muted">Couldn't load trash: ${escapeHtmlBasic(String(err))}</p>`;
-  }
+
+  const localPromise = invoke("local_trash_list").catch(() => []);
+  // null = "section doesn't apply" (Lite / signed out); a fetch
+  // error renders as an explanatory row instead.
+  const serverApplies = TEAMS_BUILD && Boolean(state.serverStatus?.signed_in);
+  const serverPromise = serverApplies
+    ? invoke("server_trash_list").catch((err) => ({ error: String(err) }))
+    : Promise.resolve(null);
+  const [localItems, serverResult] = await Promise.all([
+    localPromise,
+    serverPromise,
+  ]);
+  renderTrashSections(localItems || [], serverResult);
 }
 
 function closeTrashModal() {
   if (els.trashModal) els.trashModal.classList.add("hidden");
 }
 
-function renderTrashList(items) {
-  if (!items || items.length === 0) {
+/// One trash row, shared by both sections. `onRestore` does the
+/// flavor-specific IPC; the row handles its own button state and
+/// removal.
+function makeTrashRow({ title, deletedAt, bodyText, folder, onRestore }) {
+  const row = document.createElement("div");
+  row.className = "trash-row";
+
+  const header = document.createElement("div");
+  header.className = "trash-row-head";
+  const titleEl = document.createElement("strong");
+  titleEl.textContent = title || "(untitled)";
+  header.appendChild(titleEl);
+  const when = document.createElement("span");
+  when.className = "muted small";
+  when.textContent = `deleted ${formatRelativeTime(deletedAt)}`;
+  header.appendChild(when);
+  row.appendChild(header);
+
+  const body = document.createElement("div");
+  body.className = "trash-row-body";
+  const flat = (bodyText || "").replace(/\n/g, " | ");
+  body.textContent = flat.length > 200 ? flat.slice(0, 200) + "..." : flat;
+  row.appendChild(body);
+
+  if (folder) {
+    const folderEl = document.createElement("div");
+    folderEl.className = "trash-row-folder muted small";
+    folderEl.textContent = `📁 ${folder}`;
+    row.appendChild(folderEl);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "trash-row-actions";
+  const restoreBtn = document.createElement("button");
+  restoreBtn.className = "btn-primary small";
+  restoreBtn.textContent = "Restore";
+  restoreBtn.addEventListener("click", async () => {
+    restoreBtn.disabled = true;
+    restoreBtn.textContent = "Restoring...";
+    try {
+      await onRestore();
+      row.remove();
+      setStatus(`Restored "${title || "snippet"}".`, "ok");
+      await refresh();
+    } catch (err) {
+      restoreBtn.disabled = false;
+      restoreBtn.textContent = "Restore";
+      setStatus(`Restore failed: ${err}`, "err");
+    }
+  });
+  actions.appendChild(restoreBtn);
+  row.appendChild(actions);
+  return row;
+}
+
+function trashSectionHeading(text) {
+  const h = document.createElement("h3");
+  h.className = "trash-section-heading";
+  h.textContent = text;
+  return h;
+}
+
+function renderTrashSections(localItems, serverResult) {
+  els.trashList.innerHTML = "";
+
+  const serverApplies = serverResult !== null;
+  const serverItems = Array.isArray(serverResult) ? serverResult : [];
+  const serverErrored =
+    serverApplies && !Array.isArray(serverResult) && serverResult?.error;
+
+  if (localItems.length === 0 && !serverApplies) {
     els.trashList.innerHTML = '<p class="muted">Trash is empty.</p>';
     return;
   }
-  els.trashList.innerHTML = "";
-  for (const item of items) {
-    const row = document.createElement("div");
-    row.className = "trash-row";
-    row.dataset.snippetId = item.id;
 
-    const header = document.createElement("div");
-    header.className = "trash-row-head";
-    const title = document.createElement("strong");
-    title.textContent = item.payload?.title || "(untitled)";
-    header.appendChild(title);
-    const when = document.createElement("span");
-    when.className = "muted small";
-    when.textContent = `deleted ${formatRelativeTime(item.deleted_at)}`;
-    header.appendChild(when);
-    row.appendChild(header);
+  // On this device: snapshots taken at deletion time; restore
+  // recreates the snippet (signed-in users push it on next sync).
+  els.trashList.appendChild(trashSectionHeading("On this device"));
+  if (localItems.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Nothing deleted on this device.";
+    els.trashList.appendChild(empty);
+  }
+  for (const item of localItems) {
+    els.trashList.appendChild(
+      makeTrashRow({
+        title: item.title,
+        deletedAt: item.deleted_at,
+        bodyText: item.body,
+        folder: item.folder_path,
+        onRestore: () => invoke("local_trash_restore", { id: item.id }),
+      }),
+    );
+  }
 
-    const body = document.createElement("div");
-    body.className = "trash-row-body";
-    const bodyText = (item.payload?.body || "").replace(/\n/g, " | ");
-    body.textContent = bodyText.length > 200 ? bodyText.slice(0, 200) + "..." : bodyText;
-    row.appendChild(body);
-
-    if (item.payload?.folder_path) {
-      const folder = document.createElement("div");
-      folder.className = "trash-row-folder muted small";
-      folder.textContent = `📁 ${item.payload.folder_path}`;
-      row.appendChild(folder);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "trash-row-actions";
-    const restoreBtn = document.createElement("button");
-    restoreBtn.className = "btn-primary small";
-    restoreBtn.textContent = "Restore";
-    restoreBtn.addEventListener("click", async () => {
-      restoreBtn.disabled = true;
-      restoreBtn.textContent = "Restoring...";
-      try {
-        await invoke("server_trash_restore", { id: item.id });
-        // Remove the row from the modal optimistically.
-        row.remove();
-        if (els.trashList.children.length === 0) {
-          els.trashList.innerHTML = '<p class="muted">Trash is empty.</p>';
-        }
-        setStatus(`Restored "${item.payload?.title || "snippet"}".`, "ok");
-        // Refresh main list so the restored snippet appears.
-        await refresh();
-      } catch (err) {
-        restoreBtn.disabled = false;
-        restoreBtn.textContent = "Restore";
-        setStatus(`Restore failed: ${err}`, "err");
-      }
-    });
-    actions.appendChild(restoreBtn);
-    row.appendChild(actions);
-
-    els.trashList.appendChild(row);
+  if (!serverApplies) return;
+  els.trashList.appendChild(trashSectionHeading("On the server"));
+  if (serverErrored) {
+    const err = document.createElement("p");
+    err.className = "muted";
+    err.textContent = `Couldn't load server trash: ${serverResult.error}`;
+    els.trashList.appendChild(err);
+    return;
+  }
+  if (serverItems.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Nothing in the server trash.";
+    els.trashList.appendChild(empty);
+  }
+  for (const item of serverItems) {
+    els.trashList.appendChild(
+      makeTrashRow({
+        title: item.payload?.title,
+        deletedAt: item.deleted_at,
+        bodyText: item.payload?.body,
+        folder: item.payload?.folder_path,
+        onRestore: () => invoke("server_trash_restore", { id: item.id }),
+      }),
+    );
   }
 }
 
@@ -3910,10 +3976,6 @@ function renderDynamicProviderButtons(providers) {
 function renderServerStatus() {
   const st = state.serverStatus;
   if (!st) return;
-  // Footer trash icon: server-side trash only exists while signed in.
-  if (els.btnTrash) {
-    els.btnTrash.classList.toggle("hidden", !(st.signed_in && st.user));
-  }
   // Bottom-right sync glyph: green cloud when the last sync was
   // clean, red when it reported errors, hidden when signed out.
   // Tooltip carries the detail so Settings -> Server isn't needed
@@ -4331,6 +4393,8 @@ function collectSettingsForSave() {
     wage_currency: (els.setCurrency.value || "$").slice(0, 3),
     // About (retention)
     backup_retention_days: clampInt(parseInt(els.setBackupDays.value, 10), 1, 365, 14),
+    // 0 is meaningful here (keep forever), so the floor is 0.
+    local_trash_retention_days: clampInt(parseInt(els.setTrashDays.value, 10), 0, 3650, 30),
     log_retention_days: clampInt(parseInt(els.setLogDays.value, 10), 1, 365, 7),
     // Preserved - backend requires the full Settings struct.
     onboarding_completed: state.settings?.onboarding_completed ?? false,

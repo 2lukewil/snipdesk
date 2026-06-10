@@ -60,8 +60,12 @@ npm run tauri:build:teams      # Teams edition
 ```
 
 Output lands in `target/release/bundle/` (the workspace `target/` is
-at the repo root): `.msi` / `.exe` on Windows, `.app` / `.dmg` on
-macOS, `.deb` / `.rpm` / `.AppImage` on Linux.
+at the repo root): `.msi` and NSIS `.exe` on Windows, `.app` /
+`.dmg` on macOS, `.deb` / `.rpm` / `.AppImage` on Linux. Note that
+the release pipeline ships ONLY the NSIS installer on Windows
+(`--bundles nsis`); the MSI a local build produces is a Tauri
+default, not a distributed artifact, and the auto-updater serves
+NSIS packages.
 
 On Windows you can also run `scripts/build-windows.ps1` from an
 elevated PowerShell to install prerequisites and build in one step.

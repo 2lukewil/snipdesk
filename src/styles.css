@@ -264,9 +264,15 @@ html, body {
 }
 .folder-node .folder-caret {
   display: inline-block;
-  width: 10px;
-  font-size: 10px;
+  width: 14px;
+  font-size: 13px;
   color: var(--text-dim);
+}
+/* Pseudo-node markers (✦ All / ∘ Unfiled) and the folder emoji.
+   Sized for legibility - the old 11px glyphs read as specks. */
+.folder-node .folder-icon {
+  opacity: 0.8;
+  font-size: 13px;
 }
 .folder-node .folder-caret.empty {
   visibility: hidden;
@@ -572,8 +578,9 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
 }
 .snip-tag {
   font-size: 10px;
-  color: var(--text-dim);
-  background: var(--bg);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 1px 6px;
   border-radius: 4px;
   margin-right: 4px;
@@ -637,9 +644,13 @@ body.compact .search-bar {
 /* --- Footer --- */
 .footer {
   display: flex;
-  justify-content: space-between;
+  /* Left cluster (trash, status, savings) packs tight; the hint's
+     margin-left:auto pins it and the sync glyph to the right edge.
+     space-between would spread all five children evenly, shoving
+     the savings pill toward the middle. */
+  justify-content: flex-start;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 6px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
@@ -1823,7 +1834,6 @@ body.compact .search-bar {
   color: var(--danger);
   cursor: pointer;
   padding: 2px 4px;
-  margin-right: 6px;
   display: inline-flex;
   align-items: center;
   border-radius: 4px;

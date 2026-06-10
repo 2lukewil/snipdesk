@@ -17,9 +17,9 @@ bind_addr = "0.0.0.0:8080"
 # on first run if missing.
 data_dir = "./data"
 
-# (Reserved for the auth phase) JWT signing secret. Generate with:
-#   openssl rand -hex 32
-# Leave blank until auth lands.
+# JWT signing secret (required - the server refuses to start
+# without it). Generate with:
+#   snipdesk-server gen-jwt-secret
 jwt_secret = ""
 
 # Origins allowed to make cross-origin requests to /api/*. Empty

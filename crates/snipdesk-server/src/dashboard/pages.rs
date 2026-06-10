@@ -2788,10 +2788,10 @@ fn render_import_node_children(node: &ImportTreeNode, out: &mut String) {
     }
 }
 
-/// Inline JS for the preview tree: expand/collapse, tri-state folder
-/// + master checkboxes, live count, title filter (auto-expands
-/// matches, never changes selection), and selected-index collection
-/// on submit.
+/// Inline JS for the preview tree: expand/collapse, tri-state
+/// folder and master checkboxes, live count, a title filter that
+/// auto-expands matches without changing selection, and
+/// selected-index collection on submit.
 fn import_preview_js(total: usize) -> String {
     format!(
         r#"<script>
@@ -2869,8 +2869,7 @@ fn import_preview_js(total: usize) -> String {
   updateFolderStates();
   updateCount();
 }})();
-</script>"#,
-        total = total
+</script>"#
     )
 }
 

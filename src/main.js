@@ -753,6 +753,14 @@ const onboarding = {
       refreshOidc();
     }
     await loadServerStatus();
+    // Snapshot whether the user is ALREADY signed in when entering
+    // this step. renderSigninStatus uses this to distinguish two
+    // cases: the user just completed OIDC and we should auto-advance
+    // off the panel (transition false -> true), versus the user
+    // navigated Back to a step they already cleared and we should
+    // leave the panel visible so they can read it and click
+    // Continue themselves (already-true on entry).
+    this.signinWasSignedInOnEntry = !!state.serverStatus?.signed_in;
     this.renderSigninStatus();
     this.signinPoll = setInterval(async () => {
       await loadServerStatus();
@@ -774,6 +782,25 @@ const onboarding = {
       const display = u?.display_name || u?.email || "(signed in)";
       if (status) status.textContent = `Signed in as ${display}.`;
       if (next) next.removeAttribute("disabled");
+
+      // Auto-advance off the signin panel once OIDC completes. The
+      // entry-snapshot in primeSigninPanel ensures we ONLY advance on
+      // the false -> true transition: a user navigating Back to this
+      // step while already signed in stays put (signinWasSignedInOnEntry
+      // == true), so they can read the confirmation and click Continue
+      // themselves. The 800 ms delay lets the "Signed in as <name>"
+      // message paint and register before the panel changes.
+      if (!this.signinWasSignedInOnEntry && !this.signinAdvancing) {
+        this.signinAdvancing = true;
+        setTimeout(() => {
+          // Guard against advancing the wrong step if the user clicked
+          // Skip / Back / a dot in the 800 ms window.
+          if (this.steps[this.index] === "signin") {
+            this.advance();
+          }
+          this.signinAdvancing = false;
+        }, 800);
+      }
     } else {
       if (status) status.textContent = "Waiting for sign-in...";
       if (next) next.setAttribute("disabled", "");

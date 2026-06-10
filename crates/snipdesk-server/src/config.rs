@@ -567,9 +567,7 @@ impl Config {
                 ));
             }
             Err(e) => {
-                return Err(
-                    anyhow::Error::new(e).context(format!("read config {}", path.display()))
-                )
+                return Err(anyhow::Error::new(e).context(format!("read config {}", path.display())))
             }
         };
         let mut cfg: Config =
@@ -1062,10 +1060,7 @@ mod tests {
     #[test]
     fn google_env_overlays_existing_toml_block() {
         with_env(
-            &[(
-                "SNIPDESK_OIDC_GOOGLE_CLIENT_SECRET",
-                Some("rotated-secret"),
-            )],
+            &[("SNIPDESK_OIDC_GOOGLE_CLIENT_SECRET", Some("rotated-secret"))],
             || {
                 let mut cfg = fresh_config();
                 cfg.oidc.google = Some(GoogleOidcConfig {

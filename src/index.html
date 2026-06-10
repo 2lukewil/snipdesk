@@ -423,23 +423,20 @@
 
             <!-- Team Library -->
             <div class="tab-panel" data-tab="team">
-              <!-- Server-backed sync (phase 4+). Signed-in users see their
-                   status; signed-out users see the login form. -->
+              <!-- Sign-in surface is rendered against /api/auth/methods:
+                   password fields, provider buttons, and the divider all
+                   show/hide based on what the server reports it's
+                   configured for. -->
               <div class="server-section">
                 <p class="hint-block">
-                  Sync your personal snippets across devices via a
-                  SnipDesk Teams server. Snippets are encrypted at rest;
-                  administrators never see your snippet content.
+                  Sync snippets across devices via a SnipDesk Teams
+                  server. Personal snippets are encrypted at rest;
+                  admins never see their content.
                 </p>
-
-                <label class="row server-sso-toggle">
-                  <input id="set-prefer-sso-signin" type="checkbox" />
-                  <span>Hide username/password sign-in <em>- use single sign-on instead</em></span>
-                </label>
 
                 <div id="server-signed-out">
                   <label class="brand-locked-hide">
-                    <span>Server URL <em>- e.g. http://127.0.0.1:8080 for a local server, or your company's https://snippets.example.com</em></span>
+                    <span>Server URL</span>
                     <input
                       id="set-server-url"
                       type="text"
@@ -451,34 +448,55 @@
                   <p class="brand-locked-show hint-block">
                     Server: <code id="brand-server-url-display"></code>
                   </p>
-                  <label class="signin-credentials">
-                    <span>Email</span>
-                    <input id="set-server-email" type="email" autocomplete="email" />
-                  </label>
-                  <label class="signin-credentials">
-                    <span>Password</span>
-                    <input id="set-server-password" type="password" autocomplete="current-password" />
-                  </label>
-                  <div id="server-error" class="editor-error hidden"></div>
-                  <div class="server-auth-actions signin-credentials">
-                    <button id="btn-server-login" class="btn-primary" type="button">Sign in</button>
-                    <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
+
+                  <!-- Password section: shown when methods.password.enabled.
+                       Hidden via the .hidden class when the server reports
+                       password sign-in disabled (SSO-only deployments). -->
+                  <div id="server-password-section">
+                    <label>
+                      <span>Email</span>
+                      <input id="set-server-email" type="email" autocomplete="email" />
+                    </label>
+                    <label>
+                      <span>Password</span>
+                      <input id="set-server-password" type="password" autocomplete="current-password" />
+                    </label>
+                    <div id="server-error" class="editor-error hidden"></div>
+                    <div class="server-auth-actions">
+                      <button id="btn-server-login" class="btn-primary" type="button">Sign in</button>
+                      <button id="btn-server-signup" class="btn-secondary" type="button">Create account</button>
+                    </div>
                   </div>
-                  <div class="server-sso-divider signin-credentials"><span>or</span></div>
-                  <button id="btn-server-oidc" class="btn-google server-oidc-btn" type="button">
-                    <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-                      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
-                      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
-                      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
-                      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
-                    </svg>
-                    <span class="btn-google-label">Sign in with Google</span>
-                  </button>
-                  <details class="server-paste-fallback">
+
+                  <!-- "or" divider: shown when BOTH password and at
+                       least one provider are configured. -->
+                  <div id="server-auth-divider" class="server-sso-divider hidden"><span>or</span></div>
+
+                  <!-- Provider buttons. The Google button is the
+                       only static entry today; JS hides it when the
+                       server doesn't report "google" in
+                       methods.providers. Keycloak (and any future
+                       provider) will be rendered dynamically into
+                       this container by a later commit. -->
+                  <div id="server-providers">
+                    <button id="btn-server-oidc" class="btn-google server-oidc-btn hidden" type="button">
+                      <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+                        <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+                        <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+                        <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+                        <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+                      </svg>
+                      <span class="btn-google-label">Sign in with Google</span>
+                    </button>
+                  </div>
+
+                  <!-- Paste-fallback: only relevant when at least
+                       one OIDC provider exists. -->
+                  <details id="server-paste-fallback" class="server-paste-fallback hidden">
                     <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
                     <p class="hint-block">
-                      If the browser callback page didn't auto-launch SnipDesk after
-                      signing in with Google, copy the token shown on that page and
+                      If the browser callback page didn't auto-launch
+                      SnipDesk, copy the token shown on that page and
                       paste it below.
                     </p>
                     <label>
@@ -531,69 +549,6 @@
                 <input id="set-show-team-inline" type="checkbox" />
                 <span>Show shared snippets in All / folder views <em>- when off, shared snippets only appear under the dedicated Team Library folder</em></span>
               </label>
-
-              <hr class="settings-divider" />
-
-              <details class="legacy-section">
-                <summary>Legacy: read-only library URL (deprecated)</summary>
-                <p class="hint-block">
-                  Pre-server sync option: point at a public JSON file to
-                  receive read-only snippets. Superseded by the server
-                  flow above; will be removed in a future release.
-                </p>
-                <label>
-                  <span>Team library URL <em>- any public JSON file (GitHub raw, S3, shared link, ...)</em></span>
-                  <input
-                    id="set-team-url"
-                    type="text"
-                    placeholder="https://example.com/snippets.json"
-                  />
-                </label>
-                <div class="two-col">
-                  <label>
-                    <span>Sync interval (minutes)</span>
-                    <input id="set-team-interval" type="number" min="1" max="1440" step="1" />
-                  </label>
-                  <label>
-                    <span>Folder name in launcher</span>
-                    <input id="set-team-folder-name" type="text" placeholder="Team Library" />
-                  </label>
-                </div>
-                <label class="row">
-                  <input id="set-team-startup" type="checkbox" />
-                  <span>Sync once on app startup <em>- otherwise waits for the first interval tick</em></span>
-                </label>
-                <div class="team-status-block">
-                  <div class="team-status-row">
-                    <span class="team-status-label">Last synced:</span>
-                    <span id="team-last-synced">Never</span>
-                  </div>
-                  <div class="team-status-row">
-                    <span class="team-status-label">Snippets loaded:</span>
-                    <span id="team-snippet-count">0</span>
-                  </div>
-                  <div class="team-status-row" id="team-error-row" style="display:none">
-                    <span class="team-status-label">Last error:</span>
-                    <span id="team-last-error" class="team-error-text"></span>
-                  </div>
-                  <button id="btn-team-sync" class="btn-secondary" type="button">Sync now</button>
-                </div>
-                <details class="format-help">
-                  <summary>Expected JSON format</summary>
-                  <pre><code>{
-  "version": 1,
-  "snippets": [
-    {
-      "id": "refund-policy",
-      "title": "Refund policy",
-      "body": "Our refund policy is ...",
-      "tags": ["billing"],
-      "folder": "Billing/Refunds"
-    }
-  ]
-}</code></pre>
-                </details>
-              </details>
             </div>
 
             <!-- Editor / Format rules -->

@@ -285,6 +285,12 @@ const state = {
   // in init() on Teams builds. When `server_url` is non-empty, the
   // build is whitelabel-locked and the UI hides the URL inputs.
   brandDefaults: { server_url: "", sso_only: false },
+  // Cached /api/auth/methods response. The Team Library sign-in
+  // surface (password fields, provider buttons, paste-fallback) is
+  // shown/hidden based on this. null = not fetched yet; render
+  // falls back to a conservative "URL input only" until the first
+  // successful fetch.
+  serverMethods: null,
   // { start, end, scrollTop } captured when Link button was clicked.
   pendingLinkInsert: null,
 };
@@ -357,17 +363,14 @@ const els = {
   // Hotkeys tab
   setHotkey: document.getElementById("set-hotkey"),
   setQuickAddHotkey: document.getElementById("set-quick-add-hotkey"),
-  // Team Library tab
-  setTeamUrl: document.getElementById("set-team-url"),
-  setTeamInterval: document.getElementById("set-team-interval"),
-  setTeamFolderName: document.getElementById("set-team-folder-name"),
-  setTeamStartup: document.getElementById("set-team-startup"),
+  // Team Library tab. The legacy library-URL fields
+  // (set-team-url / set-team-interval / set-team-folder-name /
+  // set-team-startup) were removed from the UI as part of the v1
+  // de-bloat; the underlying settings.team_library_url plumbing
+  // still works for anyone who set it via settings.json before the
+  // UI removal, but there's no surface to configure it from the
+  // app any more.
   setShowTeamInline: document.getElementById("set-show-team-inline"),
-  teamLastSynced: document.getElementById("team-last-synced"),
-  teamSnippetCount: document.getElementById("team-snippet-count"),
-  teamErrorRow: document.getElementById("team-error-row"),
-  teamLastError: document.getElementById("team-last-error"),
-  btnTeamSync: document.getElementById("btn-team-sync"),
   // Teams: server sync section
   serverSignedOut: document.getElementById("server-signed-out"),
   serverSignedIn: document.getElementById("server-signed-in"),
@@ -379,6 +382,9 @@ const els = {
   btnServerLogout: document.getElementById("btn-server-logout"),
   btnServerSync: document.getElementById("btn-server-sync"),
   btnServerOidc: document.getElementById("btn-server-oidc"),
+  serverPasswordSection: document.getElementById("server-password-section"),
+  serverAuthDivider: document.getElementById("server-auth-divider"),
+  serverPasteFallback: document.getElementById("server-paste-fallback"),
   setServerPasteToken: document.getElementById("set-server-paste-token"),
   btnServerPasteToken: document.getElementById("btn-server-paste-token"),
   serverError: document.getElementById("server-error"),
@@ -413,7 +419,6 @@ const els = {
   btnCheckUpdates: document.getElementById("btn-check-updates"),
   updateCheckStatus: document.getElementById("update-check-status"),
   setAutoCheckUpdates: document.getElementById("set-auto-check-updates"),
-  setPreferSsoSignin: document.getElementById("set-prefer-sso-signin"),
   // Update toast
   updateToast: document.getElementById("update-toast"),
   updateToastMsg: document.getElementById("update-toast-msg"),
@@ -508,7 +513,6 @@ async function init() {
 
   if (TEAMS_BUILD) {
     await listen("snipdesk://team-library-updated", async () => {
-      await loadTeamStatus();
       // refresh() rebuilds the sidebar AND the snippet list, so the
       // Team Library pseudo-node appears/disappears as the source goes
       // active/inactive, not just when the user is currently viewing
@@ -731,10 +735,14 @@ const onboarding = {
 
   async primeSigninPanel() {
     if (!TEAMS_BUILD) return;
-    // Reflect SSO-only preference so the "Other sign-in options"
-    // disclosure hides via the same CSS rule the Team Library
-    // settings panel uses.
-    document.body.dataset.ssoOnly = String(!!state.settings?.prefer_sso_signin);
+    // Refresh the sign-in surface from the server's reported methods
+    // so the onboarding panel shows password / providers consistent
+    // with what's actually configured. Non-blocking: if the fetch
+    // fails, the conservative default in renderSignInSurface keeps
+    // the panel usable.
+    const signinUrl =
+      state.settings?.server_url || state.brandDefaults?.server_url || "";
+    if (signinUrl) loadServerMethods(signinUrl);
     const urlInput = document.getElementById("onboarding-server-url");
     const oidcBtn = document.getElementById("onboarding-signin-oidc");
     if (urlInput) {
@@ -3435,6 +3443,17 @@ function activateTab(name) {
   const panels = els.settings.querySelectorAll(".tab-panel");
   tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   panels.forEach((p) => p.classList.toggle("active", p.dataset.tab === name));
+  // Opening the Team Library tab triggers a fresh methods fetch so
+  // the sign-in surface (password / provider buttons / paste-fallback)
+  // matches the server's current config. Cheap call - one round-trip
+  // to /api/auth/methods, results cached in state.serverMethods.
+  if (name === "team" && TEAMS_BUILD) {
+    const url = els.setServerUrl?.value?.trim() ||
+                state.settings?.server_url ||
+                state.brandDefaults?.server_url ||
+                "";
+    if (url) loadServerMethods(url);
+  }
 }
 
 function openSettings() {
@@ -3449,10 +3468,6 @@ function openSettings() {
   els.setMinimizeToTray.checked = s.minimize_to_tray ?? true;
   els.setStartInTray.checked = s.start_in_tray ?? false;
   els.setAutoCheckUpdates.checked = s.auto_check_updates ?? true;
-  if (els.setPreferSsoSignin) {
-    els.setPreferSsoSignin.checked = !!s.prefer_sso_signin;
-    document.body.dataset.ssoOnly = String(!!s.prefer_sso_signin);
-  }
   // Appearance
   els.setTheme.value = s.theme || "dark";
   // Empty accent = theme default, but <input type="color"> can't represent "no
@@ -3472,10 +3487,6 @@ function openSettings() {
   els.setHotkey.value = s.hotkey || "";
   els.setQuickAddHotkey.value = s.quick_add_hotkey ?? "";
   if (TEAMS_BUILD) {
-    els.setTeamUrl.value = s.team_library_url ?? "";
-    els.setTeamInterval.value = s.team_library_sync_interval_mins ?? 60;
-    els.setTeamFolderName.value = s.team_library_folder_name ?? "Team Library";
-    els.setTeamStartup.checked = s.team_library_sync_on_startup ?? true;
     if (els.setShowTeamInline) {
       els.setShowTeamInline.checked = s.show_team_snippets_inline !== false;
     }
@@ -3492,8 +3503,6 @@ function openSettings() {
   els.setBackupDays.value = s.backup_retention_days ?? 14;
   els.setLogDays.value = s.log_retention_days ?? 7;
   loadLogPath();
-  renderTeamStatus();
-  loadTeamStatus();
   // Server panel re-load every time settings opens; the background
   // sync may have changed `last_sync` since the last paint.
   loadServerStatus();
@@ -3568,32 +3577,14 @@ function formatRelativeTime(unix) {
   return `${Math.floor(d / 86400)}d ago`;
 }
 
-function renderTeamStatus() {
-  // Free build strips the Team Library tab; els.team* refs are null.
-  if (!TEAMS_BUILD) return;
-  const st = state.teamStatus || {};
-  els.teamLastSynced.textContent = formatRelativeTime(st.fetched_at_unix);
-  els.teamSnippetCount.textContent = String(st.snippet_count || 0);
-  if (st.last_error) {
-    els.teamErrorRow.style.display = "";
-    els.teamLastError.textContent = st.last_error;
-  } else {
-    els.teamErrorRow.style.display = "none";
-    els.teamLastError.textContent = "";
-  }
-}
-
-async function loadTeamStatus() {
-  // Command isn't registered in free build.
-  if (!TEAMS_BUILD) return;
-  try {
-    const st = await invoke("team_library_status");
-    state.teamStatus = st || state.teamStatus;
-    renderTeamStatus();
-  } catch (err) {
-    console.warn("team_library_status failed", err);
-  }
-}
+// The legacy team_library_url UI (Last synced / Snippets loaded /
+// Last error / Sync now button) was removed as part of the v1
+// de-bloat. The underlying status payload + sync command still work
+// for anyone who set team_library_url via settings.json before the
+// removal; we just don't surface them in the app any more.
+//
+// renderTeamStatus / loadTeamStatus / syncTeamLibraryNow used to
+// drive those status fields. They're gone with the UI.
 
 async function loadLogPath() {
   try {
@@ -3601,37 +3592,6 @@ async function loadLogPath() {
     els.logPathDisplay.textContent = p ? `Log file: ${p}` : "";
   } catch (err) {
     els.logPathDisplay.textContent = "";
-  }
-}
-
-async function syncTeamLibraryNow() {
-  // Bound button is removed in free build, but guard against stray callers.
-  if (!TEAMS_BUILD) return;
-  if (!els.setTeamUrl.value.trim()) {
-    setStatus("Enter a team library URL first.", "err");
-    return;
-  }
-  // Persist URL before syncing.
-  try {
-    const merged = collectSettingsForSave();
-    state.settings = await invoke("update_settings", { newSettings: merged });
-  } catch (err) {
-    setStatus(`Error saving URL: ${err}`, "err");
-    return;
-  }
-  els.btnTeamSync.disabled = true;
-  els.btnTeamSync.textContent = "Syncing...";
-  try {
-    await invoke("sync_team_library");
-    setStatus("Team library synced", "ok");
-    await loadTeamStatus();
-    if (state.selectedFolder === TEAM_FOLDER) await refresh();
-  } catch (err) {
-    setStatus(`Sync failed: ${err}`, "err");
-    await loadTeamStatus();
-  } finally {
-    els.btnTeamSync.disabled = false;
-    els.btnTeamSync.textContent = "Sync now";
   }
 }
 
@@ -3821,6 +3781,59 @@ async function loadServerStatus() {
   }
 }
 
+/// Fetch /api/auth/methods and update state.serverMethods. Used by
+/// renderSignInSurface to decide which fields/buttons to show. Safe
+/// to call repeatedly; just refreshes the cache. Failures (network,
+/// server not reachable) leave state.serverMethods untouched and
+/// renderSignInSurface falls back to its conservative default.
+async function loadServerMethods(serverUrl) {
+  if (!TEAMS_BUILD) return;
+  const url = (serverUrl || "").trim();
+  if (!url) return;
+  try {
+    state.serverMethods = await invoke("server_auth_methods", { serverUrl: url });
+    renderSignInSurface();
+  } catch (err) {
+    // Non-fatal: a brand-new install pointed at an unreachable
+    // server should still let the user see the URL field and try
+    // again. Log so a real misconfiguration is visible in the
+    // console, but don't surface an error in the UI.
+    console.warn("server_auth_methods failed", err);
+  }
+}
+
+/// Show/hide the password section, Google button, "or" divider, and
+/// paste-token fallback in the signed-out panel based on what
+/// state.serverMethods reports. Called on Team Library tab open, on
+/// successful methods fetch, and from renderServerStatus when the
+/// signed-out panel is the visible one.
+function renderSignInSurface() {
+  if (!TEAMS_BUILD) return;
+  const methods = state.serverMethods;
+  // Conservative default: when we haven't fetched yet (or the fetch
+  // failed), show the password section so the user has SOMETHING to
+  // act on. Hide the OIDC pieces - they'd just be broken buttons
+  // without the server confirming the provider is wired.
+  const showPassword = methods ? methods.password.enabled : true;
+  const providers = methods ? methods.providers : [];
+  const hasGoogle = providers.some((p) => p.id === "google");
+  const hasAnyProvider = providers.length > 0;
+
+  if (els.serverPasswordSection) {
+    els.serverPasswordSection.classList.toggle("hidden", !showPassword);
+  }
+  if (els.btnServerOidc) {
+    els.btnServerOidc.classList.toggle("hidden", !hasGoogle);
+  }
+  if (els.serverAuthDivider) {
+    // The divider only earns its place when both sides have content.
+    els.serverAuthDivider.classList.toggle("hidden", !(showPassword && hasAnyProvider));
+  }
+  if (els.serverPasteFallback) {
+    els.serverPasteFallback.classList.toggle("hidden", !hasAnyProvider);
+  }
+}
+
 function renderServerStatus() {
   const st = state.serverStatus;
   if (!st) return;
@@ -3853,6 +3866,9 @@ function renderServerStatus() {
     if (st.server_url && !els.setServerUrl.value) {
       els.setServerUrl.value = st.server_url;
     }
+    // Keep the sign-in surface in sync with the configured methods.
+    // Conservative fallback applies if we haven't fetched yet.
+    renderSignInSurface();
   }
 }
 
@@ -4147,19 +4163,18 @@ function collectSettingsForSave() {
     // Hotkeys
     hotkey: els.setHotkey.value.trim(),
     quick_add_hotkey: els.setQuickAddHotkey.value.trim(),
-    // Free build round-trips state.settings - backend struct still carries the fields.
-    team_library_url: TEAMS_BUILD
-      ? els.setTeamUrl.value.trim()
-      : (state.settings?.team_library_url ?? ""),
-    team_library_sync_interval_mins: TEAMS_BUILD
-      ? clampInt(parseInt(els.setTeamInterval.value, 10), 1, 1440, 60)
-      : (state.settings?.team_library_sync_interval_mins ?? 60),
-    team_library_folder_name: TEAMS_BUILD
-      ? (els.setTeamFolderName.value.trim() || "Team Library")
-      : (state.settings?.team_library_folder_name ?? "Team Library"),
-    team_library_sync_on_startup: TEAMS_BUILD
-      ? els.setTeamStartup.checked
-      : (state.settings?.team_library_sync_on_startup ?? true),
+    // Legacy team_library_url fields no longer have a UI; we
+    // round-trip whatever was last persisted so update_settings
+    // doesn't blank them for users who configured the legacy
+    // pull-from-JSON path before the v1 UI cleanup. The underlying
+    // sync code still honours these if set.
+    team_library_url: state.settings?.team_library_url ?? "",
+    team_library_sync_interval_mins:
+      state.settings?.team_library_sync_interval_mins ?? 60,
+    team_library_folder_name:
+      state.settings?.team_library_folder_name ?? "Team Library",
+    team_library_sync_on_startup:
+      state.settings?.team_library_sync_on_startup ?? true,
     show_team_snippets_inline:
       TEAMS_BUILD && els.setShowTeamInline
         ? els.setShowTeamInline.checked
@@ -4168,9 +4183,11 @@ function collectSettingsForSave() {
     // from the form), but we round-trip the current value so update_settings
     // doesn't reset it to the default "".
     server_url: state.settings?.server_url ?? "",
-    prefer_sso_signin: els.setPreferSsoSignin
-      ? els.setPreferSsoSignin.checked
-      : (state.settings?.prefer_sso_signin ?? false),
+    // prefer_sso_signin lost its UI when the SSO toggle was removed
+    // (the /api/auth/methods endpoint drives sign-in visibility now);
+    // round-trip the last persisted value to keep update_settings
+    // happy.
+    prefer_sso_signin: state.settings?.prefer_sso_signin ?? false,
     // Editor rules
     format_rules: state.editingRules
       .map((r) => ({
@@ -4421,7 +4438,6 @@ function bindEvents() {
   });
 
   if (TEAMS_BUILD) {
-    els.btnTeamSync.addEventListener("click", syncTeamLibraryNow);
     els.btnServerLogin.addEventListener("click", doServerLogin);
     els.btnServerSignup.addEventListener("click", doServerSignup);
     els.btnServerLogout.addEventListener("click", doServerLogout);
@@ -4447,16 +4463,6 @@ function bindEvents() {
   els.updateLater.addEventListener("click", dismissUpdateToast);
 
   els.setSave.addEventListener("click", saveSettings);
-
-  // Live-reflect the SSO-only toggle into the body data attribute so
-  // the credential block hides/shows immediately, before the user
-  // commits the settings panel. The persisted state still travels
-  // through saveSettings.
-  if (els.setPreferSsoSignin) {
-    els.setPreferSsoSignin.addEventListener("change", () => {
-      document.body.dataset.ssoOnly = String(els.setPreferSsoSignin.checked);
-    });
-  }
 
   // ---- Onboarding wiring ----
   // Each panel's primary actions get a click handler. Next/Skip

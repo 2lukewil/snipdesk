@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "snipdesk"
 version = "0.1.6"
 description = "Fast snippet launcher for support agents"

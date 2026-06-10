@@ -1717,7 +1717,7 @@ body.compact .search-bar {
   border-bottom-width: 2px;
 }
 
-/* --- Import preview tree (Settings -> Import) --- */
+/* --- Selection tree modal (import preview / export picker) --- */
 
 .imp-toolbar {
   display: flex;
@@ -1730,7 +1730,7 @@ body.compact .search-bar {
   min-width: 140px;
   padding: 6px 10px;
   background: var(--bg);
-  color: var(--fg);
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
   font: inherit;
@@ -1741,27 +1741,68 @@ body.compact .search-bar {
   padding: 8px 10px;
   max-height: 320px;
   overflow-y: auto;
+  background: var(--bg);
 }
 .imp-folder { margin: 2px 0; }
 .imp-folder-row { display: flex; align-items: center; gap: 4px; }
 .imp-toggle {
   background: none;
   border: none;
-  color: var(--fg-dim);
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 12px;
   padding: 2px 4px;
   line-height: 1;
 }
 .imp-children { margin-left: 22px; }
-.imp-item { margin: 2px 0 2px 26px; }
-.imp-item label,
-.imp-folder-row label { cursor: pointer; }
+.imp-item {
+  margin: 1px 0 1px 26px;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.imp-item:hover { background: var(--bg-hover); }
+/* The global .modal-card label rule stacks its children vertically
+   (column flex for form fields). Tree rows need the opposite:
+   checkbox, folder icon, name, and count on ONE line, vertically
+   centred. Scoped here so settings fields keep their stacking. */
+.modal-card .imp-tree label,
+.modal-card .imp-toolbar label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.imp-tree label input[type="checkbox"],
+.imp-toolbar label input[type="checkbox"] {
+  margin: 0;
+  flex: none;
+}
+.imp-folder-row label strong { font-weight: 600; }
+.imp-tree .hint-inline { color: var(--text-dim); }
 .imp-badge {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: var(--danger-bg, rgba(220, 80, 80, 0.15));
-  color: var(--danger, #e06c6c);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
   margin-left: 6px;
 }
+
+/* --- Footer trash icon --- */
+
+.trash-btn {
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-right: 6px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  line-height: 1;
+}
+.trash-btn:hover { background: var(--bg-hover); }

@@ -430,9 +430,10 @@ const els = {
   setCancel: document.getElementById("set-cancel"),
   btnExport: document.getElementById("btn-export"),
   btnImport: document.getElementById("btn-import"),
-  exportFilter: document.getElementById("export-filter"),
-  exportFilterCount: document.getElementById("export-filter-count"),
+  btnTrash: document.getElementById("btn-trash"),
   importPreview: document.getElementById("import-preview"),
+  impTitle: document.getElementById("imp-title"),
+  impHint: document.getElementById("imp-hint"),
   impMaster: document.getElementById("imp-master"),
   impSearch: document.getElementById("imp-search"),
   impCount: document.getElementById("imp-count"),
@@ -1706,7 +1707,11 @@ function renderFolders() {
   const teamSourceActive =
     TEAMS_BUILD &&
     (Boolean(state.settings?.team_library_url) ||
-      Boolean(state.serverStatus?.signed_in));
+      Boolean(state.serverStatus?.signed_in)) &&
+    // When shared snippets display inline in All / folder views,
+    // the dedicated sidebar row is redundant clutter - it only
+    // earns its place when it's the sole way to see team content.
+    state.settings?.show_team_snippets_inline === false;
   if (teamSourceActive) {
     const teamLabel = state.settings.team_library_folder_name || "Team Library";
     const teamNode = folderNodeEl(
@@ -1724,26 +1729,10 @@ function renderFolders() {
     els.folderTree.appendChild(teamNode);
   }
 
-  // Trash pseudo-folder. Only meaningful when signed in - server-side
-  // trash lives on the snipdesk-server, and Lite builds have no
-  // tombstone concept beyond "delete locally and that's it".
-  // Clicking opens a modal (not selectFolder) because trash content
-  // is fetched fresh from the network each time, doesn't live in
-  // state.snippets, and the rendering needs its own action buttons.
-  if (TEAMS_BUILD && state.serverStatus?.signed_in) {
-    const trashNode = folderNodeEl(
-      "__trash__",
-      "Trash",
-      false,
-      0,
-      false,
-      false
-    );
-    const iconSpan = trashNode.querySelector("span:nth-child(2)");
-    if (iconSpan) iconSpan.textContent = "🗑 ";
-    trashNode.addEventListener("click", () => openTrashModal());
-    els.folderTree.appendChild(trashNode);
-  }
+  // Trash lives as a red icon at the footer's left edge (always
+  // visible, unlike this sidebar which hides in no-folder mode).
+  // Visibility is driven from renderServerStatus since server-side
+  // trash only exists while signed in.
 
   const hasChildren = new Set();
   for (const f of state.folders) {
@@ -3885,6 +3874,10 @@ function renderDynamicProviderButtons(providers) {
 function renderServerStatus() {
   const st = state.serverStatus;
   if (!st) return;
+  // Footer trash icon: server-side trash only exists while signed in.
+  if (els.btnTrash) {
+    els.btnTrash.classList.toggle("hidden", !(st.signed_in && st.user));
+  }
   if (st.signed_in && st.user) {
     els.serverSignedOut.classList.add("hidden");
     els.serverSignedIn.classList.remove("hidden");
@@ -4348,80 +4341,15 @@ async function withDialogSuppressed(fn) {
   }
 }
 
-/// Snippets matching the export-filter input, via the same Rust
-/// matcher the launcher search uses (list_snippets). Empty filter
-/// means "no filter" and returns null so callers can take the
-/// export-everything path.
-async function exportFilterMatches() {
-  const q = (els.exportFilter?.value || "").trim();
-  if (!q) return null;
-  return (
-    (await invoke("list_snippets", {
-      query: q,
-      tag: null,
-      folder: null,
-      sort: null,
-    })) || []
-  );
-}
+// ---- Selection tree modal (shared by import and export) ----
 
-/// Keep the "N of M match" line under the export filter current.
-let exportCountTimer = null;
-function scheduleExportFilterCount() {
-  clearTimeout(exportCountTimer);
-  exportCountTimer = setTimeout(async () => {
-    if (!els.exportFilterCount) return;
-    const q = (els.exportFilter?.value || "").trim();
-    if (!q) {
-      els.exportFilterCount.textContent = "";
-      return;
-    }
-    try {
-      const matches = await exportFilterMatches();
-      const total = (state.allSnippets || []).length;
-      els.exportFilterCount.textContent = `${matches.length} of ${total} match - only these will export`;
-    } catch (_e) {
-      els.exportFilterCount.textContent = "";
-    }
-  }, 200);
-}
-
-async function exportSnippets() {
-  try {
-    // Resolve the filter BEFORE the save dialog so the user knows
-    // what they're about to write. Null = export everything.
-    const matches = await exportFilterMatches();
-    if (matches && matches.length === 0) {
-      setStatus("Export filter matches nothing - clear it or refine it", "err");
-      return;
-    }
-    const path = await withDialogSuppressed(() =>
-      saveDialog({
-        defaultPath: "snippets.json",
-        filters: [
-          { name: "JSON", extensions: ["json"] },
-          { name: "CSV", extensions: ["csv"] },
-        ],
-      })
-    );
-    if (!path) return;
-    const format = path.toLowerCase().endsWith(".csv") ? "csv" : "json";
-    const ids = matches ? matches.map((s) => s.id) : null;
-    const n = await invoke("export_snippets", { args: { path, format, ids } });
-    setStatus(
-      `Exported ${n} snippet${n === 1 ? "" : "s"}${matches ? " (filtered)" : ""}`,
-      "ok",
-    );
-  } catch (err) {
-    setStatus(`Error: ${err}`, "err");
-  }
-}
-
-// ---- Import preview (folder tree) ----
-
-/// Parsed entries for the open preview modal; indices line up with
-/// the data-idx attributes in the rendered tree.
-let importPreviewEntries = null;
+/// Entries backing the open modal; indices line up with the
+/// data-idx attributes in the rendered tree. Import entries carry
+/// a `duplicate` flag (pre-deselected + badged); export entries
+/// carry an `id` and all start selected.
+let treeModalEntries = null;
+/// "import" | "export" - decides what the confirm button does.
+let treeModalMode = "import";
 
 /// Group entries by folder_path into a nested tree. Folderless
 /// entries land under a "(no folder)" group at the root.
@@ -4471,11 +4399,11 @@ function renderImportTree(node, container, entries) {
     cb.type = "checkbox";
     cb.className = "imp-folder-cb";
     const nameEl = document.createElement("strong");
-    nameEl.textContent = name;
+    nameEl.textContent = `📁 ${name}`;
     const count = document.createElement("span");
     count.className = "hint-inline";
-    count.textContent = ` (${importNodeSize(child)})`;
-    label.append(cb, " ", nameEl, count);
+    count.textContent = `(${importNodeSize(child)})`;
+    label.append(cb, nameEl, count);
     row.append(toggle, label);
     const childrenEl = document.createElement("div");
     childrenEl.className = "imp-children";
@@ -4551,6 +4479,17 @@ function applyImportSearch() {
   });
 }
 
+/// Render entries into the tree modal and show it. The caller sets
+/// mode-specific chrome (title, hint, confirm label) first.
+function openTreeModal(entries) {
+  treeModalEntries = entries;
+  els.impTree.replaceChildren();
+  els.impSearch.value = "";
+  renderImportTree(buildImportTreeModel(entries), els.impTree, entries);
+  updateImportCounts();
+  els.importPreview.classList.remove("hidden");
+}
+
 async function importSnippets() {
   try {
     const picked = await withDialogSuppressed(() =>
@@ -4572,12 +4511,12 @@ async function importSnippets() {
       setStatus("No snippets found in that file", "err");
       return;
     }
-    importPreviewEntries = entries;
-    els.impTree.replaceChildren();
-    els.impSearch.value = "";
-    renderImportTree(buildImportTreeModel(entries), els.impTree, entries);
-    updateImportCounts();
-    els.importPreview.classList.remove("hidden");
+    treeModalMode = "import";
+    els.impTitle.textContent = "Import preview";
+    els.impHint.textContent =
+      "Everything new starts selected; duplicates of existing titles start deselected. Expand folders to cherry-pick.";
+    els.impConfirm.textContent = "Import selected";
+    openTreeModal(entries);
   } catch (err) {
     const message = typeof err === "string" ? err : err?.message || String(err);
     setStatus(`Import failed`, "err");
@@ -4585,23 +4524,84 @@ async function importSnippets() {
   }
 }
 
-async function confirmImportSelection() {
-  if (!importPreviewEntries) return;
+/// Export entry point: same tree modal over the user's own
+/// snippets, everything selected, confirm writes the checked set.
+async function openExportModal() {
+  try {
+    const snippets =
+      (await invoke("list_snippets", {
+        query: null,
+        tag: null,
+        folder: null,
+        sort: null,
+      })) || [];
+    if (snippets.length === 0) {
+      setStatus("Nothing to export yet", "err");
+      return;
+    }
+    treeModalMode = "export";
+    els.impTitle.textContent = "Export snippets";
+    els.impHint.textContent =
+      "Everything starts selected. Untick folders or snippets to leave them out, then choose where to save.";
+    els.impConfirm.textContent = "Export selected";
+    openTreeModal(
+      snippets.map((s) => ({
+        id: s.id,
+        title: s.title,
+        folder_path: s.folder_path,
+      })),
+    );
+  } catch (err) {
+    setStatus(`Error: ${err}`, "err");
+  }
+}
+
+async function confirmTreeSelection() {
+  if (!treeModalEntries) return;
   const selected = impItemCbs()
     .filter((c) => c.checked)
-    .map((c) => importPreviewEntries[parseInt(c.dataset.idx, 10)])
-    .filter(Boolean)
-    .map((e) => ({
-      title: e.title,
-      body: e.body,
-      tags: e.tags || [],
-      folder_path: e.folder_path || null,
-    }));
+    .map((c) => treeModalEntries[parseInt(c.dataset.idx, 10)])
+    .filter(Boolean);
   if (selected.length === 0) return;
+
+  if (treeModalMode === "export") {
+    const path = await withDialogSuppressed(() =>
+      saveDialog({
+        defaultPath: "snippets.json",
+        filters: [
+          { name: "JSON", extensions: ["json"] },
+          { name: "CSV", extensions: ["csv"] },
+        ],
+      })
+    );
+    if (!path) return; // keep the modal open; selection survives
+    const format = path.toLowerCase().endsWith(".csv") ? "csv" : "json";
+    els.impConfirm.disabled = true;
+    try {
+      const ids = selected.map((s) => s.id);
+      const n = await invoke("export_snippets", { args: { path, format, ids } });
+      setStatus(`Exported ${n} snippet${n === 1 ? "" : "s"}`, "ok");
+      els.importPreview.classList.add("hidden");
+      treeModalEntries = null;
+    } catch (err) {
+      setStatus(`Error: ${err}`, "err");
+    } finally {
+      els.impConfirm.disabled = false;
+    }
+    return;
+  }
+
+  // Import mode.
+  const items = selected.map((e) => ({
+    title: e.title,
+    body: e.body,
+    tags: e.tags || [],
+    folder_path: e.folder_path || null,
+  }));
   els.impConfirm.disabled = true;
   try {
     const result = await invoke("import_snippet_items", {
-      args: { items: selected },
+      args: { items },
     });
     const imported = result?.imported ?? 0;
     const skipped = result?.skipped_duplicates ?? 0;
@@ -4611,7 +4611,7 @@ async function confirmImportSelection() {
     }
     setStatus(parts.join(" - "), skipped > 0 && imported === 0 ? "err" : "ok");
     els.importPreview.classList.add("hidden");
-    importPreviewEntries = null;
+    treeModalEntries = null;
     await refresh();
   } catch (err) {
     setStatus(`Import failed: ${err}`, "err");
@@ -4811,17 +4811,16 @@ function bindEvents() {
   enableHotkeyCapture(els.setHotkey);
   enableHotkeyCapture(els.setQuickAddHotkey, { allowClear: true });
   els.setCancel.addEventListener("click", closeSettings);
-  els.btnExport.addEventListener("click", exportSnippets);
+  els.btnExport.addEventListener("click", openExportModal);
   els.btnImport.addEventListener("click", importSnippets);
-  if (els.exportFilter)
-    els.exportFilter.addEventListener("input", scheduleExportFilterCount);
+  if (els.btnTrash) els.btnTrash.addEventListener("click", () => openTrashModal());
   if (els.impCancel)
     els.impCancel.addEventListener("click", () => {
       els.importPreview.classList.add("hidden");
-      importPreviewEntries = null;
+      treeModalEntries = null;
     });
   if (els.impConfirm)
-    els.impConfirm.addEventListener("click", confirmImportSelection);
+    els.impConfirm.addEventListener("click", confirmTreeSelection);
   if (els.impMaster)
     els.impMaster.addEventListener("change", () => {
       const on = els.impMaster.checked;

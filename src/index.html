@@ -42,6 +42,16 @@
         </div>
 
         <footer class="footer">
+          <!-- Trash: red icon at the bottom-left corner. Teams-only;
+               visibility driven by sign-in state in renderServerStatus. -->
+          <button id="btn-trash" class="trash-btn hidden" type="button" title="Trash" aria-label="Open trash">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 6h18" />
+              <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              <path d="M10 11v6M14 11v6" />
+            </svg>
+          </button>
           <span id="status" class="status"></span>
           <span id="savings" class="savings hidden" title="Estimated time and money saved from pasted snippets"></span>
           <span class="hint">Enter: paste | Shift+Enter: copy | Ctrl+E: edit | Del: delete | Right-click: menu</span>
@@ -172,13 +182,10 @@
            the parse_snippet_file IPC result. -->
       <section id="import-preview" class="modal hidden">
         <div class="modal-card wide">
-          <h2>Import preview</h2>
-          <p class="hint-block">
-            Everything new starts selected; duplicates of existing titles
-            start deselected. Expand folders to cherry-pick.
-          </p>
+          <h2 id="imp-title">Import preview</h2>
+          <p class="hint-block" id="imp-hint"></p>
           <div class="imp-toolbar">
-            <label><input type="checkbox" id="imp-master" /> Select all</label>
+            <label class="row"><input type="checkbox" id="imp-master" /> Select all</label>
             <input id="imp-search" type="search" placeholder="Filter by title" autocomplete="off" />
             <span id="imp-count" class="hint-inline"></span>
           </div>
@@ -654,14 +661,9 @@
               <hr class="settings-divider" />
               <p class="hint-block">
                 Export your snippets to JSON or CSV, or import from a previous
-                export. Imports open a preview where you pick exactly what to
-                bring in; duplicate titles start deselected.
+                export. Both open a picker where you choose exactly which
+                folders and snippets to include.
               </p>
-              <label>
-                <span>Export filter <em>- leave empty to export everything</em></span>
-                <input id="export-filter" type="text" placeholder="Search title, body, tags" autocomplete="off" />
-              </label>
-              <div id="export-filter-count" class="hint-block"></div>
               <div class="maint-buttons">
                 <button id="btn-export" class="btn-secondary" type="button">Export</button>
                 <button id="btn-import" class="btn-secondary" type="button">Import</button>

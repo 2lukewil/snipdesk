@@ -1,24 +1,35 @@
-//! Google Workspace OIDC sign-in.
+//! Multi-provider OIDC sign-in (Google Workspace + Keycloak).
 //!
-//! Two-step browser dance:
-//!   1. `GET /api/auth/oidc/start` - the desktop client opens this in
-//!      the user's browser. We generate a CSRF state, a PKCE verifier,
-//!      and a nonce, stash all three keyed by state, then 302 the
-//!      browser to Google's authorize endpoint.
-//!   2. `GET /api/auth/oidc/callback` - Google redirects here after
-//!      the user signs in. We look up the stored state, exchange the
-//!      code for tokens, verify the ID token (signature against
-//!      Google's JWKS, audience, issuer, nonce match, optional
-//!      `hd` claim against required_hd), find-or-create the user, and
-//!      issue our own HS256 JWT. The response is an HTML page that
-//!      attempts a `snipdesk://auth?token=...` deep link AND exposes
-//!      the token for manual copy as a fallback.
+//! Two-step browser dance, identical shape across providers:
+//!   1. `start` - the desktop client opens this in the user's browser.
+//!      We generate a CSRF state, a PKCE verifier, and a nonce, stash
+//!      all three keyed by state (alongside which provider was picked),
+//!      then 302 the browser to the provider's authorize endpoint.
+//!   2. `callback` - the provider redirects here after the user signs
+//!      in. We look up the stored state, exchange the code for tokens,
+//!      verify the ID token, run provider-specific checks (Google's
+//!      `hd` claim or Keycloak's realm-role check), find-or-create
+//!      the local user, and issue our own HS256 JWT. The response is
+//!      an HTML page that fires a `<scheme>://auth?token=...` deep
+//!      link AND exposes the token for manual copy as a fallback.
+//!
+//! Per-provider behaviour rides on `Provider` (Google / Keycloak).
+//! The shared `start_flow` / `complete_flow` functions stay
+//! provider-agnostic; the variant-specific bits (issuer URL, extra
+//! claim checks, admin-role mapping, button label) hang off methods
+//! on the enum.
 //!
 //! State store: in-memory `HashMap<state, PendingAuth>` behind a
 //! Mutex. Entries expire after 10 minutes; each request prunes
 //! expired entries before doing its own work. For a v1 single-process
 //! deployment this is fine. A multi-instance deploy would need a
 //! shared store (Redis), but that's a v2 concern.
+//!
+//! User-facing error strings are deliberately opaque ("sign-in
+//! failed"). The underlying token-exchange / id-token-verify failure
+//! is captured via `tracing::warn!` with full detail server-side, so
+//! operators can debug from logs without leaking the exact failure
+//! mode to whoever just hit the callback URL.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -28,32 +39,159 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::Utc;
 use once_cell::sync::Lazy;
-use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
+use openidconnect::core::{
+    CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreProviderMetadata,
+};
 use openidconnect::reqwest::async_http_client;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 use serde::Deserialize;
+use serde_json::json;
 use uuid::Uuid;
 
+use crate::audit::{self, action, AuditEvent};
 use crate::auth::issue_token;
-use crate::config::GoogleOidcConfig;
+use crate::config::{GoogleOidcConfig, KeycloakOidcConfig};
 use crate::error::ApiError;
 use crate::http::AppState;
+
+/// Which provider a flow belongs to. Drives every per-provider
+/// branch (issuer URL, extra claim validation, admin-role mapping,
+/// the string stamped into `users.oidc_provider`). Keep the variant
+/// list tight; adding a third provider means adding the matching
+/// `[oidc.<name>]` config block, an `AppState` slot, and matching
+/// branches in the methods on this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Provider {
+    Google,
+    Keycloak,
+}
+
+impl Provider {
+    /// Stable string used in URL paths (`/api/auth/oidc/<id>/start`)
+    /// and stored in `users.oidc_provider`. Lowercase ASCII only;
+    /// don't rename a variant once it's gone live - existing user
+    /// rows reference it.
+    fn id(self) -> &'static str {
+        match self {
+            Provider::Google => "google",
+            Provider::Keycloak => "keycloak",
+        }
+    }
+
+    /// Parse a path segment back into a Provider. Returns None for
+    /// unknown names so the route handler can 404 cleanly. Wired up
+    /// by the per-provider routes in the next commit.
+    #[allow(dead_code)]
+    fn from_id(s: &str) -> Option<Provider> {
+        match s {
+            "google" => Some(Provider::Google),
+            "keycloak" => Some(Provider::Keycloak),
+            _ => None,
+        }
+    }
+}
+
+/// Borrowed view of a provider's config. `start_flow` and
+/// `complete_flow` work against this so they don't have to know which
+/// concrete struct backs the running provider.
+enum ProviderConfig<'a> {
+    Google(&'a GoogleOidcConfig),
+    Keycloak(&'a KeycloakOidcConfig),
+}
+
+impl ProviderConfig<'_> {
+    fn provider(&self) -> Provider {
+        match self {
+            ProviderConfig::Google(_) => Provider::Google,
+            ProviderConfig::Keycloak(_) => Provider::Keycloak,
+        }
+    }
+
+    fn client_id(&self) -> &str {
+        match self {
+            ProviderConfig::Google(g) => &g.client_id,
+            ProviderConfig::Keycloak(k) => &k.client_id,
+        }
+    }
+
+    fn client_secret(&self) -> &str {
+        match self {
+            ProviderConfig::Google(g) => &g.client_secret,
+            ProviderConfig::Keycloak(k) => &k.client_secret,
+        }
+    }
+
+    fn redirect_uri(&self) -> &str {
+        match self {
+            ProviderConfig::Google(g) => &g.redirect_uri,
+            ProviderConfig::Keycloak(k) => &k.redirect_uri,
+        }
+    }
+
+    /// Issuer URL the openidconnect crate hits for the discovery
+    /// document. Google's is fixed; Keycloak's is per-realm and
+    /// comes from the config.
+    fn issuer_url(&self) -> &str {
+        match self {
+            ProviderConfig::Google(_) => "https://accounts.google.com",
+            ProviderConfig::Keycloak(k) => &k.issuer_url,
+        }
+    }
+
+    /// Soft email-domain allowlist. Empty list means no filter.
+    fn allowed_email_domains(&self) -> &[String] {
+        match self {
+            ProviderConfig::Google(g) => &g.allowed_email_domains,
+            ProviderConfig::Keycloak(k) => &k.allowed_email_domains,
+        }
+    }
+}
+
+/// Look up the configured provider on AppState. Returns the opaque
+/// "sign-in failed" error to the caller when the slot is empty; the
+/// log line carries the exact "oidc <provider> not configured"
+/// detail so operators see it without it being exposed to users.
+fn provider_config<'a>(
+    state: &'a AppState,
+    provider: Provider,
+) -> Result<ProviderConfig<'a>, ApiError> {
+    match provider {
+        Provider::Google => state
+            .oidc_google
+            .as_ref()
+            .map(ProviderConfig::Google)
+            .ok_or_else(|| {
+                tracing::warn!("oidc start/callback for google but [oidc.google] is unset");
+                generic_signin_failed()
+            }),
+        Provider::Keycloak => state
+            .oidc_keycloak
+            .as_ref()
+            .map(ProviderConfig::Keycloak)
+            .ok_or_else(|| {
+                tracing::warn!("oidc start/callback for keycloak but [oidc.keycloak] is unset");
+                generic_signin_failed()
+            }),
+    }
+}
 
 /// A pending authorization waiting for its callback. The keys we
 /// need to keep alive between /start and /callback: PKCE verifier
 /// (proves the same user agent initiated both calls), nonce (binds
 /// the ID token to this specific authorization), and the desktop
 /// redirect URL (so we know where to send the user once we've
-/// minted their JWT).
+/// minted their JWT). `provider` tags the entry so `callback` knows
+/// which config + validation hooks to load.
 struct PendingAuth {
+    provider: Provider,
     pkce_verifier: PkceCodeVerifier,
     nonce: Nonce,
     /// The custom-scheme URL we'll redirect the browser to with the
-    /// issued token appended. Currently always `snipdesk://auth`; the
-    /// `?redirect` query param on /start lets the future support
+    /// issued token appended. Currently always `<scheme>://auth`; the
+    /// `?redirect` query param on /start lets future support land
     /// other client builds without code changes.
     client_redirect: String,
     created_at: i64,
@@ -81,11 +219,12 @@ fn prune_pending(now: i64) {
 
 /// Cached provider metadata + the JWKS bundled with it. Saves the
 /// ~150 ms discovery round-trip on every sign-in. The TTL is
-/// deliberately conservative (1 hour) - Google rotates JWKS roughly
+/// deliberately conservative (1 hour) - JWKS can rotate roughly
 /// daily and the openidconnect crate validates against whatever
 /// metadata we hand the client, so a stale cache could reject a
 /// freshly-rotated key. 1 hour bounds that window without paying
-/// the discovery cost every single login.
+/// the discovery cost every single login. Keyed by issuer URL so
+/// each provider gets its own cache slot.
 const METADATA_TTL_SECS: i64 = 3600;
 
 struct CachedMetadata {
@@ -93,51 +232,64 @@ struct CachedMetadata {
     expires_at: i64,
 }
 
-fn metadata_cache() -> &'static Mutex<Option<CachedMetadata>> {
-    static CACHE: Lazy<Mutex<Option<CachedMetadata>>> = Lazy::new(|| Mutex::new(None));
+fn metadata_cache() -> &'static Mutex<HashMap<String, CachedMetadata>> {
+    static CACHE: Lazy<Mutex<HashMap<String, CachedMetadata>>> =
+        Lazy::new(|| Mutex::new(HashMap::new()));
     &CACHE
 }
 
-/// Return Google's provider metadata, fetching only when the cache
-/// is empty or expired. Releases the lock before any await so we
-/// can't deadlock by holding a std::sync::Mutex across `.await`.
-async fn cached_google_metadata() -> Result<CoreProviderMetadata, ApiError> {
+/// Return cached provider metadata, fetching only when the slot is
+/// empty or expired. Releases the lock before any await so we can't
+/// deadlock by holding a std::sync::Mutex across `.await`.
+async fn cached_metadata(issuer: &str) -> Result<CoreProviderMetadata, ApiError> {
     let now = Utc::now().timestamp();
     {
         let cache = metadata_cache().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = cache.as_ref() {
+        if let Some(c) = cache.get(issuer) {
             if c.expires_at > now {
                 return Ok(c.metadata.clone());
             }
         }
     }
-    let issuer = IssuerUrl::new("https://accounts.google.com".to_string())
-        .map_err(|e| ApiError::internal(format!("oidc issuer url: {e}")))?;
-    let metadata = CoreProviderMetadata::discover_async(issuer, async_http_client)
+    let issuer_url = IssuerUrl::new(issuer.to_string()).map_err(|e| {
+        tracing::warn!(issuer = %issuer, "oidc issuer url parse failed: {e}");
+        generic_signin_failed()
+    })?;
+    let metadata = CoreProviderMetadata::discover_async(issuer_url, async_http_client)
         .await
-        .map_err(|e| ApiError::internal(format!("oidc discovery: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(issuer = %issuer, "oidc discovery failed: {e}");
+            generic_signin_failed()
+        })?;
     {
         let mut cache = metadata_cache().lock().unwrap_or_else(|e| e.into_inner());
-        *cache = Some(CachedMetadata {
-            metadata: metadata.clone(),
-            expires_at: now + METADATA_TTL_SECS,
-        });
+        cache.insert(
+            issuer.to_string(),
+            CachedMetadata {
+                metadata: metadata.clone(),
+                expires_at: now + METADATA_TTL_SECS,
+            },
+        );
     }
     Ok(metadata)
 }
 
-/// Build the openidconnect Client for Google. Provider metadata is
-/// served from a 1-hour in-process cache so steady-state sign-ins
-/// don't pay the discovery round-trip. Cold start (or after
-/// expiry) is the only fetch.
-async fn google_client(cfg: &GoogleOidcConfig) -> Result<CoreClient, ApiError> {
-    let metadata = cached_google_metadata().await?;
-    let redirect = RedirectUrl::new(cfg.redirect_uri.clone())
-        .map_err(|e| ApiError::internal(format!("oidc redirect url: {e}")))?;
+/// Build the openidconnect Client for the active provider. Metadata
+/// is served from a 1-hour in-process cache so steady-state sign-ins
+/// don't pay the discovery round-trip.
+async fn build_client(cfg: &ProviderConfig<'_>) -> Result<CoreClient, ApiError> {
+    let metadata = cached_metadata(cfg.issuer_url()).await?;
+    let redirect = RedirectUrl::new(cfg.redirect_uri().to_string()).map_err(|e| {
+        tracing::warn!(
+            provider = %cfg.provider().id(),
+            "oidc redirect uri parse failed: {e}"
+        );
+        generic_signin_failed()
+    })?;
     let client = CoreClient::from_provider_metadata(
         metadata,
-        ClientId::new(cfg.client_id.clone()),
-        Some(ClientSecret::new(cfg.client_secret.clone())),
+        ClientId::new(cfg.client_id().to_string()),
+        Some(ClientSecret::new(cfg.client_secret().to_string())),
     )
     .set_redirect_uri(redirect);
     Ok(client)
@@ -174,21 +326,63 @@ fn resolve_client_redirect(requested: Option<&str>, allowed: &[String]) -> Strin
     format!("{default_scheme}://auth")
 }
 
-/// Kick off the OIDC dance. Generates state + PKCE + nonce, stashes
-/// them keyed by state, returns a 302 to Google's authorize endpoint.
+/// Generic "sign-in failed" error returned to the user when anything
+/// inside the OIDC flow goes wrong. Keeps the wire response opaque -
+/// the operator-facing detail goes into the surrounding `tracing`
+/// call. Used for both 4xx and "things-that-could-be-attacker-probes"
+/// 4xx paths; 500-level failures still come back as ApiError::internal
+/// so the existing logging in error.rs catches them.
+fn generic_signin_failed() -> ApiError {
+    ApiError::bad_request(
+        "signin_failed",
+        "sign-in failed; please try again or contact your administrator",
+    )
+}
+
+// ---------------------------------------------------------------------
+// Public HTTP entry points
+//
+// These are thin shells over `start_flow` / `complete_flow`. The
+// per-provider routes (`/api/auth/oidc/:provider/...`) land in
+// step 4; for now the legacy Google-only `/api/auth/oidc/start` and
+// `/callback` shims stay so existing clients keep working.
+// ---------------------------------------------------------------------
+
 pub async fn start(
+    state: State<AppState>,
+    q: Query<StartQuery>,
+) -> Result<Response, ApiError> {
+    start_flow(state, q, Provider::Google).await
+}
+
+pub async fn callback(
+    state: State<AppState>,
+    q: Query<CallbackQuery>,
+) -> Result<Response, ApiError> {
+    complete_flow(state, q).await
+}
+
+// ---------------------------------------------------------------------
+// Provider-agnostic core
+// ---------------------------------------------------------------------
+
+/// Kick off the OIDC dance for `provider`. Generates state + PKCE +
+/// nonce, stashes them keyed by state, returns a 302 to the
+/// provider's authorize endpoint.
+async fn start_flow(
     State(state_app): State<AppState>,
     Query(q): Query<StartQuery>,
+    provider: Provider,
 ) -> Result<Response, ApiError> {
-    let cfg = google_cfg(&state_app)?;
+    let cfg = provider_config(&state_app, provider)?;
     let now = Utc::now().timestamp();
     prune_pending(now);
 
-    let client = google_client(&cfg).await?;
+    let client = build_client(&cfg).await?;
 
-    // PKCE verifier + challenge. We send the challenge to Google in
-    // the authorize step; the verifier comes back to us in the
-    // callback's token exchange. Without this an attacker who
+    // PKCE verifier + challenge. We send the challenge to the
+    // provider in the authorize step; the verifier comes back to us
+    // in the callback's token exchange. Without this an attacker who
     // intercepts the auth code can't redeem it.
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
@@ -237,6 +431,7 @@ pub async fn start(
         store.insert(
             csrf_state.secret().to_string(),
             PendingAuth {
+                provider,
                 pkce_verifier,
                 nonce,
                 client_redirect,
@@ -256,30 +451,36 @@ pub struct CallbackQuery {
     pub error_description: Option<String>,
 }
 
-/// Google redirects here after the user signs in (or errors out).
-/// We exchange the code for an ID token, verify the token, find or
-/// create the matching local user, and respond with an HTML page
-/// that fires the desktop deep link plus a copy-paste fallback.
-pub async fn callback(
+/// The provider redirects here after the user signs in (or errors
+/// out). We exchange the code for an ID token, verify the token,
+/// run provider-specific claim checks, find or create the matching
+/// local user, and respond with an HTML page that fires the desktop
+/// deep link plus a copy-paste fallback.
+async fn complete_flow(
     State(state_app): State<AppState>,
     Query(q): Query<CallbackQuery>,
 ) -> Result<Response, ApiError> {
     if let Some(err) = q.error.as_deref() {
-        let desc = q.error_description.as_deref().unwrap_or("");
-        return Ok(render_callback_error(&format!(
-            "Google declined the sign-in: {err}{}{desc}",
-            if desc.is_empty() { "" } else { " - " }
-        )));
+        tracing::warn!(
+            error = err,
+            detail = q.error_description.as_deref().unwrap_or(""),
+            "oidc provider returned error to callback"
+        );
+        // Opaque user-facing message; the provider's exact code +
+        // description is in the log line above for the operator.
+        return Ok(render_callback_error(
+            "Sign-in was cancelled or declined. Close this tab and try again from SnipDesk.",
+        ));
     }
 
-    let code = q
-        .code
-        .as_deref()
-        .ok_or_else(|| ApiError::bad_request("missing_code", "no code in callback"))?;
-    let state = q
-        .state
-        .as_deref()
-        .ok_or_else(|| ApiError::bad_request("missing_state", "no state in callback"))?;
+    let code = q.code.as_deref().ok_or_else(|| {
+        tracing::warn!("oidc callback without a code");
+        generic_signin_failed()
+    })?;
+    let state = q.state.as_deref().ok_or_else(|| {
+        tracing::warn!("oidc callback without a state");
+        generic_signin_failed()
+    })?;
 
     let now = Utc::now().timestamp();
     prune_pending(now);
@@ -289,65 +490,83 @@ pub async fn callback(
         .ok()
         .and_then(|mut s| s.remove(state))
         .ok_or_else(|| {
-            ApiError::bad_request(
-                "unknown_state",
-                "this sign-in attempt has expired or was already used",
-            )
+            // Either the state was never issued (attacker probe) or
+            // it expired. Log without the actual state value (don't
+            // want it in logs as a foothold for replay) and bounce.
+            tracing::warn!("oidc callback with unknown or expired state");
+            generic_signin_failed()
         })?;
 
-    let cfg = google_cfg(&state_app)?;
-    let client = google_client(&cfg).await?;
+    let cfg = provider_config(&state_app, pending.provider)?;
+    let client = build_client(&cfg).await?;
 
     let token_response = client
         .exchange_code(AuthorizationCode::new(code.to_string()))
         .set_pkce_verifier(pending.pkce_verifier)
         .request_async(async_http_client)
         .await
-        .map_err(|e| ApiError::bad_request("token_exchange", format!("token exchange: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(
+                provider = %pending.provider.id(),
+                "oidc token exchange failed: {e}"
+            );
+            generic_signin_failed()
+        })?;
 
-    let id_token = token_response
-        .id_token()
-        .ok_or_else(|| ApiError::internal("Google response missing id_token"))?;
+    let id_token = token_response.id_token().ok_or_else(|| {
+        tracing::warn!(
+            provider = %pending.provider.id(),
+            "oidc token response missing id_token"
+        );
+        generic_signin_failed()
+    })?;
 
-    // Verify the ID token: signature via Google's JWKS, audience
-    // matches our client_id, issuer is google, nonce matches the one
-    // we generated.
+    // Verify the ID token: signature via the provider's JWKS,
+    // audience matches our client_id, issuer matches, nonce matches
+    // the one we generated.
     let id_token_verifier = client.id_token_verifier();
     let claims = id_token
         .claims(&id_token_verifier, &pending.nonce)
-        .map_err(|e| ApiError::bad_request("id_token", format!("id_token verify: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(
+                provider = %pending.provider.id(),
+                "oidc id_token verification failed: {e}"
+            );
+            generic_signin_failed()
+        })?;
 
-    // Workspace lockdown: `hd` claim must equal required_hd when set.
-    // Google sets `hd` only for Workspace-managed accounts; personal
-    // @gmail.com accounts have no hd. We read it from the raw JWT
-    // payload because openidconnect's typed claims default to
-    // EmptyAdditionalClaims - defining a custom CoreClient type just
-    // to read one field is more boilerplate than it's worth. The
-    // signature was already verified above, so the payload bytes are
-    // trustworthy here.
-    if let Some(required) = cfg.required_hd.as_deref() {
-        let hd_claim = read_hd_claim(&id_token.to_string()).unwrap_or_default();
-        if hd_claim != required {
-            return Ok(render_callback_error(&format!(
-                "This server is locked to the {required} Workspace. \
-                 Sign in with a {required} account."
-            )));
-        }
+    // Provider-specific claim checks. Errors here are user-actionable
+    // (wrong domain, missing role) so we surface a slightly more
+    // informative message than the generic one - the operator
+    // already saw the underlying claim mismatch in the log line.
+    if let Err(rendered) = run_provider_checks(&cfg, claims, &id_token.to_string()) {
+        return Ok(rendered);
     }
 
     let email = claims
         .email()
-        .ok_or_else(|| ApiError::bad_request("no_email", "Google did not return an email"))?
+        .ok_or_else(|| {
+            tracing::warn!(
+                provider = %pending.provider.id(),
+                "oidc id_token missing email claim"
+            );
+            generic_signin_failed()
+        })?
         .as_str()
         .to_lowercase();
 
-    if !cfg.allowed_email_domains.is_empty() {
+    if !cfg.allowed_email_domains().is_empty() {
         let domain = email.split('@').nth(1).unwrap_or("");
         if !cfg
-            .allowed_email_domains
+            .allowed_email_domains()
             .iter()
             .any(|d| d.eq_ignore_ascii_case(domain))
         {
+            tracing::warn!(
+                provider = %pending.provider.id(),
+                email_domain = %domain,
+                "oidc sign-in rejected: email domain not in allowlist"
+            );
             return Ok(render_callback_error(
                 "Your email domain isn't in this server's allowlist.",
             ));
@@ -360,17 +579,20 @@ pub async fn callback(
         .map(|s| s.as_str().to_string())
         .unwrap_or_else(|| email.split('@').next().unwrap_or("user").to_string());
 
-    let google_sub = claims.subject().as_str().to_string();
+    let subject = claims.subject().as_str().to_string();
 
-    // Find-or-create. Match strategy:
-    //   1. oidc_subject = google_sub -> existing OIDC user
-    //   2. email = lookup -> existing password user; link by setting
-    //      their oidc_subject (account-merging UX).
-    //   3. otherwise create a fresh row.
-    //
-    // First-admin auto-promotion: a brand-new org gets its first
-    // OIDC user promoted to admin, same as the password signup path.
-    let user_id = upsert_oidc_user(&state_app, &google_sub, &email, &display_name).await?;
+    // Find-or-create. The hook may also flip an existing user's
+    // admin/member status when the provider says so (Keycloak only).
+    let admin_override = admin_role_present(&cfg, &id_token.to_string());
+    let user_id = upsert_oidc_user(
+        &state_app,
+        pending.provider,
+        &subject,
+        &email,
+        &display_name,
+        admin_override,
+    )
+    .await?;
 
     // Re-read the user's role for the token. We just upserted; this
     // round-trip is cheap and avoids tracking the role through
@@ -395,99 +617,305 @@ pub async fn callback(
     ))
 }
 
-/// Insert-or-update the user matching this Google sub. Returns the
-/// resulting user's id.
+/// Per-provider claim validation that runs after the ID token is
+/// signature-verified but before we trust any of the claims. Returns
+/// `Err(Response)` carrying a user-facing HTML error page when the
+/// check fails (the operator-facing detail is logged inside).
+fn run_provider_checks(
+    cfg: &ProviderConfig<'_>,
+    claims: &CoreIdTokenClaims,
+    id_token_jwt: &str,
+) -> Result<(), Response> {
+    match cfg {
+        ProviderConfig::Google(g) => {
+            // Workspace lockdown: `hd` claim must equal required_hd
+            // when set. Google sets `hd` only for Workspace-managed
+            // accounts; personal @gmail.com accounts have no hd. We
+            // read it from the raw JWT payload because openidconnect's
+            // typed claims default to EmptyAdditionalClaims; defining
+            // a custom CoreClient type just to read one field is more
+            // boilerplate than it's worth. The signature was already
+            // verified above, so the payload bytes are trustworthy.
+            if let Some(required) = g.required_hd.as_deref() {
+                let hd_claim = read_string_claim(id_token_jwt, "hd").unwrap_or_default();
+                if hd_claim != required {
+                    tracing::warn!(
+                        provider = "google",
+                        expected_hd = %required,
+                        actual_hd = %hd_claim,
+                        "google sign-in rejected: hd claim mismatch"
+                    );
+                    return Err(render_callback_error(&format!(
+                        "This server is locked to the {required} Workspace. \
+                         Sign in with a {required} account."
+                    )));
+                }
+            }
+            // Suppress the unused-claims warning for the Google
+            // branch; we don't currently read anything off `claims`
+            // here, but keeping the parameter uniform across
+            // providers lets future Google-side checks land without
+            // re-threading the signature.
+            let _ = claims;
+        }
+        ProviderConfig::Keycloak(k) => {
+            // Realm-role check: when `required_realm_role` is set,
+            // the ID token must list the role inside
+            // `realm_access.roles`. We read the array off the raw
+            // JWT payload for the same "openidconnect typed claims
+            // don't surface this" reason as Google's hd above.
+            if let Some(required) = k.required_realm_role.as_deref() {
+                let has_role = realm_roles_from_jwt(id_token_jwt)
+                    .iter()
+                    .any(|r| r == required);
+                if !has_role {
+                    tracing::warn!(
+                        provider = "keycloak",
+                        required_role = %required,
+                        "keycloak sign-in rejected: required realm role missing"
+                    );
+                    return Err(render_callback_error(
+                        "Your account doesn't have access to this application. \
+                         Contact your administrator if you think this is wrong.",
+                    ));
+                }
+            }
+            let _ = claims;
+        }
+    }
+    Ok(())
+}
+
+/// Returns `Some(true)` when the provider's admin-role mapping is
+/// configured AND present on the user's token, `Some(false)` when
+/// the mapping is configured AND absent (the user should be demoted
+/// on this sign-in), `None` when no admin mapping is configured for
+/// this provider (admin status managed exclusively from the
+/// dashboard / CLI for this user).
+fn admin_role_present(cfg: &ProviderConfig<'_>, id_token_jwt: &str) -> Option<bool> {
+    match cfg {
+        ProviderConfig::Google(_) => None,
+        ProviderConfig::Keycloak(k) => {
+            let role = k.admin_role.as_deref()?;
+            let present = realm_roles_from_jwt(id_token_jwt)
+                .iter()
+                .any(|r| r == role);
+            Some(present)
+        }
+    }
+}
+
+/// Insert-or-update the user matching this `(provider, subject)`
+/// pair. Returns the resulting user's id.
+///
+/// `admin_override` from the provider check (Keycloak only):
+///   - `Some(true)`  -> set role = 'admin' on this user
+///   - `Some(false)` -> set role = 'member' (only when re-touching an
+///                      existing user; the new-user branch follows
+///                      the same logic on first insert)
+///   - `None`        -> leave role alone (Google's case, plus
+///                      Keycloak when no `admin_role` is configured)
 async fn upsert_oidc_user(
     state: &AppState,
-    google_sub: &str,
+    provider: Provider,
+    subject: &str,
     email: &str,
     display_name: &str,
+    admin_override: Option<bool>,
 ) -> Result<String, ApiError> {
     let mut tx = state.pool.begin().await?;
+    let provider_id = provider.id();
 
-    // First: existing OIDC user.
+    // First: existing user already linked to this provider/subject.
+    // Match on both columns so a future drop of the inline UNIQUE on
+    // `oidc_subject` can be done without changing this query.
     if let Some((id, is_disabled)) = sqlx::query_as::<_, (String, i64)>(
-        "SELECT id, is_disabled FROM users WHERE oidc_subject = ?",
+        "SELECT id, is_disabled FROM users \
+         WHERE oidc_subject = ? AND oidc_provider = ?",
     )
-    .bind(google_sub)
+    .bind(subject)
+    .bind(provider_id)
     .fetch_optional(&mut *tx)
     .await?
     {
         if is_disabled != 0 {
-            return Err(ApiError::forbidden(
-                "account_disabled",
-                "your account is disabled - contact your administrator",
-            ));
+            tracing::warn!(
+                user_id = %id,
+                provider = %provider_id,
+                "oidc sign-in blocked: account is disabled"
+            );
+            // Keep the user-facing message generic so we don't tell
+            // a probing attacker which emails are disabled. The
+            // operator sees the cause in the log above.
+            return Err(generic_signin_failed());
         }
-        // Refresh display name in case it changed in Google.
+        // Refresh display name in case it changed upstream.
         sqlx::query("UPDATE users SET display_name = ? WHERE id = ?")
             .bind(display_name)
             .bind(&id)
             .execute(&mut *tx)
             .await?;
+        // Apply provider-driven admin override on each sign-in so
+        // losing the admin role upstream demotes immediately.
+        if let Some(want_admin) = admin_override {
+            let new_role = if want_admin { "admin" } else { "member" };
+            sqlx::query("UPDATE users SET role = ? WHERE id = ?")
+                .bind(new_role)
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         return Ok(id);
     }
 
-    // Second: existing password account with the same email - link.
-    if let Some((id, is_disabled)) =
-        sqlx::query_as::<_, (String, i64)>("SELECT id, is_disabled FROM users WHERE email = ?")
-            .bind(email)
-            .fetch_optional(&mut *tx)
-            .await?
+    // Second: existing password account with the same email AND no
+    // prior OIDC link. Linking is allowed only when the row is
+    // currently provider-less; if it already has an oidc_provider
+    // we refuse the merge silently (don't let a Keycloak token claim
+    // an account already linked to Google by email, and vice versa).
+    if let Some((id, is_disabled, existing_provider)) =
+        sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT id, is_disabled, oidc_provider FROM users WHERE email = ?",
+        )
+        .bind(email)
+        .fetch_optional(&mut *tx)
+        .await?
     {
         if is_disabled != 0 {
-            return Err(ApiError::forbidden(
-                "account_disabled",
-                "your account is disabled - contact your administrator",
-            ));
+            tracing::warn!(
+                user_id = %id,
+                "oidc sign-in blocked: account with this email is disabled"
+            );
+            return Err(generic_signin_failed());
         }
-        sqlx::query("UPDATE users SET oidc_subject = ?, display_name = ? WHERE id = ?")
-            .bind(google_sub)
-            .bind(display_name)
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
+        if let Some(prev) = existing_provider {
+            if prev != provider_id {
+                tracing::warn!(
+                    user_id = %id,
+                    existing_provider = %prev,
+                    attempted_provider = %provider_id,
+                    "oidc sign-in blocked: email already linked to a different provider"
+                );
+                return Err(generic_signin_failed());
+            }
+            // Same provider, different subject? That shouldn't
+            // happen in practice (providers don't reassign subs) but
+            // refuse rather than silently rebind.
+            tracing::warn!(
+                user_id = %id,
+                provider = %provider_id,
+                "oidc sign-in blocked: email already linked under a different subject"
+            );
+            return Err(generic_signin_failed());
+        }
+        // Fresh link: the row had no OIDC info yet.
+        sqlx::query(
+            "UPDATE users SET oidc_subject = ?, oidc_provider = ?, display_name = ? \
+             WHERE id = ?",
+        )
+        .bind(subject)
+        .bind(provider_id)
+        .bind(display_name)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+        if let Some(want_admin) = admin_override {
+            let new_role = if want_admin { "admin" } else { "member" };
+            sqlx::query("UPDATE users SET role = ? WHERE id = ?")
+                .bind(new_role)
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
+        tracing::info!(
+            user_id = %id,
+            provider = %provider_id,
+            email = %email,
+            "oidc linked existing password account"
+        );
         return Ok(id);
     }
 
-    // Third: brand-new user.
-    let admin_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        .fetch_one(&mut *tx)
-        .await?;
-    let role = if admin_count.0 == 0 {
-        "admin"
-    } else {
-        "member"
-    };
+    // Third: brand-new user. The new role is:
+    //   - 'admin' when this is the first user in the org (same
+    //     auto-promotion the password signup flow does), OR the
+    //     provider says so via admin_override.
+    //   - 'member' otherwise.
+    //
+    // Note: we use the atomic INSERT-with-CASE pattern that the
+    // password signup path uses to close the first-admin race
+    // (audit Tier 1 #6). Two concurrent OIDC signups can't both
+    // observe admin_count = 0 because SQLite serialises the entire
+    // INSERT under one write lock.
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
+    let forced_admin = admin_override.unwrap_or(false);
     sqlx::query(
-        "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, last_seen_at, oidc_subject) \
-         VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+        "INSERT INTO users \
+           (id, email, display_name, role, is_disabled, \
+            created_at, last_seen_at, oidc_subject, oidc_provider) \
+         VALUES ( \
+           ?, ?, ?, \
+           CASE \
+             WHEN ?5 = 1 THEN 'admin' \
+             WHEN (SELECT COUNT(*) FROM users WHERE role = 'admin') = 0 THEN 'admin' \
+             ELSE 'member' \
+           END, \
+           0, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(email)
     .bind(display_name)
-    .bind(role)
+    .bind(if forced_admin { 1i64 } else { 0i64 })
     .bind(now)
     .bind(now)
-    .bind(google_sub)
+    .bind(subject)
+    .bind(provider_id)
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
-    tracing::info!(user_id = %id, email = %email, role, "oidc user created");
-    Ok(id)
-}
 
-fn google_cfg(state: &AppState) -> Result<GoogleOidcConfig, ApiError> {
-    state.oidc_google.clone().ok_or_else(|| {
-        ApiError::bad_request(
-            "oidc_disabled",
-            "this server doesn't have Google OIDC configured",
-        )
-    })
+    // Read the role back out for the audit log + the JWT mint in
+    // the caller. Done inside the same transaction so the row we're
+    // reading is the one we just inserted.
+    let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // Audit row for the OIDC-driven user creation (audit Tier 1 #9).
+    // Recorded outside the transaction since `audit::record` is
+    // best-effort and we don't want a flake there to roll back the
+    // user creation.
+    audit::record(
+        &state.pool,
+        AuditEvent {
+            actor_id: None,
+            actor_email: "<oidc>",
+            action: action::USER_CREATE,
+            target_kind: Some("user"),
+            target_id: Some(&id),
+            details: Some(json!({
+                "via": "oidc",
+                "provider": provider_id,
+                "email": email,
+                "role": role,
+            })),
+        },
+    )
+    .await;
+
+    tracing::info!(
+        user_id = %id,
+        provider = %provider_id,
+        email = %email,
+        role = %role,
+        "oidc user created"
+    );
+    Ok(id)
 }
 
 /// Successful-auth landing page. JS attempts the snipdesk:// deep
@@ -628,22 +1056,47 @@ fn render_callback_error(msg: &str) -> Response {
         .into_response()
 }
 
-/// Read the `hd` (hosted domain) claim straight off the verified
-/// JWT's payload segment. openidconnect verified the signature
-/// already, so the payload bytes can be trusted here; we just need
-/// the one field that the typed claims API doesn't surface without
-/// a custom Client type.
-fn read_hd_claim(id_token_jwt: &str) -> Option<String> {
+/// Read a top-level string claim straight off a verified JWT's
+/// payload segment. openidconnect verified the signature already, so
+/// the payload bytes can be trusted here; we just need fields the
+/// typed claims API doesn't surface without a custom Client type.
+fn read_string_claim(id_token_jwt: &str, key: &str) -> Option<String> {
+    decode_jwt_payload(id_token_jwt)?
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Pull Keycloak's `realm_access.roles` out of a verified JWT.
+/// Returns an empty vec when the claim is absent or malformed; the
+/// caller treats absence as "no roles" rather than an error.
+fn realm_roles_from_jwt(id_token_jwt: &str) -> Vec<String> {
+    let Some(payload) = decode_jwt_payload(id_token_jwt) else {
+        return Vec::new();
+    };
+    let Some(arr) = payload
+        .get("realm_access")
+        .and_then(|v| v.get("roles"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect()
+}
+
+/// Base64url-decode and JSON-parse the middle segment of a JWT.
+/// Used by the small set of claim readers above; pulled out as a
+/// helper so the segment-split logic only lives once.
+fn decode_jwt_payload(id_token_jwt: &str) -> Option<serde_json::Value> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
     let parts: Vec<&str> = id_token_jwt.split('.').collect();
     if parts.len() != 3 {
         return None;
     }
     let payload_bytes = B64URL.decode(parts[1]).ok()?;
-    let json: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
-    json.get("hd")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    serde_json::from_slice(&payload_bytes).ok()
 }
 
 fn html_attr(s: &str) -> String {
@@ -656,7 +1109,7 @@ fn html_attr(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_client_redirect;
+    use super::*;
 
     fn allow(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -693,5 +1146,19 @@ mod tests {
         // a "://auth" string with no scheme.
         let r = resolve_client_redirect(Some("anything://x"), &[]);
         assert_eq!(r, "snipdesk://auth");
+    }
+
+    #[test]
+    fn provider_id_round_trips() {
+        for p in [Provider::Google, Provider::Keycloak] {
+            assert_eq!(Provider::from_id(p.id()), Some(p));
+        }
+        assert_eq!(Provider::from_id("nope"), None);
+    }
+
+    #[test]
+    fn realm_roles_parser_handles_empty_token() {
+        assert!(realm_roles_from_jwt("not.a.jwt").is_empty());
+        assert!(realm_roles_from_jwt("").is_empty());
     }
 }

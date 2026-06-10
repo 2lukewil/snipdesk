@@ -811,12 +811,12 @@ fn admin_role_present(cfg: &ProviderConfig<'_>, id_token_jwt: &str) -> Option<bo
 /// pair. Returns the resulting user's id.
 ///
 /// `admin_override` from the provider check (Keycloak only):
-///   - `Some(true)`  -> set role = 'admin' on this user
-///   - `Some(false)` -> set role = 'member' (only when re-touching an
-///                      existing user; the new-user branch follows
-///                      the same logic on first insert)
-///   - `None`        -> leave role alone (Google's case, plus
-///                      Keycloak when no `admin_role` is configured)
+///   - `Some(true)` sets role = 'admin' on this user.
+///   - `Some(false)` sets role = 'member'. For an existing row this
+///     means demotion; for a new row it just pins the initial role
+///     against the auto-promotion fallback.
+///   - `None` leaves the role alone (Google's case, plus Keycloak
+///     when no `admin_role` is configured).
 async fn upsert_oidc_user(
     state: &AppState,
     provider: Provider,

@@ -136,21 +136,42 @@ The installer lands at
 `target/x86_64-pc-windows-msvc/release/bundle/nsis/`. First run
 downloads the MS SDK headers (cached afterwards).
 
-Caveats, in decreasing severity:
+The Teams edition builds the same way - run the same two steps
+`scripts/build-teams.mjs` runs, with the cross flags appended:
 
-- **The bundle-type patch fails on Linux hosts** ("Failed to add
-  bundler type to the binary ... Updater plugin may not be able to
-  update this package"). The installer installs and runs fine, but
-  in-app auto-update from a Linux-built binary is unverified -
-  test an update cycle before shipping Linux-built installers to a
-  fleet that relies on auto-update, or keep release builds on a
-  Windows host and use Linux builds for CI validation.
-- **Signing is skipped** on non-Windows hosts unless you configure
-  `bundle > windows > signCommand`. Updater-manifest signing
-  (`createUpdaterArtifacts`) is minisign-based and host-agnostic,
-  but was not exercised in the verification run.
+```bash
+npx vite build --mode teams
+TAURI_SIGNING_PRIVATE_KEY=... TAURI_SIGNING_PRIVATE_KEY_PASSWORD=... \
+XWIN_ACCEPT_LICENSE=1 npx tauri build --features teams \
+  --config src-tauri/tauri.teams.conf.json \
+  --runner cargo-xwin --target x86_64-pc-windows-msvc
+```
+
+Verified end to end: the Teams installer AND its updater signature
+(`-setup.exe.sig`) both come out of a Linux host - minisign signing
+is host-agnostic.
+
+Caveats:
+
+- The CLI warns **"Failed to add bundler type to the binary ...
+  Updater plugin may not be able to update this package"** on every
+  Linux-host build. Verified harmless for this repo
+  (tauri-plugin-updater 2.10.1 source): the missing marker makes
+  `bundle_type()` return None, after which the updater (a) looks up
+  the plain `windows-x86_64` manifest key - exactly what
+  `scripts/generate-manifest.ps1` publishes - and (b) decides
+  NSIS-vs-MSI for the downloaded payload by content sniffing
+  (`infer::app::is_exe`), never consulting the marker. The marker
+  only matters for `{{bundle_type}}` URL templates or
+  `windows-x86_64-nsis`-style manifest keys; don't adopt either
+  without revisiting this.
+- **Authenticode signing is skipped** on non-Windows hosts unless
+  you configure `bundle > windows > signCommand`. (We don't
+  Authenticode-sign anywhere yet, so this matches the Windows-host
+  builds.)
 - Tauri labels the whole path experimental; treat a Tauri upgrade
-  as a reason to re-verify.
+  as a reason to re-verify, and run one manual update cycle with a
+  Linux-built installer before a fleet relies on it.
 
 ## Bake a default server URL
 

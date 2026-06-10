@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use chrono::Utc;
@@ -82,9 +82,7 @@ impl Provider {
     }
 
     /// Parse a path segment back into a Provider. Returns None for
-    /// unknown names so the route handler can 404 cleanly. Wired up
-    /// by the per-provider routes in the next commit.
-    #[allow(dead_code)]
+    /// unknown names so the route handler can 404 cleanly.
     fn from_id(s: &str) -> Option<Provider> {
         match s {
             "google" => Some(Provider::Google),
@@ -359,6 +357,43 @@ pub async fn callback(
     state: State<AppState>,
     q: Query<CallbackQuery>,
 ) -> Result<Response, ApiError> {
+    complete_flow(state, q).await
+}
+
+/// Per-provider start: `/api/auth/oidc/:provider/start`. Resolves
+/// the provider segment to a Provider variant and delegates to the
+/// shared core. Unknown provider names render the same opaque
+/// error page as a misconfigured provider so a probing attacker
+/// can't easily enumerate which IdPs the operator has enabled
+/// (the public `/api/auth/methods` endpoint is the canonical
+/// answer to that question; this URL is purposeful machine input).
+pub async fn start_provider(
+    state: State<AppState>,
+    Path(provider): Path<String>,
+    q: Query<StartQuery>,
+) -> Result<Response, ApiError> {
+    let provider = Provider::from_id(&provider).ok_or_else(|| {
+        tracing::warn!(provider = %provider, "oidc start with unknown provider id");
+        generic_signin_failed()
+    })?;
+    start_flow(state, q, provider).await
+}
+
+/// Per-provider callback: `/api/auth/oidc/:provider/callback`. The
+/// provider segment is informational at this point - the pending
+/// auth entry the state pointed at already records which provider
+/// the flow belongs to, so the URL slug just keeps the redirect URI
+/// registered with each IdP human-readable. We still resolve it so
+/// the route handler 404s on garbage like `/api/auth/oidc/<>/callback`.
+pub async fn callback_provider(
+    state: State<AppState>,
+    Path(provider): Path<String>,
+    q: Query<CallbackQuery>,
+) -> Result<Response, ApiError> {
+    if Provider::from_id(&provider).is_none() {
+        tracing::warn!(provider = %provider, "oidc callback with unknown provider id");
+        return Err(generic_signin_failed());
+    }
     complete_flow(state, q).await
 }
 

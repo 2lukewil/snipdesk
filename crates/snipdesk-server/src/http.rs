@@ -157,13 +157,23 @@ fn build_inner_router() -> Router<AppState> {
             "/api/me",
             get(handlers::auth::me).patch(handlers::auth::update_me),
         )
-        // OIDC / "Sign in with Google" - both endpoints are public
-        // (no AuthUser required); the start endpoint initiates the
-        // OAuth dance and the callback validates the response from
-        // Google. Returns "oidc_disabled" 400 when [oidc.google]
-        // isn't configured on this server.
+        // OIDC. Both endpoints are public (no AuthUser required);
+        // the start endpoint initiates the OAuth dance and the
+        // callback validates the IdP's response. The per-provider
+        // routes (`/api/auth/oidc/:provider/{start,callback}`) are
+        // the canonical surface as of Keycloak step 4; the legacy
+        // unscoped routes stay mounted as Google shims so older
+        // client builds keep working without a forced upgrade.
         .route("/api/auth/oidc/start", get(handlers::oidc::start))
         .route("/api/auth/oidc/callback", get(handlers::oidc::callback))
+        .route(
+            "/api/auth/oidc/:provider/start",
+            get(handlers::oidc::start_provider),
+        )
+        .route(
+            "/api/auth/oidc/:provider/callback",
+            get(handlers::oidc::callback_provider),
+        )
         .route(
             "/api/snippets",
             post(handlers::snippets::create)

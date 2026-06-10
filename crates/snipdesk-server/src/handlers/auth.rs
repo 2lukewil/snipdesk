@@ -94,14 +94,24 @@ pub async fn methods(State(state): State<AppState>) -> Json<AuthMethodsResponse>
             // Hardcoded per Google identity branding guidelines: this
             // string and the Google logo are reserved phrasings.
             display_name: "Sign in with Google".to_string(),
-            start_url: "/api/auth/oidc/start".to_string(),
+            start_url: "/api/auth/oidc/google/start".to_string(),
         });
     }
 
-    // Keycloak slot lights up once the generic OIDC refactor
-    // (Keycloak step 3+) wires its per-provider start route. The
-    // [oidc.keycloak] block already parses cleanly (step 2); the
-    // handler that consumes it is the next major commit.
+    if let Some(kc) = state.oidc_keycloak.as_ref() {
+        providers.push(AuthMethodProvider {
+            id: "keycloak".to_string(),
+            // Operator-controlled label; the fallback matches what
+            // most internal-IdP deployments want shown ("Sign in
+            // with SSO"), and operators who run a branded realm
+            // can override with anything via `display_name`.
+            display_name: kc
+                .display_name
+                .clone()
+                .unwrap_or_else(|| "Sign in with SSO".to_string()),
+            start_url: "/api/auth/oidc/keycloak/start".to_string(),
+        });
+    }
 
     Json(AuthMethodsResponse {
         password: AuthMethodPassword { enabled: true },

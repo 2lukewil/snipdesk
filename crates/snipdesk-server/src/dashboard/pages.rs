@@ -1900,6 +1900,21 @@ pub async fn library_page(
         "<p class=\"muted\">Snippets here appear in every signed-in member's Team Library sidebar. \
          They're plaintext at rest - don't put secrets in.</p>",
     );
+    // One-shot import-result banner (the import-confirm redirect
+    // carries the counts in the query string).
+    if let Some(imported) = q.imported {
+        let skipped = q.skipped.unwrap_or(0);
+        let detail = if skipped > 0 {
+            format!(", skipped {skipped} (duplicates or errors)")
+        } else {
+            String::new()
+        };
+        body.push_str(&format!(
+            "<div class=\"banner {}\">Imported {imported} snippet{}{detail}.</div>",
+            if imported > 0 { "info" } else { "error" },
+            if imported == 1 { "" } else { "s" },
+        ));
+    }
     body.push_str("<div class=\"library-layout\">");
     body.push_str(
         "<aside class=\"library-sidebar\" id=\"library-sidebar\" \
@@ -1935,6 +1950,7 @@ pub async fn library_page(
                   hx-swap=\"innerHTML\" />\
            <a class=\"btn\" id=\"library-export-json\" href=\"/dashboard/library/export?format=json\">Export JSON</a>\
            <a class=\"btn\" id=\"library-export-csv\" href=\"/dashboard/library/export?format=csv\">Export CSV</a>\
+           <a class=\"btn\" href=\"/dashboard/library/import\">Import</a>\
          </div>",
         q = escape_html(q_value),
     ));
@@ -2459,6 +2475,500 @@ pub async fn library_export(
         .into_response()
 }
 
+// ---- /dashboard/library/import (GET page, POST preview, POST confirm) ----
+
+/// One entry from an uploaded file, normalized. Deserializes from
+/// the interchange JSON (NewSnippet[] shape); the desktop client's
+/// full Snippet[] export also lands here because serde ignores the
+/// extra fields.
+#[derive(Debug, serde::Serialize, Deserialize)]
+struct ImportFileEntry {
+    title: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    folder_path: Option<String>,
+}
+
+/// Parse the uploaded file. JSON when the trimmed content starts
+/// like a JSON array/object, CSV otherwise. CSV mirrors the desktop
+/// client's parser: RFC-4180-ish quoting, header-driven columns
+/// (title + body required, tags + folder_path optional), tags split
+/// on ';' or ','.
+fn parse_import_file(content: &str) -> Result<Vec<ImportFileEntry>, String> {
+    let trimmed = content.trim_start();
+    if trimmed.starts_with('[') || trimmed.starts_with('{') {
+        return serde_json::from_str::<Vec<ImportFileEntry>>(content)
+            .map_err(|e| format!("couldn't parse JSON: {e}"));
+    }
+    parse_import_csv(content)
+}
+
+fn parse_import_csv(contents: &str) -> Result<Vec<ImportFileEntry>, String> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut cur_row: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = contents.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else {
+            match c {
+                '"' => in_quotes = true,
+                ',' => cur_row.push(std::mem::take(&mut cur)),
+                '\n' => {
+                    cur_row.push(std::mem::take(&mut cur));
+                    rows.push(std::mem::take(&mut cur_row));
+                }
+                '\r' => {}
+                _ => cur.push(c),
+            }
+        }
+    }
+    if !cur.is_empty() || !cur_row.is_empty() {
+        cur_row.push(cur);
+        rows.push(cur_row);
+    }
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let header = rows.remove(0);
+    let find = |name: &str| {
+        header
+            .iter()
+            .position(|h| h.trim().eq_ignore_ascii_case(name))
+    };
+    let title_idx = find("title").ok_or("CSV is missing a 'title' column")?;
+    let body_idx = find("body").ok_or("CSV is missing a 'body' column")?;
+    let tags_idx = find("tags");
+    let folder_idx = find("folder_path");
+
+    let mut out = Vec::new();
+    for row in rows {
+        if row.iter().all(|c| c.trim().is_empty()) {
+            continue;
+        }
+        let title = row.get(title_idx).cloned().unwrap_or_default();
+        if title.trim().is_empty() {
+            continue;
+        }
+        let tags = tags_idx
+            .and_then(|i| row.get(i).cloned())
+            .map(|s| {
+                s.split([';', ','])
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let folder_path = folder_idx
+            .and_then(|i| row.get(i).cloned())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        out.push(ImportFileEntry {
+            title,
+            body: row.get(body_idx).cloned().unwrap_or_default(),
+            tags,
+            folder_path,
+        });
+    }
+    Ok(out)
+}
+
+/// GET /dashboard/library/import - the upload page. The file is read
+/// client-side (FileReader) into a hidden field so the preview POST
+/// is plain urlencoded; no multipart machinery needed server-side.
+pub async fn library_import_page(State(state): State<AppState>, admin: DashboardAdmin) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+    let body = format!(
+        "<h1>Import into the shared library</h1>\
+         <p class=\"muted\">Accepts the JSON or CSV files the desktop client and this \
+          dashboard export. You pick exactly which snippets to import on the next \
+          screen; duplicates of existing library titles start deselected.</p>\
+         <form method=\"post\" action=\"/dashboard/library/import/preview\" id=\"imp-upload-form\">\
+           <input type=\"file\" id=\"imp-file\" accept=\".json,.csv\" />\
+           <input type=\"hidden\" name=\"content\" id=\"imp-content\" />\
+           <p class=\"muted\" id=\"imp-upload-hint\">Pick a file to continue.</p>\
+         </form>\
+         <script>\
+         document.getElementById(\"imp-file\").addEventListener(\"change\", function () {{\
+           var f = this.files && this.files[0];\
+           if (!f) return;\
+           if (f.size > {max}) {{\
+             document.getElementById(\"imp-upload-hint\").textContent = \
+               \"File is too large (limit {max_mb} MiB).\";\
+             return;\
+           }}\
+           var reader = new FileReader();\
+           reader.onload = function () {{\
+             document.getElementById(\"imp-content\").value = reader.result;\
+             document.getElementById(\"imp-upload-form\").submit();\
+           }};\
+           reader.readAsText(f);\
+         }});\
+         </script>",
+        max = crate::http::BODY_LIMIT_LARGE - 64 * 1024,
+        max_mb = 2,
+    );
+    render_page(&state, &session, "Import", NavTab::Library, &body)
+        .await
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportPreviewForm {
+    pub content: String,
+}
+
+/// POST /dashboard/library/import/preview - parse the file and render
+/// the folder-tree selection. Stateless: the normalized entries ride
+/// to the confirm step inside a hidden field.
+pub async fn library_import_preview(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(form): Form<ImportPreviewForm>,
+) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+    let entries = match parse_import_file(&form.content) {
+        Ok(e) if e.is_empty() => {
+            let body = "<h1>Import into the shared library</h1>\
+                 <div class=\"banner error\">No snippets found in that file.</div>\
+                 <p><a class=\"btn\" href=\"/dashboard/library/import\">Try another file</a></p>";
+            return render_page(&state, &session, "Import", NavTab::Library, body)
+                .await
+                .into_response();
+        }
+        Ok(e) => e,
+        Err(msg) => {
+            let body = format!(
+                "<h1>Import into the shared library</h1>\
+                 <div class=\"banner error\">{}</div>\
+                 <p><a class=\"btn\" href=\"/dashboard/library/import\">Try another file</a></p>",
+                escape_html(&msg)
+            );
+            return render_page(&state, &session, "Import", NavTab::Library, &body)
+                .await
+                .into_response();
+        }
+    };
+
+    // Existing library titles, for duplicate badging (trimmed
+    // lowercase title - the same rule the desktop importer uses).
+    let existing: std::collections::HashSet<String> = load_library(&state)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.title.trim().to_lowercase())
+        .collect();
+
+    let payload_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into());
+    let tree = render_import_tree(&entries, &existing);
+    let total = entries.len();
+
+    let body = format!(
+        "<h1>Import into the shared library</h1>\
+         <p class=\"muted\">Everything new starts selected; duplicates of existing \
+          library titles start deselected. Expand folders to cherry-pick.</p>\
+         <div class=\"imp-toolbar\">\
+           <label><input type=\"checkbox\" id=\"imp-master\" /> Select all</label>\
+           <input type=\"search\" id=\"imp-search\" placeholder=\"Filter by title\" autocomplete=\"off\" />\
+           <span class=\"muted\" id=\"imp-count\"></span>\
+         </div>\
+         <div id=\"imp-tree\">{tree}</div>\
+         <form method=\"post\" action=\"/dashboard/library/import\" id=\"imp-confirm-form\">\
+           <input type=\"hidden\" name=\"payload\" value=\"{payload}\" />\
+           <input type=\"hidden\" name=\"selected\" id=\"imp-selected\" />\
+           <div class=\"imp-actions\">\
+             <button type=\"submit\" class=\"primary\" id=\"imp-confirm\">Import selected</button>\
+             <a class=\"btn\" href=\"/dashboard/library\">Cancel</a>\
+           </div>\
+         </form>\
+         {js}",
+        tree = tree,
+        payload = escape_html(&payload_json),
+        js = import_preview_js(total),
+    );
+    render_page(&state, &session, "Import", NavTab::Library, &body)
+        .await
+        .into_response()
+}
+
+/// Nested folder node used to assemble the preview tree.
+#[derive(Default)]
+struct ImportTreeNode {
+    children: std::collections::BTreeMap<String, ImportTreeNode>,
+    /// (entry index, title, is_duplicate)
+    items: Vec<(usize, String, bool)>,
+}
+
+fn render_import_tree(
+    entries: &[ImportFileEntry],
+    existing: &std::collections::HashSet<String>,
+) -> String {
+    let mut root = ImportTreeNode::default();
+    for (idx, e) in entries.iter().enumerate() {
+        let dup = existing.contains(&e.title.trim().to_lowercase());
+        let folder = e.folder_path.as_deref().unwrap_or("").trim();
+        let node = if folder.is_empty() {
+            root.children.entry("(no folder)".to_string()).or_default()
+        } else {
+            folder
+                .split('/')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .fold(&mut root, |n, seg| {
+                    n.children.entry(seg.to_string()).or_default()
+                })
+        };
+        node.items.push((idx, e.title.clone(), dup));
+    }
+    let mut out = String::new();
+    render_import_node_children(&root, &mut out);
+    out
+}
+
+fn import_node_size(node: &ImportTreeNode) -> usize {
+    node.items.len()
+        + node
+            .children
+            .values()
+            .map(import_node_size)
+            .sum::<usize>()
+}
+
+fn render_import_node_children(node: &ImportTreeNode, out: &mut String) {
+    for (name, child) in &node.children {
+        out.push_str(&format!(
+            "<div class=\"imp-folder\">\
+               <div class=\"imp-folder-row\">\
+                 <button type=\"button\" class=\"imp-toggle\" aria-label=\"expand\">&#9656;</button>\
+                 <label><input type=\"checkbox\" class=\"imp-folder-cb\" /> \
+                   <strong>{name}</strong> <span class=\"muted\">({count})</span></label>\
+               </div>\
+               <div class=\"imp-children\" hidden>",
+            name = escape_html(name),
+            count = import_node_size(child),
+        ));
+        render_import_node_children(child, out);
+        out.push_str("</div></div>");
+    }
+    for (idx, title, dup) in &node.items {
+        out.push_str(&format!(
+            "<div class=\"imp-item\" data-title=\"{title_lc}\">\
+               <label><input type=\"checkbox\" class=\"imp-item-cb\" data-idx=\"{idx}\"{checked} /> \
+                 {title}{badge}</label>\
+             </div>",
+            idx = idx,
+            title = escape_html(title),
+            title_lc = escape_html(&title.to_lowercase()),
+            checked = if *dup { "" } else { " checked" },
+            badge = if *dup {
+                " <span class=\"imp-badge\">duplicate</span>"
+            } else {
+                ""
+            },
+        ));
+    }
+}
+
+/// Inline JS for the preview tree: expand/collapse, tri-state folder
+/// + master checkboxes, live count, title filter (auto-expands
+/// matches, never changes selection), and selected-index collection
+/// on submit.
+fn import_preview_js(total: usize) -> String {
+    format!(
+        r#"<script>
+(function () {{
+  var TOTAL = {total};
+  function items() {{ return Array.prototype.slice.call(document.querySelectorAll(".imp-item-cb")); }}
+  function updateCount() {{
+    var sel = items().filter(function (i) {{ return i.checked; }}).length;
+    document.getElementById("imp-count").textContent = sel + " of " + TOTAL + " selected";
+    document.getElementById("imp-confirm").disabled = sel === 0;
+    var master = document.getElementById("imp-master");
+    master.checked = sel === TOTAL && TOTAL > 0;
+    master.indeterminate = sel > 0 && sel < TOTAL;
+  }}
+  function updateFolderStates() {{
+    Array.prototype.slice.call(document.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {{
+      var cbs = f.querySelectorAll(".imp-item-cb");
+      var sel = 0;
+      cbs.forEach(function (c) {{ if (c.checked) sel++; }});
+      var fcb = f.querySelector(":scope > .imp-folder-row .imp-folder-cb");
+      if (!fcb) return;
+      fcb.checked = cbs.length > 0 && sel === cbs.length;
+      fcb.indeterminate = sel > 0 && sel < cbs.length;
+    }});
+  }}
+  document.getElementById("imp-tree").addEventListener("click", function (e) {{
+    var btn = e.target.closest(".imp-toggle");
+    if (!btn) return;
+    var children = btn.closest(".imp-folder").querySelector(":scope > .imp-children");
+    var open = children.hasAttribute("hidden");
+    if (open) children.removeAttribute("hidden"); else children.setAttribute("hidden", "");
+    btn.innerHTML = open ? "&#9662;" : "&#9656;";
+  }});
+  document.getElementById("imp-tree").addEventListener("change", function (e) {{
+    if (e.target.classList.contains("imp-folder-cb")) {{
+      var folder = e.target.closest(".imp-folder");
+      folder.querySelectorAll(".imp-item-cb").forEach(function (c) {{ c.checked = e.target.checked; }});
+    }}
+    updateFolderStates();
+    updateCount();
+  }});
+  document.getElementById("imp-master").addEventListener("change", function () {{
+    var on = this.checked;
+    items().forEach(function (c) {{ c.checked = on; }});
+    updateFolderStates();
+    updateCount();
+  }});
+  document.getElementById("imp-search").addEventListener("input", function () {{
+    var q = this.value.trim().toLowerCase();
+    document.querySelectorAll(".imp-item").forEach(function (it) {{
+      it.style.display = !q || it.dataset.title.indexOf(q) !== -1 ? "" : "none";
+    }});
+    Array.prototype.slice.call(document.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {{
+      var anyVisible = Array.prototype.some.call(
+        f.querySelectorAll(".imp-item"),
+        function (it) {{ return it.style.display !== "none"; }}
+      );
+      f.style.display = anyVisible ? "" : "none";
+      var children = f.querySelector(":scope > .imp-children");
+      var btn = f.querySelector(":scope > .imp-folder-row .imp-toggle");
+      if (q && anyVisible) {{
+        children.removeAttribute("hidden");
+        if (btn) btn.innerHTML = "&#9662;";
+      }} else if (!q) {{
+        children.setAttribute("hidden", "");
+        if (btn) btn.innerHTML = "&#9656;";
+      }}
+    }});
+  }});
+  document.getElementById("imp-confirm-form").addEventListener("submit", function () {{
+    var sel = items().filter(function (i) {{ return i.checked; }})
+      .map(function (i) {{ return parseInt(i.dataset.idx, 10); }});
+    document.getElementById("imp-selected").value = JSON.stringify(sel);
+  }});
+  updateFolderStates();
+  updateCount();
+}})();
+</script>"#,
+        total = total
+    )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportConfirmForm {
+    /// The full normalized entry list, JSON (round-tripped from the
+    /// preview step's hidden field).
+    pub payload: String,
+    /// JSON array of selected indices into `payload`.
+    pub selected: String,
+}
+
+/// POST /dashboard/library/import - insert the selected entries via
+/// the same create path the dashboard form uses (versioning, audit
+/// per snippet), then redirect back to the library with a banner.
+pub async fn library_import_confirm(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(form): Form<ImportConfirmForm>,
+) -> Response {
+    let entries: Vec<ImportFileEntry> = match serde_json::from_str(&form.payload) {
+        Ok(e) => e,
+        Err(_) => return Redirect::to("/dashboard/library/import").into_response(),
+    };
+    let selected: Vec<usize> = serde_json::from_str(&form.selected).unwrap_or_default();
+
+    // Dedupe against current library titles AND within the batch,
+    // trimmed lowercase title - the desktop importer's rule.
+    let mut existing: std::collections::HashSet<String> = load_library(&state)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.title.trim().to_lowercase())
+        .collect();
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    for idx in selected {
+        let Some(entry) = entries.get(idx) else {
+            continue;
+        };
+        let key = entry.title.trim().to_lowercase();
+        if key.is_empty() || existing.contains(&key) {
+            skipped += 1;
+            continue;
+        }
+        let auth = crate::auth::AuthUser(admin.claims.clone());
+        let res = crate::handlers::library::create(
+            State(state.clone()),
+            auth,
+            Json(crate::handlers::library::CreateBody {
+                id: Uuid::new_v4().to_string(),
+                payload: crate::handlers::library::LibraryPayload {
+                    title: entry.title.trim().to_string(),
+                    body: entry.body.clone(),
+                    tags: entry.tags.clone(),
+                    folder_path: entry
+                        .folder_path
+                        .clone()
+                        .map(|f| f.trim().to_string())
+                        .filter(|f| !f.is_empty()),
+                },
+            }),
+        )
+        .await;
+        match res {
+            Ok(_) => {
+                existing.insert(key);
+                imported += 1;
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: Some(admin.user_id()),
+            actor_email: &actor_email,
+            action: crate::audit::action::LIBRARY_IMPORT,
+            target_kind: Some("library"),
+            target_id: None,
+            details: Some(serde_json::json!({
+                "imported": imported,
+                "skipped": skipped,
+            })),
+        },
+    )
+    .await;
+
+    Redirect::to(&format!(
+        "/dashboard/library?imported={imported}&skipped={skipped}"
+    ))
+    .into_response()
+}
+
 fn render_library_cards_inner(rows: &[&LibraryRow]) -> String {
     if rows.is_empty() {
         return String::from(
@@ -2677,6 +3187,12 @@ pub struct LibraryPageQuery {
     /// no filter. Joins the folder filter (AND semantics).
     #[serde(default)]
     pub q: Option<String>,
+    /// Set by the import-confirm redirect so the page can show a
+    /// one-shot result banner.
+    #[serde(default)]
+    pub imported: Option<usize>,
+    #[serde(default)]
+    pub skipped: Option<usize>,
 }
 
 /// Apply the search-bar filter on top of the folder filter.

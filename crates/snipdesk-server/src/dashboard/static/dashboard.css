@@ -242,6 +242,40 @@ textarea {
 }
 .library-toolbar .btn:hover { border-color: var(--accent); color: var(--accent); }
 
+/* --- Import preview tree --- */
+
+.imp-toolbar { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.imp-toolbar input[type="search"] {
+  flex: 1; min-width: 160px; padding: 7px 10px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; font: inherit;
+}
+#imp-tree {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; max-height: 480px; overflow-y: auto;
+  background: var(--bg-elev);
+}
+.imp-folder { margin: 2px 0; }
+.imp-folder-row { display: flex; align-items: center; gap: 4px; }
+.imp-toggle {
+  background: none; border: none; color: var(--fg-dim);
+  cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1;
+}
+.imp-children { margin-left: 22px; }
+.imp-item { margin: 2px 0 2px 26px; }
+.imp-item label, .imp-folder-row label { cursor: pointer; }
+.imp-badge {
+  font-size: 11px; padding: 1px 6px; border-radius: 8px;
+  background: var(--danger-bg); color: var(--danger);
+  margin-left: 6px;
+}
+.imp-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.imp-actions .btn {
+  text-decoration: none; padding: 7px 12px;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg); font-size: 13px;
+}
+
 /* --- Errors / banners --- */
 
 .banner {

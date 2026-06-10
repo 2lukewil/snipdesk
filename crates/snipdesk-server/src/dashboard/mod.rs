@@ -70,6 +70,19 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard/library", get(pages::library_page))
         // Filtered download of the library (search + folder scoped).
         .route("/dashboard/library/export", get(pages::library_export))
+        // Import: upload page, tree preview, confirm. The preview +
+        // confirm posts carry the whole file content / entry list as
+        // form fields, so they need the large body cap.
+        .route(
+            "/dashboard/library/import",
+            get(pages::library_import_page)
+                .post(pages::library_import_confirm)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+        )
+        .route(
+            "/dashboard/library/import/preview",
+            post(pages::library_import_preview).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+        )
         .route(
             "/dashboard/library",
             post(pages::library_create).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),

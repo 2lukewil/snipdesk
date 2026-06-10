@@ -1,6 +1,6 @@
 [package]
 name = "snipdesk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast snippet launcher for support agents"
 authors = ["2lukewil"]
 edition = "2021"

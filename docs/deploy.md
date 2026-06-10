@@ -104,8 +104,8 @@ They differ in blast radius, so store them accordingly:
   users sign in again. No data lost.
 - **Master key** (goes in `.env`, step 5): losing it makes every
   encrypted personal snippet unrecoverable. **Copy it somewhere
-  safe now** - a password manager entry or your org's secret store
-  - before moving on.
+  safe now** (a password manager entry or your org's secret store)
+  before moving on.
 
 ## 4. Write the config
 

@@ -173,6 +173,48 @@ async fn export_csv_carries_folder_column() {
 }
 
 #[tokio::test]
+async fn export_selected_posts_exact_ids() {
+    let (pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    seed_snippet(&app, &cookie, "Keep me", "Billing").await;
+    seed_snippet(&app, &cookie, "Leave me", "").await;
+
+    let keep_id: String =
+        sqlx::query_scalar("SELECT id FROM library_snippets WHERE title = 'Keep me'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let selected = serde_json::to_string(&vec![keep_id]).unwrap();
+    let (status, _, body) = post_form_authed(
+        &app,
+        &cookie,
+        "/dashboard/library/export",
+        format!("format=json&selected={}", urlencoding::encode(&selected)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&body).expect("json body");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["title"], "Keep me");
+}
+
+#[tokio::test]
+async fn export_picker_renders_full_tree_selected() {
+    let (_pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    seed_snippet(&app, &cookie, "Refund intro", "Billing").await;
+
+    let (status, _, body) = get_authed(&app, &cookie, "/dashboard/library/export/picker").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("imp-tree"), "tree container missing");
+    assert!(body.contains("checked"), "entries should start selected");
+    assert!(
+        body.contains("Export JSON") && body.contains("Export CSV"),
+        "format buttons missing"
+    );
+}
+
+#[tokio::test]
 async fn export_requires_a_session() {
     let (_pool, app) = make_app().await;
     // Bootstrap an admin so the setup form isn't what answers /.

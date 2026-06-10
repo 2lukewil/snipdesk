@@ -1933,11 +1933,12 @@ pub async fn library_page(
         escape_html(&selected),
     ));
     body.push_str(&library_create_form(&selected));
-    // Search + export toolbar. The search input re-fetches the cards
-    // fragment as the admin types (debounced); the export links
-    // download exactly what the current folder + search show, their
-    // hrefs kept in sync by LIBRARY_PAGE_JS. The import link opens
-    // the upload page.
+    // Search + export/import toolbar. The search input re-fetches
+    // the cards fragment as the admin types (debounced). Export and
+    // Import both open the selection-tree modal: Export fetches the
+    // picker fragment over the whole library; Import pops the file
+    // browser directly and posts the file's text to the preview
+    // endpoint. Wiring lives in LIBRARY_PAGE_JS.
     let q_value = q.q.as_deref().unwrap_or("");
     body.push_str(&format!(
         "<div class=\"library-toolbar\">\
@@ -1948,12 +1949,23 @@ pub async fn library_page(
                   hx-target=\"#library-list\" \
                   hx-include=\"#library-folder-input\" \
                   hx-swap=\"innerHTML\" />\
-           <a class=\"btn\" id=\"library-export-json\" href=\"/dashboard/library/export?format=json\">Export JSON</a>\
-           <a class=\"btn\" id=\"library-export-csv\" href=\"/dashboard/library/export?format=csv\">Export CSV</a>\
-           <a class=\"btn\" href=\"/dashboard/library/import\">Import</a>\
+           <button class=\"btn\" id=\"library-export-btn\" type=\"button\">Export</button>\
+           <button class=\"btn\" id=\"library-import-btn\" type=\"button\">Import</button>\
+           <input type=\"file\" id=\"library-import-file\" accept=\".json,.csv\" hidden />\
          </div>",
         q = escape_html(q_value),
     ));
+    // Selection-tree modal shell. Export and import fragments load
+    // into #library-modal-body; behaviour is delegated from
+    // LIBRARY_PAGE_JS so inserted markup needs no scripts of its own.
+    body.push_str(
+        "<div id=\"library-modal\" class=\"dash-modal\" hidden>\
+           <div class=\"dash-modal-card\">\
+             <button type=\"button\" class=\"dash-modal-close\" id=\"library-modal-close\" aria-label=\"Close\">&#215;</button>\
+             <div id=\"library-modal-body\"></div>\
+           </div>\
+         </div>",
+    );
     // Polls every 5s so another admin's adds / edits / deletes surface
     // without a manual refresh. The folder filter + search query ride
     // along via hx-include. The JS-expression gate on the trigger
@@ -2397,24 +2409,15 @@ fn csv_field(s: &str) -> String {
     }
 }
 
-/// Download the library as a file, scoped to whatever the current
-/// search + folder filter shows. JSON is the canonical interchange
-/// format (the desktop client imports it directly); CSV carries the
-/// same columns the client reads, plus folder_path.
-pub async fn library_export(
-    State(state): State<AppState>,
-    admin: DashboardAdmin,
-    Query(q): Query<LibraryExportQuery>,
-) -> Response {
-    let rows = load_library(&state).await.unwrap_or_default();
-    let selected = library_selected_folder(&q.folder);
-    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
-
-    let format = q.format.as_deref().unwrap_or("json");
+/// Serialize library rows into the requested download format.
+/// JSON is the canonical interchange shape (the desktop client
+/// imports it directly); CSV carries the same columns the client
+/// reads, plus folder_path.
+fn build_library_export(filtered: &[&LibraryRow], format: &str) -> (String, String, String) {
     let date = Utc::now().format("%Y%m%d");
-    let (content_type, filename, payload) = if format == "csv" {
+    if format == "csv" {
         let mut out = String::from("title,body,tags,folder_path\n");
-        for r in &filtered {
+        for r in filtered {
             out.push_str(&format!(
                 "{},{},{},{}\n",
                 csv_field(&r.title),
@@ -2424,7 +2427,7 @@ pub async fn library_export(
             ));
         }
         (
-            "text/csv; charset=utf-8",
+            "text/csv; charset=utf-8".to_string(),
             format!("library-{date}.csv"),
             out,
         )
@@ -2440,13 +2443,24 @@ pub async fn library_export(
             .collect();
         let json = serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".into());
         (
-            "application/json; charset=utf-8",
+            "application/json; charset=utf-8".to_string(),
             format!("library-{date}.json"),
             json,
         )
-    };
+    }
+}
 
-    // Count + filter in the audit trail, never content.
+/// Shared tail of both export handlers: audit, then answer with the
+/// attachment.
+async fn finish_library_export(
+    state: &AppState,
+    admin: &DashboardAdmin,
+    filtered: &[&LibraryRow],
+    format: &str,
+    scope: serde_json::Value,
+) -> Response {
+    let (content_type, filename, payload) = build_library_export(filtered, format);
+    // Count + scope in the audit trail, never content.
     let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
     crate::audit::record(
         &state.pool,
@@ -2459,8 +2473,7 @@ pub async fn library_export(
             details: Some(serde_json::json!({
                 "count": filtered.len(),
                 "format": format,
-                "q": q.q.as_deref().unwrap_or(""),
-                "folder": selected,
+                "scope": scope,
             })),
         },
     )
@@ -2468,7 +2481,7 @@ pub async fn library_export(
 
     (
         [
-            (header::CONTENT_TYPE, content_type.to_string()),
+            (header::CONTENT_TYPE, content_type),
             (
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{filename}\""),
@@ -2477,6 +2490,51 @@ pub async fn library_export(
         payload,
     )
         .into_response()
+}
+
+/// GET: download the library scoped by the search + folder query
+/// params (kept for direct-URL use; the dashboard UI drives the
+/// POST variant below via the selection modal).
+pub async fn library_export(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Query(q): Query<LibraryExportQuery>,
+) -> Response {
+    let rows = load_library(&state).await.unwrap_or_default();
+    let selected = library_selected_folder(&q.folder);
+    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
+    let format = q.format.as_deref().unwrap_or("json").to_string();
+    let scope = serde_json::json!({
+        "q": q.q.as_deref().unwrap_or(""),
+        "folder": selected,
+    });
+    finish_library_export(&state, &admin, &filtered, &format, scope).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LibraryExportSelectedForm {
+    #[serde(default)]
+    pub format: Option<String>,
+    /// JSON array of library snippet ids from the selection modal.
+    pub selected: String,
+}
+
+/// POST: download exactly the snippets the selection modal checked.
+pub async fn library_export_selected(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(form): Form<LibraryExportSelectedForm>,
+) -> Response {
+    let ids: std::collections::HashSet<String> =
+        serde_json::from_str::<Vec<String>>(&form.selected)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    let rows = load_library(&state).await.unwrap_or_default();
+    let filtered: Vec<&LibraryRow> = rows.iter().filter(|r| ids.contains(&r.id)).collect();
+    let format = form.format.as_deref().unwrap_or("json").to_string();
+    let scope = serde_json::json!({ "selection": "explicit" });
+    finish_library_export(&state, &admin, &filtered, &format, scope).await
 }
 
 // ---- /dashboard/library/import (GET page, POST preview, POST confirm) ----
@@ -2593,84 +2651,33 @@ fn parse_import_csv(contents: &str) -> Result<Vec<ImportFileEntry>, String> {
     Ok(out)
 }
 
-/// GET /dashboard/library/import - the upload page. The file is read
-/// client-side (FileReader) into a hidden field so the preview POST
-/// is plain urlencoded; no multipart machinery needed server-side.
-pub async fn library_import_page(State(state): State<AppState>, admin: DashboardAdmin) -> Response {
-    let session = DashboardSession {
-        claims: admin.claims.clone(),
-    };
-    let body = format!(
-        "<h1>Import into the shared library</h1>\
-         <p class=\"muted\">Accepts the JSON or CSV files the desktop client and this \
-          dashboard export. You pick exactly which snippets to import on the next \
-          screen; duplicates of existing library titles start deselected.</p>\
-         <form method=\"post\" action=\"/dashboard/library/import/preview\" id=\"imp-upload-form\">\
-           <input type=\"file\" id=\"imp-file\" accept=\".json,.csv\" />\
-           <input type=\"hidden\" name=\"content\" id=\"imp-content\" />\
-           <p class=\"muted\" id=\"imp-upload-hint\">Pick a file to continue.</p>\
-         </form>\
-         <script>\
-         document.getElementById(\"imp-file\").addEventListener(\"change\", function () {{\
-           var f = this.files && this.files[0];\
-           if (!f) return;\
-           if (f.size > {max}) {{\
-             document.getElementById(\"imp-upload-hint\").textContent = \
-               \"File is too large (limit {max_mb} MiB).\";\
-             return;\
-           }}\
-           var reader = new FileReader();\
-           reader.onload = function () {{\
-             document.getElementById(\"imp-content\").value = reader.result;\
-             document.getElementById(\"imp-upload-form\").submit();\
-           }};\
-           reader.readAsText(f);\
-         }});\
-         </script>",
-        max = crate::http::BODY_LIMIT_LARGE - 64 * 1024,
-        max_mb = 2,
-    );
-    render_page(&state, &session, "Import", NavTab::Library, &body)
-        .await
-        .into_response()
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ImportPreviewForm {
     pub content: String,
 }
 
-/// POST /dashboard/library/import/preview - parse the file and render
-/// the folder-tree selection. Stateless: the normalized entries ride
-/// to the confirm step inside a hidden field.
+/// POST /dashboard/library/import/preview - parse the file and
+/// return the folder-tree selection FRAGMENT. The library page's JS
+/// inserts it into the selection modal; all behaviour is delegated
+/// there, so this markup carries no scripts. Stateless: the
+/// normalized entries ride to the confirm step in a hidden field.
 pub async fn library_import_preview(
     State(state): State<AppState>,
-    admin: DashboardAdmin,
+    _admin: DashboardAdmin,
     Form(form): Form<ImportPreviewForm>,
 ) -> Response {
-    let session = DashboardSession {
-        claims: admin.claims.clone(),
-    };
     let entries = match parse_import_file(&form.content) {
         Ok(e) if e.is_empty() => {
-            let body = "<h1>Import into the shared library</h1>\
-                 <div class=\"banner error\">No snippets found in that file.</div>\
-                 <p><a class=\"btn\" href=\"/dashboard/library/import\">Try another file</a></p>";
-            return render_page(&state, &session, "Import", NavTab::Library, body)
-                .await
-                .into_response();
+            return modal_fragment(
+                "<div class=\"banner error\">No snippets found in that file.</div>".to_string(),
+            );
         }
         Ok(e) => e,
         Err(msg) => {
-            let body = format!(
-                "<h1>Import into the shared library</h1>\
-                 <div class=\"banner error\">{}</div>\
-                 <p><a class=\"btn\" href=\"/dashboard/library/import\">Try another file</a></p>",
+            return modal_fragment(format!(
+                "<div class=\"banner error\">{}</div>",
                 escape_html(&msg)
-            );
-            return render_page(&state, &session, "Import", NavTab::Library, &body)
-                .await
-                .into_response();
+            ));
         }
     };
 
@@ -2684,11 +2691,24 @@ pub async fn library_import_preview(
         .collect();
 
     let payload_json = serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into());
-    let tree = render_import_tree(&entries, &existing);
-    let total = entries.len();
+    let items: Vec<TreeItem> = entries
+        .iter()
+        .enumerate()
+        .map(|(idx, e)| {
+            let dup = existing.contains(&e.title.trim().to_lowercase());
+            TreeItem {
+                key: idx.to_string(),
+                title: e.title.clone(),
+                folder: e.folder_path.clone().unwrap_or_default(),
+                checked: !dup,
+                badge: dup,
+            }
+        })
+        .collect();
+    let tree = render_selection_tree(&items);
 
-    let body = format!(
-        "<h1>Import into the shared library</h1>\
+    modal_fragment(format!(
+        "<h2>Import into the shared library</h2>\
          <p class=\"muted\">Everything new starts selected; duplicates of existing \
           library titles start deselected. Expand folders to cherry-pick.</p>\
          <div class=\"imp-toolbar\">\
@@ -2697,40 +2717,93 @@ pub async fn library_import_preview(
            <span class=\"muted\" id=\"imp-count\"></span>\
          </div>\
          <div id=\"imp-tree\">{tree}</div>\
-         <form method=\"post\" action=\"/dashboard/library/import\" id=\"imp-confirm-form\">\
+         <form method=\"post\" action=\"/dashboard/library/import\" class=\"imp-form\" data-keys=\"numeric\">\
            <input type=\"hidden\" name=\"payload\" value=\"{payload}\" />\
-           <input type=\"hidden\" name=\"selected\" id=\"imp-selected\" />\
+           <input type=\"hidden\" name=\"selected\" />\
            <div class=\"imp-actions\">\
-             <button type=\"submit\" class=\"primary\" id=\"imp-confirm\">Import selected</button>\
-             <a class=\"btn\" href=\"/dashboard/library\">Cancel</a>\
+             <button type=\"submit\" class=\"primary imp-confirm\">Import selected</button>\
            </div>\
-         </form>\
-         {js}",
+         </form>",
         tree = tree,
         payload = escape_html(&payload_json),
-        js = import_preview_js(total),
-    );
-    render_page(&state, &session, "Import", NavTab::Library, &body)
-        .await
-        .into_response()
+    ))
 }
 
-/// Nested folder node used to assemble the preview tree.
+/// GET /dashboard/library/export/picker - the export half of the
+/// selection modal: the whole library as a tree, everything
+/// selected. Submitting posts the chosen ids to the export
+/// endpoint, which answers with the file download.
+pub async fn library_export_picker(
+    State(state): State<AppState>,
+    _admin: DashboardAdmin,
+) -> Response {
+    let rows = load_library(&state).await.unwrap_or_default();
+    if rows.is_empty() {
+        return modal_fragment(
+            "<div class=\"banner error\">The library is empty - nothing to export.</div>"
+                .to_string(),
+        );
+    }
+    let items: Vec<TreeItem> = rows
+        .iter()
+        .map(|r| TreeItem {
+            key: r.id.clone(),
+            title: r.title.clone(),
+            folder: r.folder_path.clone().unwrap_or_default(),
+            checked: true,
+            badge: false,
+        })
+        .collect();
+    let tree = render_selection_tree(&items);
+
+    modal_fragment(format!(
+        "<h2>Export the shared library</h2>\
+         <p class=\"muted\">Everything starts selected. Untick folders or snippets \
+          to leave them out, then pick a format.</p>\
+         <div class=\"imp-toolbar\">\
+           <label><input type=\"checkbox\" id=\"imp-master\" /> Select all</label>\
+           <input type=\"search\" id=\"imp-search\" placeholder=\"Filter by title\" autocomplete=\"off\" />\
+           <span class=\"muted\" id=\"imp-count\"></span>\
+         </div>\
+         <div id=\"imp-tree\">{tree}</div>\
+         <form method=\"post\" action=\"/dashboard/library/export\" class=\"imp-form\" data-close-on-submit=\"1\">\
+           <input type=\"hidden\" name=\"selected\" />\
+           <div class=\"imp-actions\">\
+             <button type=\"submit\" name=\"format\" value=\"json\" class=\"primary imp-confirm\">Export JSON</button>\
+             <button type=\"submit\" name=\"format\" value=\"csv\" class=\"primary imp-confirm\">Export CSV</button>\
+           </div>\
+         </form>",
+    ))
+}
+
+/// Wrap fragment HTML for insertion into the library page's modal.
+fn modal_fragment(inner: String) -> Response {
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], inner).into_response()
+}
+
+/// One row of a selection tree, regardless of which flow renders
+/// it. `key` lands in data-idx: numeric indices for import, snippet
+/// ids for export - the consuming form declares which via
+/// data-keys.
+struct TreeItem {
+    key: String,
+    title: String,
+    folder: String,
+    checked: bool,
+    badge: bool,
+}
+
+/// Nested folder node used to assemble the selection tree.
 #[derive(Default)]
-struct ImportTreeNode {
-    children: std::collections::BTreeMap<String, ImportTreeNode>,
-    /// (entry index, title, is_duplicate)
-    items: Vec<(usize, String, bool)>,
+struct TreeNode<'a> {
+    children: std::collections::BTreeMap<String, TreeNode<'a>>,
+    items: Vec<&'a TreeItem>,
 }
 
-fn render_import_tree(
-    entries: &[ImportFileEntry],
-    existing: &std::collections::HashSet<String>,
-) -> String {
-    let mut root = ImportTreeNode::default();
-    for (idx, e) in entries.iter().enumerate() {
-        let dup = existing.contains(&e.title.trim().to_lowercase());
-        let folder = e.folder_path.as_deref().unwrap_or("").trim();
+fn render_selection_tree(items: &[TreeItem]) -> String {
+    let mut root = TreeNode::default();
+    for item in items {
+        let folder = item.folder.trim();
         let node = if folder.is_empty() {
             root.children.entry("(no folder)".to_string()).or_default()
         } else {
@@ -2742,135 +2815,50 @@ fn render_import_tree(
                     n.children.entry(seg.to_string()).or_default()
                 })
         };
-        node.items.push((idx, e.title.clone(), dup));
+        node.items.push(item);
     }
     let mut out = String::new();
-    render_import_node_children(&root, &mut out);
+    render_tree_children(&root, &mut out);
     out
 }
 
-fn import_node_size(node: &ImportTreeNode) -> usize {
-    node.items.len() + node.children.values().map(import_node_size).sum::<usize>()
+fn tree_node_size(node: &TreeNode) -> usize {
+    node.items.len() + node.children.values().map(tree_node_size).sum::<usize>()
 }
 
-fn render_import_node_children(node: &ImportTreeNode, out: &mut String) {
+fn render_tree_children(node: &TreeNode, out: &mut String) {
     for (name, child) in &node.children {
         out.push_str(&format!(
             "<div class=\"imp-folder\">\
                <div class=\"imp-folder-row\">\
                  <button type=\"button\" class=\"imp-toggle\" aria-label=\"expand\">&#9656;</button>\
                  <label><input type=\"checkbox\" class=\"imp-folder-cb\" /> \
-                   <strong>{name}</strong> <span class=\"muted\">({count})</span></label>\
+                   <strong>&#128193; {name}</strong> <span class=\"muted\">({count})</span></label>\
                </div>\
                <div class=\"imp-children\" hidden>",
             name = escape_html(name),
-            count = import_node_size(child),
+            count = tree_node_size(child),
         ));
-        render_import_node_children(child, out);
+        render_tree_children(child, out);
         out.push_str("</div></div>");
     }
-    for (idx, title, dup) in &node.items {
+    for item in &node.items {
         out.push_str(&format!(
             "<div class=\"imp-item\" data-title=\"{title_lc}\">\
-               <label><input type=\"checkbox\" class=\"imp-item-cb\" data-idx=\"{idx}\"{checked} /> \
+               <label><input type=\"checkbox\" class=\"imp-item-cb\" data-idx=\"{key}\"{checked} /> \
                  {title}{badge}</label>\
              </div>",
-            idx = idx,
-            title = escape_html(title),
-            title_lc = escape_html(&title.to_lowercase()),
-            checked = if *dup { "" } else { " checked" },
-            badge = if *dup {
+            key = escape_html(&item.key),
+            title = escape_html(&item.title),
+            title_lc = escape_html(&item.title.to_lowercase()),
+            checked = if item.checked { " checked" } else { "" },
+            badge = if item.badge {
                 " <span class=\"imp-badge\">duplicate</span>"
             } else {
                 ""
             },
         ));
     }
-}
-
-/// Inline JS for the preview tree: expand/collapse, tri-state
-/// folder and master checkboxes, live count, a title filter that
-/// auto-expands matches without changing selection, and
-/// selected-index collection on submit.
-fn import_preview_js(total: usize) -> String {
-    format!(
-        r#"<script>
-(function () {{
-  var TOTAL = {total};
-  function items() {{ return Array.prototype.slice.call(document.querySelectorAll(".imp-item-cb")); }}
-  function updateCount() {{
-    var sel = items().filter(function (i) {{ return i.checked; }}).length;
-    document.getElementById("imp-count").textContent = sel + " of " + TOTAL + " selected";
-    document.getElementById("imp-confirm").disabled = sel === 0;
-    var master = document.getElementById("imp-master");
-    master.checked = sel === TOTAL && TOTAL > 0;
-    master.indeterminate = sel > 0 && sel < TOTAL;
-  }}
-  function updateFolderStates() {{
-    Array.prototype.slice.call(document.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {{
-      var cbs = f.querySelectorAll(".imp-item-cb");
-      var sel = 0;
-      cbs.forEach(function (c) {{ if (c.checked) sel++; }});
-      var fcb = f.querySelector(":scope > .imp-folder-row .imp-folder-cb");
-      if (!fcb) return;
-      fcb.checked = cbs.length > 0 && sel === cbs.length;
-      fcb.indeterminate = sel > 0 && sel < cbs.length;
-    }});
-  }}
-  document.getElementById("imp-tree").addEventListener("click", function (e) {{
-    var btn = e.target.closest(".imp-toggle");
-    if (!btn) return;
-    var children = btn.closest(".imp-folder").querySelector(":scope > .imp-children");
-    var open = children.hasAttribute("hidden");
-    if (open) children.removeAttribute("hidden"); else children.setAttribute("hidden", "");
-    btn.innerHTML = open ? "&#9662;" : "&#9656;";
-  }});
-  document.getElementById("imp-tree").addEventListener("change", function (e) {{
-    if (e.target.classList.contains("imp-folder-cb")) {{
-      var folder = e.target.closest(".imp-folder");
-      folder.querySelectorAll(".imp-item-cb").forEach(function (c) {{ c.checked = e.target.checked; }});
-    }}
-    updateFolderStates();
-    updateCount();
-  }});
-  document.getElementById("imp-master").addEventListener("change", function () {{
-    var on = this.checked;
-    items().forEach(function (c) {{ c.checked = on; }});
-    updateFolderStates();
-    updateCount();
-  }});
-  document.getElementById("imp-search").addEventListener("input", function () {{
-    var q = this.value.trim().toLowerCase();
-    document.querySelectorAll(".imp-item").forEach(function (it) {{
-      it.style.display = !q || it.dataset.title.indexOf(q) !== -1 ? "" : "none";
-    }});
-    Array.prototype.slice.call(document.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {{
-      var anyVisible = Array.prototype.some.call(
-        f.querySelectorAll(".imp-item"),
-        function (it) {{ return it.style.display !== "none"; }}
-      );
-      f.style.display = anyVisible ? "" : "none";
-      var children = f.querySelector(":scope > .imp-children");
-      var btn = f.querySelector(":scope > .imp-folder-row .imp-toggle");
-      if (q && anyVisible) {{
-        children.removeAttribute("hidden");
-        if (btn) btn.innerHTML = "&#9662;";
-      }} else if (!q) {{
-        children.setAttribute("hidden", "");
-        if (btn) btn.innerHTML = "&#9656;";
-      }}
-    }});
-  }});
-  document.getElementById("imp-confirm-form").addEventListener("submit", function () {{
-    var sel = items().filter(function (i) {{ return i.checked; }})
-      .map(function (i) {{ return parseInt(i.dataset.idx, 10); }});
-    document.getElementById("imp-selected").value = JSON.stringify(sel);
-  }});
-  updateFolderStates();
-  updateCount();
-}})();
-</script>"#
-    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -3215,28 +3203,144 @@ fn filter_library_query<'a>(rows: Vec<&'a LibraryRow>, q: &Option<String>) -> Ve
 /// Inline drag-drop + formatting-toolbar wiring for the library page.
 /// Scoped via `data-*` attributes on the library DOM so a stray
 /// global keypress can't trigger formatting on an unrelated input.
-const LIBRARY_PAGE_JS: &str = r#"<script>
+const LIBRARY_PAGE_JS: &str = r##"<script>
 (function () {
-  // ---- Export links: keep hrefs in sync with the live search +
-  // folder filter so the download is exactly what the admin sees ----
-  function syncExportLinks() {
-    var qEl = document.getElementById("library-search-input");
-    var fEl = document.getElementById("library-folder-input");
-    var q = qEl ? qEl.value : "";
-    var folder = fEl ? fEl.value : "";
-    ["json", "csv"].forEach(function (fmt) {
-      var a = document.getElementById("library-export-" + fmt);
-      if (a) {
-        a.href = "/dashboard/library/export?format=" + fmt +
-          "&q=" + encodeURIComponent(q) +
-          "&folder=" + encodeURIComponent(folder);
-      }
+  // ---- Selection-tree modal (shared by export picker + import
+  // preview). Fragments are inserted into #library-modal-body, so
+  // every behaviour below is delegated - inserted markup carries no
+  // scripts of its own. ----
+  var modal = document.getElementById("library-modal");
+  var modalBody = document.getElementById("library-modal-body");
+
+  function openModal(html) {
+    modalBody.innerHTML = html;
+    modal.hidden = false;
+    updateTreeCounts();
+  }
+  function closeModal() {
+    modal.hidden = true;
+    modalBody.innerHTML = "";
+  }
+  document.getElementById("library-modal-close").addEventListener("click", closeModal);
+  modal.addEventListener("click", function (e) {
+    if (e.target === modal) closeModal();
+  });
+
+  function treeItems() {
+    return Array.prototype.slice.call(modalBody.querySelectorAll(".imp-item-cb"));
+  }
+  function updateTreeCounts() {
+    var countEl = modalBody.querySelector("#imp-count");
+    if (!countEl) return;
+    var cbs = treeItems();
+    var sel = cbs.filter(function (c) { return c.checked; }).length;
+    countEl.textContent = sel + " of " + cbs.length + " selected";
+    var confirm = modalBody.querySelector(".imp-confirm");
+    if (confirm) confirm.disabled = sel === 0;
+    var master = modalBody.querySelector("#imp-master");
+    if (master) {
+      master.checked = sel === cbs.length && cbs.length > 0;
+      master.indeterminate = sel > 0 && sel < cbs.length;
+    }
+    Array.prototype.slice.call(modalBody.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {
+      var inner = f.querySelectorAll(".imp-item-cb");
+      var innerSel = 0;
+      inner.forEach(function (c) { if (c.checked) innerSel++; });
+      var fcb = f.querySelector(":scope > .imp-folder-row .imp-folder-cb");
+      if (!fcb) return;
+      fcb.checked = inner.length > 0 && innerSel === inner.length;
+      fcb.indeterminate = innerSel > 0 && innerSel < inner.length;
     });
   }
-  document.body.addEventListener("input", function (e) {
-    if (e.target && e.target.id === "library-search-input") syncExportLinks();
+  modalBody.addEventListener("click", function (e) {
+    var btn = e.target.closest(".imp-toggle");
+    if (!btn) return;
+    var children = btn.closest(".imp-folder").querySelector(":scope > .imp-children");
+    var open = children.hasAttribute("hidden");
+    if (open) children.removeAttribute("hidden"); else children.setAttribute("hidden", "");
+    btn.innerHTML = open ? "&#9662;" : "&#9656;";
   });
-  syncExportLinks();
+  modalBody.addEventListener("change", function (e) {
+    if (e.target.id === "imp-master") {
+      var on = e.target.checked;
+      treeItems().forEach(function (c) { c.checked = on; });
+    } else if (e.target.classList.contains("imp-folder-cb")) {
+      e.target.closest(".imp-folder").querySelectorAll(".imp-item-cb").forEach(function (c) {
+        c.checked = e.target.checked;
+      });
+    }
+    updateTreeCounts();
+  });
+  modalBody.addEventListener("input", function (e) {
+    if (e.target.id !== "imp-search") return;
+    var q = e.target.value.trim().toLowerCase();
+    modalBody.querySelectorAll(".imp-item").forEach(function (it) {
+      it.style.display = !q || it.dataset.title.indexOf(q) !== -1 ? "" : "none";
+    });
+    Array.prototype.slice.call(modalBody.querySelectorAll(".imp-folder")).reverse().forEach(function (f) {
+      var anyVisible = Array.prototype.some.call(
+        f.querySelectorAll(".imp-item"),
+        function (it) { return it.style.display !== "none"; }
+      );
+      f.style.display = anyVisible ? "" : "none";
+      var children = f.querySelector(":scope > .imp-children");
+      var toggle = f.querySelector(":scope > .imp-folder-row .imp-toggle");
+      if (q && anyVisible) {
+        children.removeAttribute("hidden");
+        if (toggle) toggle.innerHTML = "&#9662;";
+      } else if (!q) {
+        children.setAttribute("hidden", "");
+        if (toggle) toggle.innerHTML = "&#9656;";
+      }
+    });
+  });
+  // On submit, write the checked keys into the form's hidden
+  // `selected` field. Import keys are numeric indices; export keys
+  // are snippet ids - the server side knows which it expects.
+  modalBody.addEventListener("submit", function (e) {
+    var form = e.target.closest("form");
+    if (!form || !form.classList.contains("imp-form")) return;
+    var sel = treeItems()
+      .filter(function (c) { return c.checked; })
+      .map(function (c) { return c.dataset.idx; });
+    var field = form.querySelector("input[name=selected]");
+    if (field) {
+      field.value = JSON.stringify(
+        form.dataset.keys === "numeric" ? sel.map(Number) : sel
+      );
+    }
+    // Export downloads an attachment and the page stays; close the
+    // modal so the admin isn't left staring at a stale picker.
+    if (form.dataset.closeOnSubmit === "1") setTimeout(closeModal, 250);
+  });
+
+  // ---- Toolbar: Export opens the picker fragment; Import pops the
+  // file browser and posts the file's text to the preview endpoint ----
+  document.getElementById("library-export-btn").addEventListener("click", function () {
+    fetch("/dashboard/library/export/picker")
+      .then(function (r) { return r.text(); })
+      .then(openModal);
+  });
+  var importFile = document.getElementById("library-import-file");
+  document.getElementById("library-import-btn").addEventListener("click", function () {
+    importFile.value = "";
+    importFile.click();
+  });
+  importFile.addEventListener("change", function () {
+    var f = importFile.files && importFile.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      fetch("/dashboard/library/import/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "content=" + encodeURIComponent(reader.result),
+      })
+        .then(function (r) { return r.text(); })
+        .then(openModal);
+    };
+    reader.readAsText(f);
+  });
   // ---- Format toolbar: wraps the textarea selection with markdown markers ----
   document.body.addEventListener("click", function (e) {
     var btn = e.target.closest && e.target.closest(".fmt-btn");
@@ -3732,7 +3836,7 @@ const LIBRARY_PAGE_JS: &str = r#"<script>
   // fired from JS were silently dropped and mutations only
   // surfaced on the next 5s/10s tick.
 })();
-</script>"#;
+</script>"##;
 
 #[derive(sqlx::FromRow)]
 struct LibraryRow {

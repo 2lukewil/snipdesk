@@ -242,9 +242,49 @@ textarea {
 }
 .library-toolbar .btn:hover { border-color: var(--accent); color: var(--accent); }
 
-/* --- Import preview tree --- */
+/* --- Selection modal (library export picker / import preview) --- */
+
+.dash-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.dash-modal[hidden] { display: none; }
+.dash-modal-card {
+  position: relative;
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px 24px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+.dash-modal-card h2 { margin: 0 0 8px; font-size: 16px; }
+.dash-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+}
+.dash-modal-close:hover { color: var(--fg); }
 
 .imp-toolbar { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+.imp-toolbar label {
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; cursor: pointer; font-size: 13px;
+}
 .imp-toolbar input[type="search"] {
   flex: 1; min-width: 160px; padding: 7px 10px;
   background: var(--bg); color: var(--fg);
@@ -252,29 +292,39 @@ textarea {
 }
 #imp-tree {
   border: 1px solid var(--border); border-radius: 6px;
-  padding: 8px 10px; max-height: 480px; overflow-y: auto;
-  background: var(--bg-elev);
+  padding: 8px 10px; max-height: 380px; overflow-y: auto;
+  background: var(--bg);
 }
 .imp-folder { margin: 2px 0; }
 .imp-folder-row { display: flex; align-items: center; gap: 4px; }
+.imp-folder-row label {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; font-size: 13px;
+}
 .imp-toggle {
   background: none; border: none; color: var(--fg-dim);
   cursor: pointer; font-size: 13px; padding: 2px 4px; line-height: 1;
 }
 .imp-children { margin-left: 22px; }
-.imp-item { margin: 2px 0 2px 26px; }
-.imp-item label, .imp-folder-row label { cursor: pointer; }
+.imp-item {
+  margin: 1px 0 1px 26px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.imp-item:hover { background: rgba(255, 255, 255, 0.04); }
+.imp-item label {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; font-size: 13px;
+}
+.imp-item input[type="checkbox"],
+.imp-folder-row input[type="checkbox"],
+.imp-toolbar input[type="checkbox"] { margin: 0; flex: none; }
 .imp-badge {
   font-size: 11px; padding: 1px 6px; border-radius: 8px;
   background: var(--danger-bg); color: var(--danger);
-  margin-left: 6px;
+  margin-left: 4px;
 }
 .imp-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
-.imp-actions .btn {
-  text-decoration: none; padding: 7px 12px;
-  border: 1px solid var(--border); border-radius: 6px;
-  color: var(--fg); font-size: 13px;
-}
 
 /* --- Errors / banners --- */
 

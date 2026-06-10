@@ -223,11 +223,12 @@ Once signed in:
   configurable per device in Settings.
 - Shared library snippets from your team appear in the launcher
   with a small cloud glyph. They're mixed into the main view by
-  default; toggle them off in Settings -> Server if you
-  prefer them only in the dedicated **Team Library** folder.
-- A **Trash** folder appears in the sidebar - deleted snippets stay
-  there for 90 days (or whatever your admin set), recoverable with
-  one click.
+  default; toggle that off in Settings -> Server and they appear
+  only under a dedicated **Team Library** folder in the sidebar
+  instead (the folder row only shows in that mode).
+- A red **trash icon** appears at the bottom-left corner - deleted
+  snippets stay there for 90 days (or whatever your admin set),
+  recoverable with one click.
 
 ## Multi-device usage
 

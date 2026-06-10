@@ -68,16 +68,28 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard/users/:id", put(pages::user_update_row))
         .route("/dashboard/users/:id", delete(pages::user_delete_row))
         .route("/dashboard/library", get(pages::library_page))
-        // Filtered download of the library (search + folder scoped).
-        .route("/dashboard/library/export", get(pages::library_export))
-        // Import: upload page, tree preview, confirm. The preview +
-        // confirm posts carry the whole file content / entry list as
-        // form fields, so they need the large body cap.
+        // Library download. GET serves direct-URL use (search +
+        // folder query params); POST serves the selection modal's
+        // explicit id list (large cap: the id list scales with the
+        // library).
+        .route(
+            "/dashboard/library/export",
+            get(pages::library_export)
+                .post(pages::library_export_selected)
+                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+        )
+        // Export half of the selection modal: the library as a tree
+        // fragment with everything selected.
+        .route(
+            "/dashboard/library/export/picker",
+            get(pages::library_export_picker),
+        )
+        // Import: tree preview fragment + confirm. Both posts carry
+        // the whole file content / entry list as form fields, so
+        // they need the large body cap.
         .route(
             "/dashboard/library/import",
-            get(pages::library_import_page)
-                .post(pages::library_import_confirm)
-                .layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
+            post(pages::library_import_confirm).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),
         )
         .route(
             "/dashboard/library/import/preview",

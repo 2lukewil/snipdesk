@@ -39,6 +39,16 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(pages::index))
         .route("/dashboard/login", post(pages::login_submit))
         .route("/dashboard/logout", post(pages::logout))
+        // SSO entry for the dashboard. The IdP callback URL stays
+        // on the API surface (/api/auth/oidc/:provider/callback) so
+        // operators only register one redirect URI per provider;
+        // this handler just stashes a Dashboard FlowOrigin and 302s
+        // off to the IdP. The shared callback then dispatches on the
+        // origin and finishes by setting the session cookie.
+        .route(
+            "/dashboard/oidc/:provider/start",
+            get(pages::dashboard_oidc_start),
+        )
         // Admin-only (extractor enforces; non-admins get bounced)
         .route(
             "/dashboard/users",

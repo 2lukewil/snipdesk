@@ -51,9 +51,12 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use axum_extra::extract::cookie::CookieJar;
+
 use crate::audit::{self, action, AuditEvent};
 use crate::auth::issue_token;
 use crate::config::{GoogleOidcConfig, KeycloakOidcConfig};
+use crate::dashboard::session::build_cookie;
 use crate::error::ApiError;
 use crate::http::AppState;
 
@@ -179,20 +182,33 @@ fn provider_config<'a>(
 /// A pending authorization waiting for its callback. The keys we
 /// need to keep alive between /start and /callback: PKCE verifier
 /// (proves the same user agent initiated both calls), nonce (binds
-/// the ID token to this specific authorization), and the desktop
-/// redirect URL (so we know where to send the user once we've
-/// minted their JWT). `provider` tags the entry so `callback` knows
-/// which config + validation hooks to load.
+/// the ID token to this specific authorization), and the flow's
+/// completion strategy (desktop deep-link vs dashboard cookie).
+/// `provider` tags the entry so `callback` knows which config +
+/// validation hooks to load.
 struct PendingAuth {
     provider: Provider,
     pkce_verifier: PkceCodeVerifier,
     nonce: Nonce,
-    /// The custom-scheme URL we'll redirect the browser to with the
-    /// issued token appended. Currently always `<scheme>://auth`; the
-    /// `?redirect` query param on /start lets future support land
-    /// other client builds without code changes.
-    client_redirect: String,
+    flow: FlowOrigin,
     created_at: i64,
+}
+
+/// How the OIDC flow should land once we have a verified user. The
+/// IdP-side callback URL is the same for both - the divergence is
+/// after the local user_id is known. Desktop hands off via the
+/// deep-link landing page (with paste-token fallback); Dashboard
+/// sets the session cookie and bounces to a same-origin page.
+#[derive(Clone)]
+enum FlowOrigin {
+    /// Desktop client. `client_redirect` is the `<scheme>://auth`
+    /// URL the callback page will deep-link into.
+    Desktop { client_redirect: String },
+    /// Dashboard browser session. `redirect_to` is the same-origin
+    /// path to bounce the browser to once the cookie is set; the
+    /// caller already ran it through `safe_next` so it can't be an
+    /// off-host open-redirect.
+    Dashboard { redirect_to: String },
 }
 
 /// 10-minute TTL on pending auths. Long enough for a user to actually
@@ -347,10 +363,11 @@ fn generic_signin_failed() -> ApiError {
 // ---------------------------------------------------------------------
 
 pub async fn start(
-    state: State<AppState>,
-    q: Query<StartQuery>,
+    State(state): State<AppState>,
+    Query(q): Query<StartQuery>,
 ) -> Result<Response, ApiError> {
-    start_flow(state, q, Provider::Google).await
+    let flow = desktop_flow_from_query(&state, q.redirect.as_deref());
+    start_flow(state, Provider::Google, flow).await
 }
 
 pub async fn callback(
@@ -368,15 +385,16 @@ pub async fn callback(
 /// (the public `/api/auth/methods` endpoint is the canonical
 /// answer to that question; this URL is purposeful machine input).
 pub async fn start_provider(
-    state: State<AppState>,
+    State(state): State<AppState>,
     Path(provider): Path<String>,
-    q: Query<StartQuery>,
+    Query(q): Query<StartQuery>,
 ) -> Result<Response, ApiError> {
     let provider = Provider::from_id(&provider).ok_or_else(|| {
         tracing::warn!(provider = %provider, "oidc start with unknown provider id");
         generic_signin_failed()
     })?;
-    start_flow(state, q, provider).await
+    let flow = desktop_flow_from_query(&state, q.redirect.as_deref());
+    start_flow(state, provider, flow).await
 }
 
 /// Per-provider callback: `/api/auth/oidc/:provider/callback`. The
@@ -397,17 +415,57 @@ pub async fn callback_provider(
     complete_flow(state, q).await
 }
 
+/// Dashboard-side entry point. The dashboard module mounts this on
+/// `/dashboard/oidc/:provider/start?redirect_to=...`. The IdP's
+/// registered callback URL stays the same (`/api/auth/oidc/:provider/callback`);
+/// only the in-memory PendingAuth differs, carrying a
+/// `FlowOrigin::Dashboard` that the shared completion path uses
+/// to set the session cookie + bounce instead of rendering the
+/// desktop deep-link page. `provider` is opaque to callers - they
+/// resolve it via [`provider_from_id`] first.
+pub async fn dashboard_start(
+    state: AppState,
+    provider: ProviderHandle,
+    redirect_to: String,
+) -> Result<Response, ApiError> {
+    let flow = FlowOrigin::Dashboard { redirect_to };
+    start_flow(state, provider.0, flow).await
+}
+
+/// Opaque wrapper around the internal Provider enum. Lets the
+/// dashboard module hold a Provider value without the enum itself
+/// having to be public. The only way to build one is via
+/// [`provider_from_id`], which keeps validation in this module.
+pub struct ProviderHandle(Provider);
+
+/// Resolve a provider id (`"google"`, `"keycloak"`) to a handle the
+/// dashboard module can pass back into [`dashboard_start`]. Returns
+/// None for unknown ids; the caller bounces with a generic error.
+pub fn provider_from_id(s: &str) -> Option<ProviderHandle> {
+    Provider::from_id(s).map(ProviderHandle)
+}
+
+/// Build the desktop FlowOrigin from the optional ?redirect= query
+/// param. Pulled out so both the legacy unscoped start and the new
+/// per-provider start handler agree on the resolution rule.
+fn desktop_flow_from_query(state: &AppState, requested: Option<&str>) -> FlowOrigin {
+    FlowOrigin::Desktop {
+        client_redirect: resolve_client_redirect(requested, &state.oidc_allowed_schemes),
+    }
+}
+
 // ---------------------------------------------------------------------
 // Provider-agnostic core
 // ---------------------------------------------------------------------
 
 /// Kick off the OIDC dance for `provider`. Generates state + PKCE +
-/// nonce, stashes them keyed by state, returns a 302 to the
-/// provider's authorize endpoint.
+/// nonce, stashes them (along with the caller's chosen FlowOrigin)
+/// keyed by state, returns a 302 to the provider's authorize
+/// endpoint.
 async fn start_flow(
-    State(state_app): State<AppState>,
-    Query(q): Query<StartQuery>,
+    state_app: AppState,
     provider: Provider,
+    flow: FlowOrigin,
 ) -> Result<Response, ApiError> {
     let cfg = provider_config(&state_app, provider)?;
     let now = Utc::now().timestamp();
@@ -431,14 +489,6 @@ async fn start_flow(
         .add_scope(Scope::new("profile".to_string()))
         .set_pkce_challenge(pkce_challenge)
         .url();
-
-    // Allowlist the deep-link scheme against the configured list so
-    // a whitelabel client whose scheme isn't "snipdesk" gets a
-    // matching callback URL instead of being silently downgraded.
-    // Unknown / missing redirect falls back to the first configured
-    // scheme - the operator's primary brand, by convention.
-    let client_redirect =
-        resolve_client_redirect(q.redirect.as_deref(), &state_app.oidc_allowed_schemes);
 
     if let Ok(mut store) = pending_store().lock() {
         // Bound the store so an attacker hammering /api/auth/oidc/start
@@ -469,7 +519,7 @@ async fn start_flow(
                 provider,
                 pkce_verifier,
                 nonce,
-                client_redirect,
+                flow,
                 created_at: now,
             },
         );
@@ -645,11 +695,30 @@ async fn complete_flow(
         .execute(&state_app.pool)
         .await;
 
-    Ok(render_callback_success(
-        &pending.client_redirect,
-        &snipdesk_token,
-        &email,
-    ))
+    // Dispatch on the flow origin we stashed at /start time.
+    // Desktop: hand the token back via the deep-link HTML page so
+    // the Tauri client picks it up over its URL-scheme handler.
+    // Dashboard: set the same HttpOnly cookie the password login
+    // would, and 302 the browser to the dashboard the user was
+    // trying to reach.
+    match pending.flow {
+        FlowOrigin::Desktop { client_redirect } => Ok(render_callback_success(
+            &client_redirect,
+            &snipdesk_token,
+            &email,
+        )),
+        FlowOrigin::Dashboard { redirect_to } => {
+            // The cookie's Secure attribute follows the operator's
+            // config (mirrors the password-login path's behaviour).
+            // Non-admin members get bounced after the cookie sets;
+            // members_blocked page lives in dashboard/session and
+            // fires from the DashboardAdmin extractor on the next
+            // request, so we don't have to special-case it here.
+            let cookie = build_cookie(snipdesk_token, state_app.secure_cookies);
+            let jar = CookieJar::new().add(cookie);
+            Ok((jar, Redirect::to(&redirect_to)).into_response())
+        }
+    }
 }
 
 /// Per-provider claim validation that runs after the ID token is

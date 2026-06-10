@@ -213,26 +213,108 @@ pub async fn index(
         return Redirect::to("/dashboard/users").into_response();
     }
     let banner = if q.expired.is_some() {
-        "<div class=\"banner info\">Your session expired. Sign in again.</div>"
+        "<div class=\"banner info\">Your session expired. Sign in again.</div>".to_string()
     } else if q.error.as_deref() == Some("invalid") {
-        "<div class=\"banner error\">Invalid email or password.</div>"
+        "<div class=\"banner error\">Invalid email or password.</div>".to_string()
     } else if q.error.as_deref() == Some("disabled") {
         "<div class=\"banner error\">Your account is disabled. Contact your administrator.</div>"
+            .to_string()
+    } else if q.error.as_deref() == Some("signin") {
+        "<div class=\"banner error\">Sign-in failed. Try again or contact your administrator.</div>"
+            .to_string()
     } else {
-        ""
+        String::new()
     };
+    let redirect_to = safe_next(q.redirect_to.as_deref());
+    let sso_buttons = render_dashboard_sso_buttons(&state, &redirect_to);
     Html(render(
         LOGIN,
         &[
-            ("BANNER", banner),
+            ("BANNER", &banner),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
-            (
-                "REDIRECT_TO",
-                &escape_html(&safe_next(q.redirect_to.as_deref())),
-            ),
+            ("REDIRECT_TO", &escape_html(&redirect_to)),
+            ("SSO_BUTTONS", &sso_buttons),
         ],
     ))
     .into_response()
+}
+
+/// Render the SSO button stack that appears under the password
+/// form on the login page. Emits empty when no OIDC provider is
+/// configured so the password form looks unchanged on
+/// password-only deployments. The button targets the dashboard
+/// SSO start URL (`/dashboard/oidc/<id>/start`), which 302s to
+/// the IdP and rides the same callback as the desktop flow.
+fn render_dashboard_sso_buttons(state: &AppState, redirect_to: &str) -> String {
+    let providers = configured_dashboard_sso(state);
+    if providers.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "<div class=\"sso-section\">\
+           <div class=\"sso-divider\"><span>or</span></div>\
+           <div class=\"sso-buttons\">",
+    );
+    let rt = escape_html(redirect_to);
+    for (id, label) in providers {
+        out.push_str(&format!(
+            "<a class=\"sso-button\" href=\"/dashboard/oidc/{id}/start?redirect_to={rt}\">{label}</a>",
+            id = escape_html(&id),
+            rt = rt,
+            label = escape_html(&label),
+        ));
+    }
+    out.push_str("</div></div>");
+    out
+}
+
+/// Configured OIDC providers eligible for dashboard SSO, in the
+/// order they should appear under the password form. Mirrors what
+/// `/api/auth/methods` returns; the dashboard renders server-side
+/// so we don't go through the JSON endpoint.
+fn configured_dashboard_sso(state: &AppState) -> Vec<(String, String)> {
+    let mut providers = Vec::new();
+    if state.oidc_google.is_some() {
+        providers.push(("google".to_string(), "Sign in with Google".to_string()));
+    }
+    if let Some(kc) = state.oidc_keycloak.as_ref() {
+        let label = kc
+            .display_name
+            .clone()
+            .unwrap_or_else(|| "Sign in with SSO".to_string());
+        providers.push(("keycloak".to_string(), label));
+    }
+    providers
+}
+
+// ---- /dashboard/oidc/:provider/start (GET) ----
+
+#[derive(Debug, Deserialize)]
+pub struct DashboardOidcStartQuery {
+    #[serde(default)]
+    redirect_to: Option<String>,
+}
+
+/// Dashboard SSO entry. Resolves the provider segment and hands
+/// off to the OIDC core with a Dashboard flow origin; the IdP-side
+/// redirect URI stays the same as the desktop flow so operators
+/// only register one callback URL per provider. Any failure
+/// (unknown provider, IdP disabled in config, build_client error)
+/// surfaces as a 302 back to the login page with `?error=signin`
+/// so the user sees a clear retry path instead of a stack trace.
+pub async fn dashboard_oidc_start(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+    Query(q): Query<DashboardOidcStartQuery>,
+) -> Response {
+    let redirect_to = safe_next(q.redirect_to.as_deref());
+    let Some(provider) = crate::handlers::oidc::provider_from_id(&provider) else {
+        return Redirect::to("/?error=signin").into_response();
+    };
+    match crate::handlers::oidc::dashboard_start(state, provider, redirect_to).await {
+        Ok(resp) => resp,
+        Err(_) => Redirect::to("/?error=signin").into_response(),
+    }
 }
 
 // ---- /dashboard/login (POST) ----

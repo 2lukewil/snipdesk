@@ -201,6 +201,23 @@ textarea {
 .login-card .sub { color: var(--fg-dim); font-size: 13px; margin-bottom: 18px; }
 .login-card button { width: 100%; }
 
+.sso-section { margin-top: 18px; }
+.sso-divider { display: flex; align-items: center; gap: 10px; color: var(--fg-dim); font-size: 12px; margin: 10px 0; }
+.sso-divider::before, .sso-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.sso-buttons { display: flex; flex-direction: column; gap: 8px; }
+.sso-button {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  background: var(--bg);
+  font-size: 13px;
+}
+.sso-button:hover { border-color: var(--accent); color: var(--accent); }
+
 /* --- Errors / banners --- */
 
 .banner {

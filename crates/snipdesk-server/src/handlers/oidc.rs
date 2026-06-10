@@ -624,7 +624,7 @@ async fn complete_flow(
     // (wrong domain, missing role) so we surface a slightly more
     // informative message than the generic one - the operator
     // already saw the underlying claim mismatch in the log line.
-    if let Err(rendered) = run_provider_checks(&cfg, claims, &id_token.to_string()) {
+    if let Some(rendered) = run_provider_checks(&cfg, claims, &id_token.to_string()) {
         return Ok(rendered);
     }
 
@@ -723,13 +723,15 @@ async fn complete_flow(
 
 /// Per-provider claim validation that runs after the ID token is
 /// signature-verified but before we trust any of the claims. Returns
-/// `Err(Response)` carrying a user-facing HTML error page when the
-/// check fails (the operator-facing detail is logged inside).
+/// `Some(Response)` carrying a user-facing HTML error page when the
+/// check rejects the sign-in, `None` when everything passed. The
+/// operator-facing detail is logged inside; the caller short-circuits
+/// the rest of `complete_flow` when it sees `Some`.
 fn run_provider_checks(
     cfg: &ProviderConfig<'_>,
     claims: &CoreIdTokenClaims,
     id_token_jwt: &str,
-) -> Result<(), Response> {
+) -> Option<Response> {
     match cfg {
         ProviderConfig::Google(g) => {
             // Workspace lockdown: `hd` claim must equal required_hd
@@ -749,7 +751,7 @@ fn run_provider_checks(
                         actual_hd = %hd_claim,
                         "google sign-in rejected: hd claim mismatch"
                     );
-                    return Err(render_callback_error(&format!(
+                    return Some(render_callback_error(&format!(
                         "This server is locked to the {required} Workspace. \
                          Sign in with a {required} account."
                     )));
@@ -778,7 +780,7 @@ fn run_provider_checks(
                         required_role = %required,
                         "keycloak sign-in rejected: required realm role missing"
                     );
-                    return Err(render_callback_error(
+                    return Some(render_callback_error(
                         "Your account doesn't have access to this application. \
                          Contact your administrator if you think this is wrong.",
                     ));
@@ -787,7 +789,7 @@ fn run_provider_checks(
             let _ = claims;
         }
     }
-    Ok(())
+    None
 }
 
 /// Returns `Some(true)` when the provider's admin-role mapping is

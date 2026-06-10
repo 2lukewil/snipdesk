@@ -801,9 +801,7 @@ fn admin_role_present(cfg: &ProviderConfig<'_>, id_token_jwt: &str) -> Option<bo
         ProviderConfig::Google(_) => None,
         ProviderConfig::Keycloak(k) => {
             let role = k.admin_role.as_deref()?;
-            let present = realm_roles_from_jwt(id_token_jwt)
-                .iter()
-                .any(|r| r == role);
+            let present = realm_roles_from_jwt(id_token_jwt).iter().any(|r| r == role);
             Some(present)
         }
     }

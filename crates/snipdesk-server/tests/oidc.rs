@@ -195,7 +195,11 @@ async fn migration_0009_adds_oidc_provider_column() {
     .fetch_all(&pool)
     .await
     .expect("pragma");
-    assert_eq!(info.len(), 1, "oidc_provider column should exist after 0009");
+    assert_eq!(
+        info.len(),
+        1,
+        "oidc_provider column should exist after 0009"
+    );
     assert_eq!(info[0].1, "oidc_provider");
     assert_eq!(info[0].2.to_uppercase(), "TEXT");
 }

@@ -81,44 +81,54 @@ jobs:
       # launch. This step fails the build before any binaries get
       # signed, so the operator catches the mistake immediately
       # instead of on a customer machine.
-      - name: Verify tag matches workspace + tauri.conf.json versions
+      - name: Verify tag matches all three version files
         shell: pwsh
         run: |
           $tagVersion = "${{ steps.version.outputs.VERSION }}"
-          $cargoToml = Get-Content Cargo.toml -Raw
-          if ($cargoToml -match '(?ms)\[workspace\.package\][^\[]*?version\s*=\s*"([^"]+)"') {
+
+          # src-tauri/Cargo.toml is the canonical CARGO_PKG_VERSION source -
+          # this is what Tauri's bundler bakes into the running binary and
+          # what the updater plugin compares against the manifest. The
+          # root Cargo.toml has no [workspace.package] block (each crate
+          # owns its own version), so we read this file directly.
+          $cargoToml = Get-Content src-tauri/Cargo.toml -Raw
+          if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
             $cargoVersion = $matches[1]
           } else {
-            Write-Error "Couldn't find [workspace.package].version in Cargo.toml"
+            Write-Error "Couldn't find version in src-tauri/Cargo.toml"
             exit 1
           }
           if ($cargoVersion -ne $tagVersion) {
             Write-Error @"
-          Tag v$tagVersion does not match Cargo.toml [workspace.package].version = $cargoVersion.
+          Tag v$tagVersion does not match src-tauri/Cargo.toml version = $cargoVersion.
 
           The desktop binary will embed CARGO_PKG_VERSION = $cargoVersion, but the
-          updater manifest will claim version $tagVersion. Once the release is
-          published, every running client compares installed=$cargoVersion against
-          manifest=$tagVersion and prompts 'update available' on every launch -
-          installing the (still-$cargoVersion) binary in a loop.
+          updater manifest will claim version $tagVersion. Every running client
+          compares installed=$cargoVersion against manifest=$tagVersion, prompts
+          'update available' on every launch, installs a binary that still
+          reports $cargoVersion, and loops forever.
 
-          Fix: bump Cargo.toml, package.json, src-tauri/tauri.conf.json to $tagVersion,
-          commit, then re-tag at the bump commit and push the tag again.
-          Or use the snipdesk-release skill which does the bump + tag in one shot.
+          Fix: bump src-tauri/Cargo.toml, package.json, src-tauri/tauri.conf.json
+          to $tagVersion, commit, then re-tag at the bump commit and push the
+          tag again. The snipdesk-release skill does the whole bump-and-tag
+          sequence in one shot.
           "@
             exit 1
           }
+
           $tauriConf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           if ($tauriConf.version -ne $tagVersion) {
-            Write-Error "Tag v$tagVersion does not match src-tauri/tauri.conf.json version = $($tauriConf.version). Bump both files and re-tag."
+            Write-Error "Tag v$tagVersion does not match src-tauri/tauri.conf.json version = $($tauriConf.version). Bump all three files and re-tag."
             exit 1
           }
+
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           if ($pkg.version -ne $tagVersion) {
-            Write-Error "Tag v$tagVersion does not match package.json version = $($pkg.version). Bump both files and re-tag."
+            Write-Error "Tag v$tagVersion does not match package.json version = $($pkg.version). Bump all three files and re-tag."
             exit 1
           }
-          Write-Host "Tag v$tagVersion matches Cargo.toml + tauri.conf.json + package.json. Proceeding."
+
+          Write-Host "Tag v$tagVersion matches src-tauri/Cargo.toml + tauri.conf.json + package.json. Proceeding."
 
       - name: npm ci
         run: npm ci

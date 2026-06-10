@@ -183,6 +183,43 @@ fn handle_unit(res: Result<ureq::Response, ureq::Error>) -> ApiResult<()> {
 
 // ---- Endpoints ----
 
+/// What `GET /api/auth/methods` returns - enumerates the sign-in
+/// surfaces the server is configured for. Unauthenticated; the
+/// client hits this BEFORE the user has any credentials, so it
+/// knows which buttons/fields to render. Mirrors the server-side
+/// shape (handlers/auth.rs::AuthMethodsResponse).
+// Serialize on all three: the Tauri IPC layer needs to hand the
+// response back to the JS frontend, which uses serde_json over the
+// IPC boundary.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AuthMethodsResponse {
+    pub password: AuthMethodPassword,
+    pub providers: Vec<AuthMethodProvider>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AuthMethodPassword {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AuthMethodProvider {
+    /// Stable id used in URL paths and to look up Google-specific
+    /// styling on the client side. Currently always "google";
+    /// "keycloak" lands when the generic OIDC refactor ships.
+    pub id: String,
+    /// Button label as the server wants it shown.
+    pub display_name: String,
+    /// Server-relative path the client opens in the browser to
+    /// start the OIDC flow.
+    pub start_url: String,
+}
+
+pub fn auth_methods(server_url: &str) -> ApiResult<AuthMethodsResponse> {
+    let res = ureq::get(&url(server_url, "/api/auth/methods")).call();
+    handle_response(res)
+}
+
 #[derive(Debug, Serialize)]
 struct SignupBody<'a> {
     email: &'a str,

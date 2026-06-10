@@ -446,6 +446,8 @@ pub fn run() {
             commands::list_team_snippets,
             // Server-backed personal-snippet sync (phase 4+).
             #[cfg(feature = "teams")]
+            server_commands::server_auth_methods,
+            #[cfg(feature = "teams")]
             server_commands::server_signup,
             #[cfg(feature = "teams")]
             server_commands::server_login,

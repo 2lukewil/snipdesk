@@ -119,6 +119,20 @@ fn persist_server_url(app: &AppHandle, url: &str) -> Result<(), String> {
 
 // --- Commands ---
 
+/// Ask the server which sign-in surfaces it's configured for. The
+/// desktop renders password fields + provider buttons strictly off
+/// this response - no local guessing about which providers are
+/// reachable. Unauthenticated server-side, so the caller doesn't
+/// need credentials yet.
+#[tauri::command]
+pub fn server_auth_methods(server_url: String) -> CmdResult<api::AuthMethodsResponse> {
+    let trimmed = server_url.trim().trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        return Err("server URL is empty".to_string());
+    }
+    api::auth_methods(&trimmed).map_err(map_api_err)
+}
+
 #[tauri::command]
 pub fn server_signup(app: AppHandle, args: SignupArgs) -> CmdResult<UserDto> {
     let state = app.state::<AppState>();

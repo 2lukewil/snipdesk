@@ -232,6 +232,28 @@ async fn login_failure_modes_collapse_to_invalid_credentials() {
     assert_eq!(body1["message"], body2["message"]);
 }
 
+// /api/auth/methods is unauthenticated and reports the configured
+// sign-in surfaces. With no OIDC provider configured (test default)
+// the providers list is empty and password is enabled.
+#[tokio::test]
+async fn methods_reports_configured_sign_in_surfaces() {
+    let app = make_app().await;
+    let req = axum::http::Request::builder()
+        .method("GET")
+        .uri("/api/auth/methods")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp = tower::ServiceExt::oneshot(app.clone(), req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = http_body_util::BodyExt::collect(resp.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["password"]["enabled"], true);
+    assert_eq!(body["providers"].as_array().unwrap().len(), 0);
+}
+
 // /api/me with a valid token returns the authenticated user; without a
 // token returns 401 (the AuthUser extractor short-circuits).
 #[tokio::test]

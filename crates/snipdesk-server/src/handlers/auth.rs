@@ -31,6 +31,84 @@ use crate::http::AppState;
 /// 10 chars satisfies for an internal tool gating snippet text.
 const MIN_PASSWORD_LEN: usize = 10;
 
+/// What `/api/auth/methods` returns: which sign-in surfaces the
+/// running server is configured for. Unauthenticated by design so the
+/// client can fetch it before the user has any credentials. The
+/// desktop renders password fields + provider buttons strictly off
+/// this response, which lets a single client binary serve both
+/// password-only deployments and SSO-only ones without local config
+/// guesswork.
+#[derive(Debug, Serialize)]
+pub struct AuthMethodsResponse {
+    pub password: AuthMethodPassword,
+    pub providers: Vec<AuthMethodProvider>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthMethodPassword {
+    /// True when the password endpoints (signup/login) are usable.
+    /// Currently always true: the server has no config knob to
+    /// disable them entirely. Reserved as a field so a future
+    /// `[auth] password_enabled = false` can flip the client off
+    /// without a protocol change.
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuthMethodProvider {
+    /// Stable identifier used in the OIDC URL path. Currently
+    /// `"google"` is the only value; `"keycloak"` joins once the
+    /// generic OIDC refactor lands.
+    pub id: String,
+    /// Button label the client should render. Google's stays
+    /// "Sign in with Google" per Google branding guidelines; other
+    /// providers honour their config's `display_name` (or fall back
+    /// to "Sign in with SSO").
+    pub display_name: String,
+    /// Where the client opens to kick off the OIDC flow. Server is
+    /// the source of truth for the URL so a future per-provider
+    /// rewrite (e.g. `/api/auth/oidc/<id>/start`) doesn't need a
+    /// matching client change - the client just opens whatever the
+    /// server tells it to.
+    pub start_url: String,
+}
+
+/// GET /api/auth/methods - unauthenticated.
+///
+/// The client hits this when it needs to render its sign-in surface
+/// (Settings -> Team Library, the onboarding sign-in step). The
+/// response enumerates exactly which methods the server has
+/// configured; the client builds its UI from that, no local guessing.
+///
+/// Keeping this endpoint unauthenticated is deliberate: by definition
+/// the caller doesn't have credentials yet. The response leaks zero
+/// information of value to an attacker - they're learning which
+/// public OIDC providers a public server endpoint accepts, which is
+/// also visible to anyone who tries to call those endpoints directly.
+pub async fn methods(State(state): State<AppState>) -> Json<AuthMethodsResponse> {
+    let mut providers = Vec::new();
+
+    if state.oidc_google.is_some() {
+        providers.push(AuthMethodProvider {
+            id: "google".to_string(),
+            // Hardcoded per Google identity branding guidelines: this
+            // string and the Google logo are reserved phrasings.
+            display_name: "Sign in with Google".to_string(),
+            start_url: "/api/auth/oidc/start".to_string(),
+        });
+    }
+
+    // Keycloak slot lights up once the generic OIDC refactor
+    // (Keycloak step 3+) wires its per-provider start route. The
+    // [oidc.keycloak] block already parses cleanly (step 2); the
+    // handler that consumes it is the next major commit.
+
+    Json(AuthMethodsResponse {
+        password: AuthMethodPassword { enabled: true },
+        providers,
+    })
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SignupBody {
     pub email: String,

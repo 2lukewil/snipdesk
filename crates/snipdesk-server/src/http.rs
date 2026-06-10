@@ -149,6 +149,7 @@ fn build_cors_layer(origins: &[String]) -> Option<CorsLayer> {
 fn build_inner_router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/auth/methods", get(handlers::auth::methods))
         .route("/api/auth/signup", post(handlers::auth::signup))
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/logout", post(handlers::auth::logout))

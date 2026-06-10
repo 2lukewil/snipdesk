@@ -58,18 +58,34 @@ data_dir = "/var/lib/snipdesk"
 '@ | Out-File -Encoding utf8 snipdesk-server.toml
 ```
 
+First generate a JWT secret (the server refuses to start without
+one - it's the signing key for session tokens):
+
+```powershell
+# PowerShell
+$jwt = docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret
+```
+
 ```bash
 # bash / zsh
-cat > snipdesk-server.toml <<'EOF'
+jwt=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret)
+```
+
+Then write the config (paste `$jwt` / `$jwt` into the value):
+
+```bash
+# bash / zsh
+cat > snipdesk-server.toml <<EOF
 bind_addr = "0.0.0.0:8080"
 data_dir = "/var/lib/snipdesk"
+jwt_secret = "$jwt"
 EOF
 ```
 
-That's enough to boot. JWT secret, OIDC, brand, retention tuning,
-CORS, etc. are all optional and have sensible defaults - see
-[deploy.md](deploy.md) and the
-[example.toml](../crates/snipdesk-server/snipdesk-server.example.toml)
+That's enough to boot in password-only mode. OIDC, brand,
+retention tuning, CORS, etc. are all optional and have sensible
+defaults - see [the production deploy guide](/deploy) and the
+[example.toml](https://github.com/2lukewil/snipdesk/blob/main/crates/snipdesk-server/snipdesk-server.example.toml)
 for the full schema when you're ready.
 
 ## 4. Run the container
@@ -250,12 +266,12 @@ Available subcommands:
 
 When you're ready to put this in front of real users:
 
-- **TLS + reverse proxy**: [deploy.md §7](deploy.md) (Caddy +
-  nginx walkthroughs)
-- **Google Workspace SSO**: [deploy.md §5](deploy.md)
-- **Backups + retention**: [deploy.md §9](deploy.md)
-- **Per-customer whitelabel images**: [brands/_template/README.md](../brands/_template/README.md)
-- **Production security checklist**: [deploy.md §10](deploy.md)
+- **TLS + reverse proxy**: [production deploy guide](/deploy#7-reverse-proxy-tls) (Caddy + nginx walkthroughs)
+- **Google Workspace SSO**: [production deploy guide](/deploy#5-set-up-google-oidc-optional-recommended)
+- **Keycloak / generic OIDC SSO**: [production deploy guide](/deploy#5a-set-up-keycloak-sso-optional)
+- **Backups + retention**: [production deploy guide](/deploy#9-operations)
+- **Per-customer whitelabel images**: [whitelabel brand bundles](/whitelabel)
+- **Production security checklist**: [production deploy guide](/deploy#10-security-posture)
 
 ## Troubleshooting
 

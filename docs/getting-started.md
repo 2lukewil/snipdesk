@@ -184,10 +184,13 @@ entirely - the free edition is full-featured offline.
    `https://snippets.yourcompany.com`).
 2. Open Settings -> Team Library.
 3. Enter the server URL.
-4. Pick one:
-   - **Sign in with Google** (if your server has SSO configured) -
-     opens your browser, you sign in with your Workspace account,
-     return to SnipDesk.
+4. Pick one (the sign-in options the server shows match what your
+   admin has configured):
+   - **Sign in with Google** or **Sign in with <your org's SSO>** -
+     opens your browser, you sign in with your work account, return
+     to SnipDesk. The button label reflects whichever identity
+     provider your admin set up (Google Workspace, Keycloak, Okta,
+     etc.).
    - **Email + password** - fill in the boxes, click **Sign in** or
      **Create account**. (Whoever signs up first becomes the org's
      admin; usually that's not you.)
@@ -197,8 +200,9 @@ entirely - the free edition is full-featured offline.
 
 Once signed in:
 
-- Your snippets sync automatically every 5 minutes (or click **Sync
-  now** in Settings to trigger immediately).
+- Your snippets sync automatically every 60 minutes (or click **Sync
+  now** in Settings to trigger immediately). The interval is
+  configurable per device in Settings.
 - Shared library snippets from your team appear in the launcher
   with a small cloud glyph. They're mixed into the main view by
   default; toggle them off in Settings -> Team Library if you

@@ -28,8 +28,9 @@ features:
   - title: Teams (server-backed)
     details: >-
       Sync personal snippets across devices, share a team library,
-      sign in with Google Workspace, manage users from a browser
-      dashboard. Personal snippets are encrypted on the server.
+      sign in with passwords or SSO (Google Workspace, Keycloak),
+      manage users from a browser dashboard. Personal snippets are
+      encrypted on the server.
     link: /docker-quickstart
     linkText: Spin up a server
   - title: Self-hosted and whitelabel
@@ -45,7 +46,7 @@ features:
 
 - **[Getting started](/getting-started)** - install the desktop client, learn the hotkey, add your first snippet, sign in to Teams if your org runs a server.
 - **[Docker quickstart](/docker-quickstart)** - fresh-machine-to-working-dashboard in about five minutes for the self-hosted server.
-- **[Production deploy](/deploy)** - TLS, reverse proxy, OIDC (Google Workspace), backups, retention, security checklist.
+- **[Production deploy](/deploy)** - TLS, reverse proxy, OIDC (Google Workspace + Keycloak / any compliant IdP), backups, retention, security checklist.
 - **[Server architecture](/server-design)** - schema, sync algorithm, encryption posture, JWT + refresh-token rotation.
 - **[Build from source](/build)** - prerequisites, dev loops for both editions, local server, edition flags, the docs site itself.
 - **[Auto-update & releases](/auto-update)** - how tagged pushes build, sign, and publish installers; one-time signing-key setup.

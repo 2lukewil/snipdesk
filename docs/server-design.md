@@ -224,7 +224,7 @@ server.
   explicitly shared content (canned replies every signed-in member
   needs to read); encrypting them buys nothing operationally.
 
-### Future: end-to-end encryption
+### Potential upgrade path: end-to-end encryption
 
 The v1 schema is forward-compatible with an end-to-end variant.
 The upgrade path:
@@ -243,33 +243,52 @@ This is a v2 commitment, not a v1.0 feature.
 
 ## Authentication
 
-### OIDC (Google Workspace primary)
+### OIDC (multi-provider: Google Workspace and Keycloak)
 
-Standard OAuth 2.0 authorisation code flow with PKCE:
+Standard OAuth 2.0 authorisation code flow with PKCE. Two
+providers are wired up out of the box; either, both, or neither
+can be configured per server:
 
-1. The client opens `/api/auth/oidc/start` in the system browser
-   (via Tauri's `shell::open`).
+- **Google Workspace** via `[oidc.google]`. The button label is
+  hardcoded "Sign in with Google" per Google identity branding
+  guidelines.
+- **Keycloak** (or any compliant OIDC IdP whose discovery document
+  is at `<issuer_url>/.well-known/openid-configuration`) via
+  `[oidc.keycloak]`. Operator-controlled button label via
+  `display_name` (fallback "Sign in with SSO").
+
+Per-provider routes are the canonical URL surface:
+
+1. The client opens `/api/auth/oidc/<provider>/start` in the
+   system browser (via Tauri's `shell::open`).
 2. The server redirects to the IdP with scope `openid email profile`.
 3. The user authenticates with the IdP.
-4. The IdP redirects back to `/api/auth/oidc/callback`.
-5. The server validates the ID token, matches `oidc_subject` to an
-   existing user (or creates a new one if org policy allows), and
-   issues a JWT.
+4. The IdP redirects back to `/api/auth/oidc/<provider>/callback`.
+5. The server validates the ID token (signature against the IdP's
+   JWKS, audience, issuer, nonce), runs provider-specific claim
+   checks (`hd` for Google, realm-role for Keycloak), matches
+   `(oidc_provider, oidc_subject)` to an existing user (or creates
+   a new one if org policy allows), and issues a JWT.
 6. The server hands the JWT back to the desktop client via a custom
    URL scheme (`snipdesk://auth?token=...`) registered by Tauri.
+
+The unscoped routes `/api/auth/oidc/start` and `/api/auth/oidc/callback`
+stay mounted as Google shims so existing installed clients keep
+working without a forced upgrade; new deployments should register
+the per-provider URLs with their IdP.
 
 If the OS doesn't claim the custom scheme (corporate-locked Windows,
 antivirus interference), the browser landing page also displays the
 token in a paste-able form. The desktop client has a fallback field
 under Settings -> Team Library to accept it.
 
-### Workspace lockdown
+### Per-provider gating
 
-The OIDC handler accepts two server-side knobs that gate sign-in
-to a specific Google Workspace. Configuration details for both live
-in [Deploying snipdesk-server](/deploy#5-set-up-google-oidc-optional-recommended).
+The OIDC handler accepts provider-specific knobs that gate sign-in.
+Configuration details for both providers live in
+[Deploying snipdesk-server](/deploy#5-set-up-google-oidc-optional-recommended).
 
-The mechanism:
+**Google `[oidc.google]`:**
 
 - **`required_hd`** is the rigorous check. Google sets an `hd`
   (hosted domain) claim on tokens issued to Workspace members.
@@ -283,6 +302,16 @@ The mechanism:
 
 Either or both can be set. Neither set means any Google account
 that passes the OAuth consent screen can sign up.
+
+**Keycloak `[oidc.keycloak]`:**
+
+- **`required_realm_role`** restricts sign-in to users who hold the
+  named realm role. The server reads `realm_access.roles` off the
+  verified ID token; absence of the role rejects the sign-in.
+- **`admin_role`** maps a realm role to SnipDesk's `role = admin`.
+  Re-checked on every sign-in, so removing the role in Keycloak
+  demotes the user the next time they sign in.
+- **`allowed_email_domains`** same shape as Google's.
 
 ### Username/password fallback
 
@@ -304,10 +333,12 @@ All endpoints under `/api`. JSON request/response. JWT in the
 `Authorization: Bearer ...` header.
 
 ### Auth
+- `GET  /api/auth/methods` (unauthenticated) -> `{ password: { enabled }, providers: [...] }`. The client reads this before rendering its sign-in surface; the dashboard server-side renders the same provider list onto its login page.
 - `POST /api/auth/signup` (password) - `{ email, password, display_name }` -> `{ token, user }`
 - `POST /api/auth/login` (password) - `{ email, password }` -> `{ token, user }`
-- `GET  /api/auth/oidc/start` -> 302 to IdP
-- `GET  /api/auth/oidc/callback` -> 302 back to client via custom URL scheme
+- `GET  /api/auth/oidc/:provider/start` -> 302 to IdP. `:provider` is `google` or `keycloak`.
+- `GET  /api/auth/oidc/:provider/callback` -> 302 back to client via custom URL scheme (desktop) or `Set-Cookie` + 302 to `/dashboard/users` (dashboard flow).
+- `GET  /api/auth/oidc/start` and `/api/auth/oidc/callback` - legacy unscoped Google shims; still mounted for older client builds.
 - `POST /api/auth/logout` - clears server-side state (no-op for stateless JWTs in v1)
 - `GET  /api/me` -> `{ user }`
 - `PATCH /api/me` - update profile (WPM, hourly wage, currency for dashboard estimates)
@@ -471,6 +502,7 @@ What protects user data:
   boundary.
 
 For deployments where the trust model needs to be tighter (external
-SaaS, regulated customer environments), the *Future: end-to-end
-encryption* path under the Encryption section above describes the
-upgrade.
+SaaS, regulated customer environments), the *Potential upgrade path:
+end-to-end encryption* sketch under the Encryption section above
+describes a forward-compatible schema design. That upgrade is not
+shipped in v1.0; the v1 schema just doesn't preclude it.

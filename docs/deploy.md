@@ -159,7 +159,7 @@ display_name = "Sign in with Acme SSO"
 ```
 
 Keep this file out of source control. The full reference config
-([`snipdesk-server.example.toml`](../crates/snipdesk-server/snipdesk-server.example.toml))
+([`snipdesk-server.example.toml`](https://github.com/2lukewil/snipdesk/blob/main/crates/snipdesk-server/snipdesk-server.example.toml))
 lives in the repo, and the image ships a copy at
 `/etc/snipdesk/config.toml.example`. To grab it from a running
 container:
@@ -673,9 +673,10 @@ What protects user data in v1.0:
 
 For an end-to-end model where operators are outside the trust
 boundary (SaaS deployments, regulated customer environments), see
-the *Future: end-to-end encryption* section of
-[Server architecture](/server-design#future-end-to-end-encryption).
-The v1 schema is forward-compatible with the upgrade.
+the *Potential upgrade path: end-to-end encryption* section of
+[Server architecture](/server-design#potential-upgrade-path-end-to-end-encryption).
+The v1 schema is forward-compatible with that upgrade, but the
+upgrade itself is not part of v1.0.
 
 ## 11. Troubleshooting
 

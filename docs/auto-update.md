@@ -124,13 +124,26 @@ gh release delete v0.0.0-test --cleanup-tag
 
 ## Per-release flow
 
-Three commands per release:
+Three commands per release. All three version files MUST match the
+tag exactly. The release workflow runs a CI guard step that fails
+the build with an actionable error if any one of them drifts, but
+catching it locally is faster than waiting for CI.
 
 ```powershell
 # 1. Bump the version in three places (in lockstep):
-#      Cargo.toml             -> [workspace.package].version
-#      package.json           -> version
+#      src-tauri/Cargo.toml      -> [package].version
+#      package.json              -> version
 #      src-tauri/tauri.conf.json -> version
+#
+# Then bump the Cargo lockfile so the version embedded in
+# src-tauri's lock entry matches:
+cargo update --workspace --offline
+
+# Confirm everything aligns before tagging. The grep below should
+# print exactly three lines, all showing the same version:
+grep '^version' src-tauri/Cargo.toml
+grep '"version"' package.json
+grep '"version"' src-tauri/tauri.conf.json
 
 # 2. Commit the bump and push:
 git add -A
@@ -142,9 +155,23 @@ git tag v1.0.1
 git push --tags
 ```
 
-Step 3 fires `.github/workflows/release.yml`. Three to five minutes
-later the release is live and clients start picking it up on their
-next launch.
+Step 3 fires `.github/workflows/release.yml`. The first step of
+that workflow re-checks the same alignment (tag vs. all three
+config files); a mismatch fails the build before any binary is
+signed. Three to five minutes later (when the versions line up)
+the release is live and clients start picking it up on their next
+launch.
+
+::: warning Why this matters
+The desktop updater compares `CARGO_PKG_VERSION` (baked into the
+binary at build time, sourced from `src-tauri/Cargo.toml`) against
+the version field in the manifest the workflow generates (sourced
+from the tag). If you tag `v1.0.1` without bumping the config
+files, the binary still reports `1.0.0`, the manifest says `1.0.1`,
+and every install loops: "1.0.1 available -> install -> binary
+still reports 1.0.0 -> 1.0.1 available -> ...". The CI guard
+catches this; don't bypass it.
+:::
 
 ## Manual fallback (CI down)
 
@@ -238,7 +265,7 @@ the manifest URL in `tauri.conf.json` matches the repo path.
 in Settings -> General. The updater's `check()` returns `null` when
 the manifest version equals or is older than the running binary's,
 so confirm the version was actually bumped in all three files
-(Cargo.toml, package.json, tauri.conf.json).
+(`src-tauri/Cargo.toml`, `package.json`, `src-tauri/tauri.conf.json`).
 
 ## Deferred
 

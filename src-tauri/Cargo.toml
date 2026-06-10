@@ -1,6 +1,6 @@
-[package]
+﻿[package]
 name = "snipdesk"
-version = "0.1.5"
+version = "0.1.6"
 description = "Fast snippet launcher for support agents"
 authors = ["2lukewil"]
 edition = "2021"
@@ -21,7 +21,7 @@ snipdesk-core = { path = "../crates/snipdesk-core" }
 snipdesk-teams = { path = "../crates/snipdesk-teams", optional = true }
 
 # `devtools` keeps the Chromium DevTools available in release builds so
-# users can self-diagnose. Right-click → Inspect, or F12.
+# users can self-diagnose. Right-click â†’ Inspect, or F12.
 tauri = { version = "2.1", features = ["tray-icon", "devtools"] }
 tauri-plugin-global-shortcut = "2.2"
 tauri-plugin-clipboard-manager = "2.2"

@@ -2826,6 +2826,16 @@ fn tree_node_size(node: &TreeNode) -> usize {
     node.items.len() + node.children.values().map(tree_node_size).sum::<usize>()
 }
 
+/// True when every entry under this folder (recursively) carries the
+/// duplicate badge - the folder row then gets its own badge so the
+/// admin can skip expanding it. Export trees never badge, so this
+/// stays false there.
+fn tree_node_all_badged(node: &TreeNode) -> bool {
+    tree_node_size(node) > 0
+        && node.items.iter().all(|i| i.badge)
+        && node.children.values().all(tree_node_all_badged)
+}
+
 fn render_tree_children(node: &TreeNode, out: &mut String) {
     for (name, child) in &node.children {
         out.push_str(&format!(
@@ -2833,11 +2843,16 @@ fn render_tree_children(node: &TreeNode, out: &mut String) {
                <div class=\"imp-folder-row\">\
                  <button type=\"button\" class=\"imp-toggle\" aria-label=\"expand\">&#9656;</button>\
                  <label><input type=\"checkbox\" class=\"imp-folder-cb\" /> \
-                   <strong>&#128193; {name}</strong> <span class=\"muted\">({count})</span></label>\
+                   <strong>&#128193; {name}</strong> <span class=\"muted\">({count})</span>{badge}</label>\
                </div>\
                <div class=\"imp-children\" hidden>",
             name = escape_html(name),
             count = tree_node_size(child),
+            badge = if tree_node_all_badged(child) {
+                " <span class=\"imp-badge\">all duplicates</span>"
+            } else {
+                ""
+            },
         ));
         render_tree_children(child, out);
         out.push_str("</div></div>");

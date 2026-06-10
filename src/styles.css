@@ -1719,6 +1719,12 @@ body.compact .search-bar {
 
 /* --- Selection tree modal (import preview / export picker) --- */
 
+/* The tree modal opens FROM the settings modal (its buttons live in
+   Settings -> Import/Export) and must stack above it. All .modal
+   sections share z-index 10 and paint in DOM order, which put this
+   one behind settings. */
+#import-preview { z-index: 20; }
+
 .imp-toolbar {
   display: flex;
   gap: 12px;

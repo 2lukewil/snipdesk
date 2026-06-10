@@ -4378,6 +4378,21 @@ function importNodeSize(node) {
   return n;
 }
 
+/// True when every entry under this folder (recursively) is a
+/// duplicate - the folder row then carries its own badge so the
+/// user can skip expanding it. Export entries have no duplicate
+/// flag, so export trees never badge.
+function importNodeAllDuplicate(node, entries) {
+  if (importNodeSize(node) === 0) return false;
+  for (const idx of node.items) {
+    if (!entries[idx]?.duplicate) return false;
+  }
+  for (const child of node.children.values()) {
+    if (!importNodeAllDuplicate(child, entries)) return false;
+  }
+  return true;
+}
+
 /// Render the tree model into #imp-tree. Folders collapsed, items
 /// checked unless flagged duplicate - per the shared preview spec.
 function renderImportTree(node, container, entries) {
@@ -4404,6 +4419,12 @@ function renderImportTree(node, container, entries) {
     count.className = "hint-inline";
     count.textContent = `(${importNodeSize(child)})`;
     label.append(cb, nameEl, count);
+    if (importNodeAllDuplicate(child, entries)) {
+      const badge = document.createElement("span");
+      badge.className = "imp-badge";
+      badge.textContent = "all duplicates";
+      label.append(badge);
+    }
     row.append(toggle, label);
     const childrenEl = document.createElement("div");
     childrenEl.className = "imp-children";

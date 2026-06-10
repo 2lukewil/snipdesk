@@ -20,9 +20,20 @@ serde_json = { workspace = true }
 ureq = { workspace = true }
 
 # JWT stored in the OS credential vault (Windows Credential Manager,
-# macOS Keychain, libsecret on Linux). Scoped per server URL so swapping
-# servers logs you out automatically.
-keyring = "3"
+# macOS Keychain, secret-service on Linux). Scoped per server URL so
+# swapping servers logs you out automatically.
+#
+# The platform features are REQUIRED: keyring 3.x ships every OS
+# keystore as an opt-in feature, and with none enabled it silently
+# compiles a mock in-memory store - set_password reports success but
+# persists nothing, so sign-ins survive the session and vanish on
+# every app restart. Each feature only activates on its matching
+# target, so listing all three keeps every desktop build covered.
+keyring = { version = "3", features = [
+    "windows-native",
+    "apple-native",
+    "sync-secret-service",
+] }
 
 # Lightweight error type for the sync layer.
 thiserror = { workspace = true }

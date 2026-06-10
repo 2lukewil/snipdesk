@@ -490,6 +490,16 @@ async function init() {
     }
   }
 
+  // Server status BEFORE the first paint: refresh() gates team-
+  // snippet inclusion on state.serverStatus.signed_in, so painting
+  // first meant a signed-in restart rendered the list WITHOUT team
+  // snippets and nothing re-rendered until a folder click or the
+  // next background sync tick (the pop-in bug). server_status is
+  // purely local (settings + keychain + db) - no network wait here.
+  if (TEAMS_BUILD) {
+    await loadServerStatus();
+  }
+
   await refresh();
   // Supplier reads state.folders live so new folders show up without a refresh hop.
   attachCombobox(els.editorFolderInput, () => state.folders.map((f) => f.path));
@@ -562,12 +572,10 @@ async function init() {
       setStatus(reason, "err");
     });
 
-    // Initial paint when settings opens; load once at boot too so the
-    // signed-in state is ready by the time Settings is opened.
-    await loadServerStatus();
-    // Heartbeat + focus-sync wiring runs once at startup. Both bail
-    // immediately when not signed in, so they're cheap when the user
-    // is offline / never set up sync.
+    // Server status was already loaded before the first paint (see
+    // the top of init). Heartbeat + focus-sync wiring runs once at
+    // startup; both bail immediately when not signed in, so they're
+    // cheap when the user is offline / never set up sync.
     startServerHeartbeat();
     attachFocusSync();
   }

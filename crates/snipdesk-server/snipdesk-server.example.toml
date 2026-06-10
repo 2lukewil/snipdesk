@@ -86,6 +86,37 @@ master_key = ""
 # # Softer fallback: allow any email whose domain matches one of these.
 # allowed_email_domains = ["yourcompany.com"]
 
+# Optional: SSO via Keycloak (or any standards-compliant OIDC provider
+# whose discovery document lives at issuer_url/.well-known/openid-
+# configuration). Independent of [oidc.google] - configure either,
+# both, or neither. When set the desktop client + dashboard render a
+# sign-in button driven by `display_name` (or "Sign in with SSO" if
+# unset).
+#
+# [oidc.keycloak]
+# client_id = "snipdesk"
+# client_secret = "replace-me"
+# # The realm URL, without the .well-known suffix.
+# issuer_url = "https://kc.yourcompany.com/realms/main"
+# # Must EXACTLY match a Valid Redirect URI on the realm client. The
+# # API and dashboard each have their own callback path - register
+# # both:
+# #   https://snipdesk.yourcompany.com/api/auth/oidc/keycloak/callback
+# #   https://snipdesk.yourcompany.com/dashboard/oidc/keycloak/callback
+# redirect_uri = "https://snipdesk.yourcompany.com/api/auth/oidc/keycloak/callback"
+# # Restrict sign-in to users who hold this realm role. Unset = anyone
+# # in the realm can sign in. Useful when the realm hosts other apps.
+# required_realm_role = "snipdesk-user"
+# # When set, a user holding this realm role is promoted to admin in
+# # the users table on each sign-in. Losing the role in Keycloak
+# # demotes them back to member on the next sign-in.
+# admin_role = "snipdesk-admin"
+# # Same email-domain filter as Google. Applied after the realm-role
+# # check.
+# allowed_email_domains = ["yourcompany.com"]
+# # Label shown on the sign-in button. Falls back to "Sign in with SSO".
+# display_name = "Sign in with Company SSO"
+
 # Deep-link URL schemes the OIDC start endpoint will trust in its
 # ?redirect=<scheme>://auth parameter. Lives on the [oidc] table
 # (NOT under [oidc.google]). Defaults to ["snipdesk"]; add every

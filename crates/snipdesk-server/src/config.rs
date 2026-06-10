@@ -327,14 +327,18 @@ pub struct CryptoConfig {
     pub master_key_file: Option<PathBuf>,
 }
 
-/// Optional OIDC providers. Currently only Google is wired up;
-/// extending to other providers (Microsoft, Okta) is "add another
-/// field + another handler module". For Workspace-only sign-in, set
-/// `required_hd` to the Workspace primary domain.
+/// Optional OIDC providers. Each provider block is independent and
+/// optional; configure one, both, or neither. Google was the first
+/// wired up; Keycloak was added so internal deployments running
+/// their own IdP can use it without rebuilding the server. The
+/// desktop client renders a sign-in button per configured provider
+/// and `GET /api/auth/providers` reports the live list.
 #[derive(Debug, Deserialize)]
 pub struct OidcConfig {
     #[serde(default)]
     pub google: Option<GoogleOidcConfig>,
+    #[serde(default)]
+    pub keycloak: Option<KeycloakOidcConfig>,
     /// Deep-link URL schemes the OIDC start endpoint will accept in
     /// its `?redirect=<scheme>://auth` parameter. The server uses
     /// the matched scheme to build the post-callback deep link the
@@ -351,6 +355,7 @@ impl Default for OidcConfig {
     fn default() -> Self {
         Self {
             google: None,
+            keycloak: None,
             allowed_deep_link_schemes: default_oidc_deep_link_schemes(),
         }
     }
@@ -360,7 +365,7 @@ fn default_oidc_deep_link_schemes() -> Vec<String> {
     vec!["snipdesk".to_string()]
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct GoogleOidcConfig {
     /// The OAuth 2.0 client_id from Google Cloud Console. Looks like
     /// `123456789-abcdef.apps.googleusercontent.com`.
@@ -386,6 +391,91 @@ pub struct GoogleOidcConfig {
     /// domain filter beyond required_hd.
     #[serde(default)]
     pub allowed_email_domains: Vec<String>,
+}
+
+// Custom Debug that redacts client_secret. Auto-derived Debug would
+// dump the secret verbatim if the struct (or AppState) is ever
+// logged via {:?}, which is an audit-flagged accidental-leak path
+// (CWE-532). Same pattern MasterKey uses.
+impl std::fmt::Debug for GoogleOidcConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GoogleOidcConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[redacted]")
+            .field("redirect_uri", &self.redirect_uri)
+            .field("required_hd", &self.required_hd)
+            .field("allowed_email_domains", &self.allowed_email_domains)
+            .finish()
+    }
+}
+
+/// Keycloak (or any compliant OIDC provider) sign-in. Off by
+/// default; populate this block to enable the dashboard + desktop
+/// sign-in button for it. The provider doesn't have to be Keycloak
+/// strictly; any standards-compliant OIDC IdP whose discovery
+/// document lives at `<issuer_url>/.well-known/openid-configuration`
+/// works. The field name is "keycloak" because that's the practical
+/// target and the role-mapping fields below are written against
+/// Keycloak's realm-role claim shape.
+#[derive(Deserialize, Clone)]
+pub struct KeycloakOidcConfig {
+    /// OAuth 2.0 client_id from the Keycloak realm client. Public.
+    pub client_id: String,
+    /// OAuth 2.0 client secret. Secret. Stored only in this config
+    /// file (or a sibling secret-store the operator manages).
+    pub client_secret: String,
+    /// The Keycloak realm's issuer URL, without the
+    /// `.well-known/openid-configuration` suffix. Example:
+    /// `https://kc.example.com/realms/main`. The `openidconnect`
+    /// crate appends the discovery suffix itself.
+    pub issuer_url: String,
+    /// Where Keycloak sends the user after sign-in. Must EXACTLY
+    /// match a Valid Redirect URI registered on the realm client.
+    /// Typically `https://thoth.example.com/api/auth/oidc/keycloak/callback`
+    /// for the desktop client flow; the dashboard flow uses
+    /// `/dashboard/oidc/keycloak/callback`.
+    pub redirect_uri: String,
+    /// Optional: restrict sign-in to users who hold this realm
+    /// role. Empty / unset = anyone in the realm can sign in.
+    /// Matched against the `realm_access.roles` array in the ID
+    /// token. Useful when the realm hosts other apps and not every
+    /// realm member should reach Thoth.
+    #[serde(default)]
+    pub required_realm_role: Option<String>,
+    /// Optional: a realm role that, when present on a user's token,
+    /// promotes them to `role = admin` in the users table. Unset =
+    /// admin status is managed exclusively via the dashboard / CLI
+    /// (same as the Google flow). When set, every sign-in re-checks
+    /// the role: losing it in Keycloak demotes the user back to
+    /// `member` on their next sign-in.
+    #[serde(default)]
+    pub admin_role: Option<String>,
+    /// Softer email-domain filter, same shape as Google's. Applied
+    /// AFTER the realm-role check.
+    #[serde(default)]
+    pub allowed_email_domains: Vec<String>,
+    /// Human label shown on the sign-in button. Falls back to "Sign
+    /// in with SSO" when unset. Google's button is unaffected by
+    /// this field (Google branding guidelines require the official
+    /// "Sign in with Google" label).
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+// Custom Debug, same reasoning as GoogleOidcConfig above.
+impl std::fmt::Debug for KeycloakOidcConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeycloakOidcConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[redacted]")
+            .field("issuer_url", &self.issuer_url)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("required_realm_role", &self.required_realm_role)
+            .field("admin_role", &self.admin_role)
+            .field("allowed_email_domains", &self.allowed_email_domains)
+            .field("display_name", &self.display_name)
+            .finish()
+    }
 }
 
 impl Config {

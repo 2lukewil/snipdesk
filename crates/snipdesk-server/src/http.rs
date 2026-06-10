@@ -16,7 +16,7 @@ use sqlx::SqlitePool;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::{GoogleOidcConfig, MasterKey, StatsConfig};
+use crate::config::{GoogleOidcConfig, KeycloakOidcConfig, MasterKey, StatsConfig};
 use crate::fx::FxCache;
 use crate::handlers;
 
@@ -33,9 +33,13 @@ pub struct AppState {
     /// then, but having the field always present keeps state lean).
     pub jwt_secret: String,
     /// Google OIDC config when set in `[oidc.google]`. None when this
-    /// server is in password-only mode; the OIDC endpoints return a
-    /// "not configured" error instead of 500ing.
+    /// provider isn't configured; per-provider OIDC endpoints check
+    /// the matching field and return a clean "not configured" error
+    /// when their slot is None.
     pub oidc_google: Option<GoogleOidcConfig>,
+    /// Keycloak OIDC config when set in `[oidc.keycloak]`. Independent
+    /// of Google; both, either, or neither can be configured.
+    pub oidc_keycloak: Option<KeycloakOidcConfig>,
     /// Deep-link URL schemes the OIDC start endpoint will trust in
     /// the `?redirect=<scheme>://auth` parameter. Mirrors
     /// `[oidc].allowed_deep_link_schemes` from the TOML; a

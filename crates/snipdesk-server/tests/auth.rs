@@ -32,6 +32,7 @@ async fn make_app() -> axum::Router {
         master_key: Arc::new(MasterKey::generate()),
         jwt_secret: "test-jwt-secret-not-for-production".into(),
         oidc_google: None,
+        oidc_keycloak: None,
         oidc_allowed_schemes: vec!["snipdesk".to_string()],
         secure_cookies: false,
         stats: snipdesk_server::config::StatsConfig::default(),

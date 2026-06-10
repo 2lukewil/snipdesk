@@ -33,6 +33,7 @@ async fn make_state() -> (axum::Router, sqlx::SqlitePool) {
         master_key: Arc::new(MasterKey::generate()),
         jwt_secret: "test-jwt-secret".into(),
         oidc_google: None,
+        oidc_keycloak: None,
         oidc_allowed_schemes: vec!["snipdesk".to_string()],
         secure_cookies: false,
         stats: snipdesk_server::config::StatsConfig::default(),

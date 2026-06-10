@@ -147,6 +147,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         master_key: Arc::new(master_key),
         jwt_secret: cfg.jwt_secret.clone().unwrap_or_default(),
         oidc_google: cfg.oidc.google.clone(),
+        oidc_keycloak: cfg.oidc.keycloak.clone(),
         oidc_allowed_schemes: cfg.oidc.allowed_deep_link_schemes.clone(),
         secure_cookies: cfg.secure_cookies,
         stats: cfg.stats.clone(),

@@ -108,6 +108,50 @@ cargo run -p snipdesk-server -- --config snipdesk-server.toml
 Visit `http://127.0.0.1:8080/` in a browser for the admin dashboard,
 or point a Teams desktop client at `http://127.0.0.1:8080` to sync.
 
+## Cross-compile Windows installers from Linux (experimental)
+
+Linux-only CI runners can produce the Windows NSIS installer via
+`cargo-xwin` (LLVM cross-compilation against the Microsoft SDK
+headers - no Wine, no Windows VM). Verified end to end in a
+`rust:1.88-bookworm` container; the recipe:
+
+```bash
+# System deps: NSIS runs natively on Linux; clang/lld do the MSVC-
+# flavoured compile; the appindicator lib satisfies a tauri-cli
+# host probe that runs even on Windows-target builds.
+apt-get install -y nsis lld llvm clang libayatana-appindicator3-dev
+
+# Node 20+ for the frontend build, then:
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin --version 0.19.2 --locked
+# (cargo-xwin 0.22+ needs rustc 1.89; 0.19.2 matches this repo's
+#  1.88 pin. Bump together with rust-toolchain.toml.)
+
+npm install
+XWIN_ACCEPT_LICENSE=1 npx tauri build \
+  --runner cargo-xwin --target x86_64-pc-windows-msvc
+```
+
+The installer lands at
+`target/x86_64-pc-windows-msvc/release/bundle/nsis/`. First run
+downloads the MS SDK headers (cached afterwards).
+
+Caveats, in decreasing severity:
+
+- **The bundle-type patch fails on Linux hosts** ("Failed to add
+  bundler type to the binary ... Updater plugin may not be able to
+  update this package"). The installer installs and runs fine, but
+  in-app auto-update from a Linux-built binary is unverified -
+  test an update cycle before shipping Linux-built installers to a
+  fleet that relies on auto-update, or keep release builds on a
+  Windows host and use Linux builds for CI validation.
+- **Signing is skipped** on non-Windows hosts unless you configure
+  `bundle > windows > signCommand`. Updater-manifest signing
+  (`createUpdaterArtifacts`) is minisign-based and host-agnostic,
+  but was not exercised in the verification run.
+- Tauri labels the whole path experimental; treat a Tauri upgrade
+  as a reason to re-verify.
+
 ## Bake a default server URL
 
 Deployment builds can carry the organisation's server URL inside

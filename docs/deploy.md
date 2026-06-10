@@ -134,12 +134,28 @@ master_key = "<base64 from gen-key>"
 [oidc.google]
 client_id = "<from Google Cloud Console>"
 client_secret = "<from Google Cloud Console>"
-redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/callback"
+redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/google/callback"
 # Workspace lock: reject any token whose hd claim doesn't match.
 # Comment out for "any Google account allowed" mode.
 required_hd = "yourcompany.com"
 # Softer fallback: allow emails whose domain matches one of these.
 allowed_email_domains = ["yourcompany.com"]
+
+# Optional: "Sign in with SSO" against a self-hosted Keycloak (or
+# any compliant OIDC IdP). Independent of [oidc.google] - configure
+# one, both, or neither.
+[oidc.keycloak]
+client_id = "<from your Keycloak realm client>"
+client_secret = "<from your Keycloak realm client>"
+issuer_url = "https://kc.yourcompany.com/realms/main"
+redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/keycloak/callback"
+# Optional: restrict sign-in to users who hold this realm role.
+# required_realm_role = "snipdesk-user"
+# Optional: realm role that promotes the user to admin in SnipDesk.
+# Re-checked on every sign-in (losing the role demotes them).
+# admin_role = "snipdesk-admin"
+# Optional button label. Falls back to "Sign in with SSO".
+display_name = "Sign in with Acme SSO"
 ```
 
 Keep this file out of source control. The full reference config
@@ -168,8 +184,11 @@ Skip this section if you're running password-only.
    client ID.** Application type Web application. Add an
    **Authorized redirect URI** that matches `redirect_uri` in your
    config exactly - typically your production URL plus
-   `/api/auth/oidc/callback`. For local dev you can add
-   `http://127.0.0.1:8080/api/auth/oidc/callback` as a second URI.
+   `/api/auth/oidc/google/callback`. For local dev you can add
+   `http://127.0.0.1:8080/api/auth/oidc/google/callback` as a
+   second URI. (The legacy unscoped path `/api/auth/oidc/callback`
+   still works as a Google shim if you have it registered already;
+   the per-provider path is the new canonical surface.)
 4. Copy the `client_id` and `client_secret` into the config.
 5. **Decide on Workspace lockdown.** `required_hd` is the strict
    knob: Google sets the `hd` claim on tokens issued to Workspace
@@ -181,6 +200,72 @@ Skip this section if you're running password-only.
    email/password OR OIDC) is auto-promoted to admin. Sign in as
    yourself before sharing the URL with the team, so you control the
    admin role from the start.
+
+## 5a. Set up Keycloak SSO (optional)
+
+Skip this section unless you're running a self-hosted Keycloak
+(or any compliant OIDC IdP, e.g. Authentik, Authelia). Independent
+of Google: configure one, both, or neither.
+
+1. In the Keycloak admin console, pick the realm your users live
+   in (or create a fresh `snipdesk` realm).
+2. **Clients -> Create client.**
+   - Client type: **OpenID Connect**.
+   - Client ID: `snipdesk` (whatever you like; it goes into
+     `client_id` in the config).
+   - Client authentication: **On** (this server uses the
+     confidential-client flow with a `client_secret`).
+   - Authentication flow: leave **Standard flow** enabled;
+     untick Direct access grants and Implicit flow.
+3. **Settings on the new client:**
+   - Valid Redirect URIs: add your production URL plus
+     `/api/auth/oidc/keycloak/callback`. For local dev add
+     `http://127.0.0.1:8080/api/auth/oidc/keycloak/callback`
+     as a second entry.
+   - Web origins: copy the redirect URIs (or `+` to inherit).
+   - Leave the rest at defaults.
+4. **Credentials tab on the client:** copy the **Client secret**
+   into `client_secret` in your `[oidc.keycloak]` block. Treat it
+   like a password.
+5. **issuer_url:** the URL of your realm WITHOUT the
+   `.well-known/openid-configuration` suffix - the openidconnect
+   crate appends it. Example: `https://kc.yourcompany.com/realms/main`.
+6. **Optional: realm-role gating.** When `[oidc.keycloak]
+   required_realm_role` is set, only users who hold that realm
+   role can sign in. Create the role under Realm roles, assign it
+   to the groups / users who should have access.
+7. **Optional: admin role mapping.** `admin_role` is a realm role
+   that, when present on the user's ID token, sets `role = admin`
+   in the SnipDesk users table. The check runs on every sign-in -
+   removing the role in Keycloak demotes the user the next time
+   they sign in. Without this, SnipDesk admin status is managed
+   exclusively from the dashboard / CLI (same as the Google path).
+8. **Display name.** The desktop and dashboard buttons read
+   `display_name` from the config; fall back is "Sign in with SSO".
+   Use whatever your team recognises (e.g. "Sign in with Okta",
+   "Sign in with Acme SSO").
+
+After restart, the admin dashboard's login page shows a "Sign in
+with <display_name>" button under the password form, and the
+desktop client's Team Library tab renders the same button alongside
+the password form. Both flows share the IdP-side callback URL,
+so you only register one redirect URI per provider.
+
+### Dashboard SSO
+
+The admin dashboard accepts the same OIDC providers as the desktop
+client. The button stack appears on the login page (`/`) under the
+password form whenever any provider is configured. This closes the
+gap where an OIDC-only user (no password set on their account)
+would otherwise be unable to reach `/dashboard` at all.
+
+Non-admin members who try the dashboard SSO flow still get bounced
+to the "members can't access the dashboard" page - admin gating is
+unchanged. The IdP-side callback URL is the same as the desktop
+flow (`/api/auth/oidc/<provider>/callback`); the start endpoint
+(`/dashboard/oidc/<provider>/start`) is what tells the server to
+finish by setting the session cookie instead of firing the desktop
+deep link.
 
 ## 6. Container deployment (recommended)
 

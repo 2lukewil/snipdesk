@@ -76,8 +76,10 @@ master_key = ""
 # client_id = "123456789012-abcdef.apps.googleusercontent.com"
 # client_secret = "GOCSPX-replace-me"
 # # The full URL Google will redirect to. Must EXACTLY match an
-# # Authorized Redirect URI registered in the GCP console.
-# redirect_uri = "https://snipdesk.yourcompany.com/api/auth/oidc/callback"
+# # Authorized Redirect URI registered in the GCP console. The
+# # per-provider path is canonical; the legacy unscoped path
+# # (/api/auth/oidc/callback) still works as a Google shim.
+# redirect_uri = "https://snipdesk.yourcompany.com/api/auth/oidc/google/callback"
 # # Strict Workspace lock: only accept tokens whose hd claim matches.
 # # Comment out for "any Google account" mode (the consent screen still
 # # gates who reaches sign-in, depending on External vs Internal app
@@ -98,11 +100,11 @@ master_key = ""
 # client_secret = "replace-me"
 # # The realm URL, without the .well-known suffix.
 # issuer_url = "https://kc.yourcompany.com/realms/main"
-# # Must EXACTLY match a Valid Redirect URI on the realm client. The
-# # API and dashboard each have their own callback path - register
-# # both:
-# #   https://snipdesk.yourcompany.com/api/auth/oidc/keycloak/callback
-# #   https://snipdesk.yourcompany.com/dashboard/oidc/keycloak/callback
+# # Must EXACTLY match a Valid Redirect URI on the realm client.
+# # The desktop client and the admin dashboard share this single
+# # callback URL - the start endpoint they each open determines how
+# # the flow completes (desktop deep link vs cookie + dashboard
+# # redirect), so you only register one URI per provider.
 # redirect_uri = "https://snipdesk.yourcompany.com/api/auth/oidc/keycloak/callback"
 # # Restrict sign-in to users who hold this realm role. Unset = anyone
 # # in the realm can sign in. Useful when the realm hosts other apps.

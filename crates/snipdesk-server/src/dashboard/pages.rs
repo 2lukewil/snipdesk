@@ -38,6 +38,7 @@ use crate::http::AppState;
 
 const LAYOUT: &str = include_str!("templates/layout.html");
 const LOGIN: &str = include_str!("templates/login.html");
+const SETUP: &str = include_str!("templates/setup.html");
 
 // ---- Tiny templating helper ----
 
@@ -202,6 +203,14 @@ pub async fn index(
     Query(q): Query<IndexQuery>,
     jar: CookieJar,
 ) -> Response {
+    // First-run setup: a fresh database has no accounts and therefore
+    // nothing to log in AS. Render the create-first-admin form instead
+    // of a login form nobody can pass. The check is one COUNT on an
+    // indexed table; once a single user exists this branch never runs
+    // again.
+    if user_count(&state).await == Some(0) {
+        return render_setup_page(&state, q.error.as_deref()).into_response();
+    }
     // If the cookie is present and decodes to an admin claim, skip the
     // login form and send them in. (Members logged into the cookie get
     // bounced when they hit /dashboard/users.) We don't validate the
@@ -384,6 +393,146 @@ struct LoginRow {
 pub async fn logout(jar: CookieJar) -> Response {
     let jar = jar.add(clear_cookie());
     (jar, Redirect::to("/")).into_response()
+}
+
+// ---- First-run setup (/ when zero users, POST /dashboard/setup) ----
+
+/// Total accounts on the server. None on a DB error - callers treat
+/// that as "not first-run" so a transient failure can't surface the
+/// setup form on a populated server.
+async fn user_count(state: &AppState) -> Option<i64> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.pool)
+        .await
+        .ok()
+}
+
+/// Render the create-first-admin page. `error` comes back through the
+/// `?error=` query param after a rejected submit so the form can show
+/// what to fix.
+fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
+    let banner = match error {
+        Some("setup_email") => {
+            "<div class=\"banner error\">That doesn't look like an email address.</div>"
+        }
+        Some("setup_password") => {
+            "<div class=\"banner error\">Password must be at least 10 characters.</div>"
+        }
+        Some("setup_name") => "<div class=\"banner error\">Enter a display name.</div>",
+        Some("setup_failed") => {
+            "<div class=\"banner error\">Setup failed. Check the server logs and try again.</div>"
+        }
+        _ => "",
+    };
+    Html(render(
+        SETUP,
+        &[
+            ("BANNER", banner),
+            ("BRAND_NAME", &escape_html(&state.brand_name)),
+        ],
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetupForm {
+    pub display_name: String,
+    pub email: String,
+    pub password: String,
+}
+
+/// Create the first admin account from the setup form. Mirrors the
+/// JSON signup handler's validation; the INSERT is guarded by a
+/// zero-users predicate evaluated inside the statement itself, so two
+/// racing submits (or a submit racing a desktop-client signup) can't
+/// both land - SQLite runs the whole INSERT under one write lock and
+/// the loser's `rows_affected` comes back 0.
+pub async fn setup_submit(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(body): Form<SetupForm>,
+) -> Response {
+    let email = body.email.trim().to_lowercase();
+    let display_name = body.display_name.trim().to_string();
+    if !crate::handlers::auth::looks_like_email(&email) {
+        return Redirect::to("/?error=setup_email").into_response();
+    }
+    if body.password.len() < crate::handlers::auth::MIN_PASSWORD_LEN {
+        return Redirect::to("/?error=setup_password").into_response();
+    }
+    if display_name.is_empty() {
+        return Redirect::to("/?error=setup_name").into_response();
+    }
+
+    let password_hash = match hash_password(&body.password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("setup: hash_password failed: {e}");
+            return Redirect::to("/?error=setup_failed").into_response();
+        }
+    };
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().timestamp();
+
+    // INSERT-if-empty: the SELECT runs under the INSERT's own write
+    // lock, so this either creates the very first row (as admin) or
+    // does nothing because someone else got there first.
+    let result = sqlx::query(
+        "INSERT INTO users \
+           (id, email, display_name, role, is_disabled, created_at, last_seen_at, password_hash) \
+         SELECT ?, ?, ?, 'admin', 0, ?, ?, ? \
+         WHERE (SELECT COUNT(*) FROM users) = 0",
+    )
+    .bind(&id)
+    .bind(&email)
+    .bind(&display_name)
+    .bind(now)
+    .bind(now)
+    .bind(&password_hash)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => {
+            // Lost the race: an account now exists. Send them to the
+            // login form (the index handler will no longer show setup).
+            return Redirect::to("/").into_response();
+        }
+        Err(e) => {
+            tracing::error!("setup: insert failed: {e}");
+            return Redirect::to("/?error=setup_failed").into_response();
+        }
+    }
+
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: Some(&id),
+            actor_email: &email,
+            action: crate::audit::action::USER_CREATE,
+            target_kind: Some("user"),
+            target_id: Some(&id),
+            details: Some(serde_json::json!({
+                "via": "dashboard_setup",
+                "email": email,
+                "role": "admin",
+            })),
+        },
+    )
+    .await;
+    tracing::info!(user_id = %id, email = %email, "first admin created via dashboard setup");
+
+    // Sign them straight in: same cookie the login form would set.
+    let token = match issue_token(&id, "admin", &state.jwt_secret) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("setup: issue_token failed: {e}");
+            // The account exists; the login form works from here.
+            return Redirect::to("/").into_response();
+        }
+    };
+    let jar = jar.add(build_cookie(token, state.secure_cookies));
+    (jar, Redirect::to("/dashboard/users")).into_response()
 }
 
 // ---- /dashboard/users (GET) ----

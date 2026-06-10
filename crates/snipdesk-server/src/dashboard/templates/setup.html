@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>First-time setup - {{BRAND_NAME}}</title>
+  <link rel="stylesheet" href="/static/dashboard.css" />
+</head>
+<body>
+  <div class="login-card">
+    <h1>Welcome to {{BRAND_NAME}}</h1>
+    <p class="sub">No accounts exist yet. Create the first one now - it becomes the server's administrator. Everyone who signs up after this lands as a regular member.</p>
+    {{BANNER}}
+    <form method="post" action="/dashboard/setup" class="stack">
+      <label>Your name
+        <input type="text" name="display_name" autocomplete="name" required autofocus />
+      </label>
+      <label>Email
+        <input type="email" name="email" autocomplete="username" required />
+      </label>
+      <label>Password (10+ characters)
+        <input type="password" name="password" autocomplete="new-password" minlength="10" required />
+      </label>
+      <button type="submit" class="primary">Create admin account</button>
+    </form>
+  </div>
+</body>
+</html>

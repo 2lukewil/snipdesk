@@ -184,10 +184,15 @@ Verify from the host, then claim the admin account:
 1. `curl http://127.0.0.1:8080/api/health` returns
    `{"status":"ok", ...}`.
 2. Open `http://127.0.0.1:8080/` in a browser on the host (or
-   through an SSH tunnel): that's the dashboard login page.
-3. **Sign up immediately.** The first account created on a fresh
-   database is auto-promoted to admin. Do this before sharing the
-   URL so the admin role is yours.
+   through an SSH tunnel). While the database has zero accounts,
+   that page is a **first-time setup form**: name, email, password.
+   (When the server runs outside a container, it opens this page in
+   your default browser on first boot automatically; the URL is in
+   the boot log either way.)
+3. **Submit it now.** The account it creates is the server's
+   administrator, and you land signed in to the dashboard. Once any
+   account exists the form is gone for good and `/` is a normal
+   login page.
 
 The container binds only to `127.0.0.1`, so nothing is reachable
 from outside the host until the reverse proxy in step 6 is up.

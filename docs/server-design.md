@@ -321,11 +321,19 @@ the same endpoints.
 
 ### First admin
 
-On a fresh database, the first successful signup is automatically
-granted `role = 'admin'`. This avoids a chicken-and-egg config step.
-Operators who want a specific person to be the admin should sign
-themselves up before sharing the server URL with the rest of the
-team.
+On a fresh database, the dashboard's `/` renders a first-time setup
+form (name, email, password) instead of the login form; submitting
+it creates the administrator account and signs the operator
+straight in. The INSERT is guarded by a zero-users predicate
+evaluated inside the statement, so racing submissions can't both
+become admin. The server also nudges the operator there at boot: a
+log line carries the URL, and outside containers the default
+browser opens it.
+
+The same auto-promotion applies on every signup surface: whichever
+account lands first in an empty users table (setup form, desktop
+client signup, OIDC sign-in) gets `role = 'admin'`; all later
+accounts are members.
 
 ## API surface
 

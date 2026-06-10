@@ -192,6 +192,13 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         .with_context(|| format!("bind {}", cfg.bind_addr))?;
     tracing::info!("snipdesk-server listening on {}", cfg.bind_addr);
 
+    // First-run nudge: a fresh database has no accounts, so the
+    // dashboard renders a create-first-admin form. Point the operator
+    // at it - in the log always, and via their default browser when
+    // one plausibly exists (skipped inside containers, where there is
+    // no browser and the bind address isn't reachable as-is anyway).
+    first_run_nudge(&pool, &cfg.bind_addr).await;
+
     // Spawn the tombstone-purge sweep. Self-disabling when retention
     // is set to 0; otherwise hourly while the process lives.
     purge::spawn(pool.clone(), cfg.tombstone_retention_days);
@@ -227,6 +234,85 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         .await
         .context("axum serve")?;
     Ok(())
+}
+
+/// When the users table is empty, log the first-time-setup URL and
+/// try to open it in the operator's default browser. The browser
+/// attempt is best-effort: headless hosts and containers just get
+/// the log line, which is why the URL is always logged first.
+async fn first_run_nudge(pool: &sqlx::SqlitePool, bind_addr: &str) {
+    let count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(pool)
+        .await
+    {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+    if count > 0 {
+        return;
+    }
+
+    let url = setup_url(bind_addr);
+    tracing::info!(
+        "first-time setup: no accounts exist yet. Create the admin account at {url} \
+         (the first signup becomes the administrator)"
+    );
+
+    if running_in_container() {
+        return;
+    }
+    open_in_browser(&url);
+}
+
+/// Browser-reachable URL for the bind address. A wildcard bind
+/// (`0.0.0.0` / `[::]`) isn't a connectable host, so swap in
+/// loopback; a concrete bind host passes through unchanged.
+fn setup_url(bind_addr: &str) -> String {
+    let port = bind_addr.rsplit(':').next().unwrap_or("8080");
+    let host = bind_addr
+        .strip_suffix(&format!(":{port}"))
+        .unwrap_or(bind_addr);
+    let display_host = match host {
+        "0.0.0.0" | "[::]" | "::" | "" => "127.0.0.1",
+        other => other,
+    };
+    format!("http://{display_host}:{port}/")
+}
+
+/// Containers have no browser to open, and the marker files cost one
+/// stat each to check. Windows containers are rare enough for the
+/// snipdesk-server use case that the cfg fallthrough (always false)
+/// is fine.
+fn running_in_container() -> bool {
+    #[cfg(unix)]
+    {
+        std::path::Path::new("/.dockerenv").exists()
+            || std::path::Path::new("/run/.containerenv").exists()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// Fire-and-forget open of the OS default browser. Spawn errors are
+/// logged at debug and otherwise ignored - the log line above already
+/// carries the URL for manual use.
+fn open_in_browser(url: &str) {
+    use std::process::Command;
+    let result = if cfg!(target_os = "windows") {
+        // `start` is a cmd builtin; the empty string is the window
+        // title slot so the URL isn't mistaken for one.
+        Command::new("cmd").args(["/C", "start", "", url]).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(url).spawn()
+    } else {
+        Command::new("xdg-open").arg(url).spawn()
+    };
+    match result {
+        Ok(_) => tracing::info!("opened {url} in the default browser"),
+        Err(e) => tracing::debug!("couldn't open a browser ({e}); use the URL above"),
+    }
 }
 
 /// Logs to stdout, level filterable via RUST_LOG.

@@ -29,7 +29,7 @@ use crate::http::AppState;
 /// upward when you have an opinion. NIST's current guidance is "let
 /// users pick what they want as long as it's reasonably long," which
 /// 10 chars satisfies for an internal tool gating snippet text.
-const MIN_PASSWORD_LEN: usize = 10;
+pub(crate) const MIN_PASSWORD_LEN: usize = 10;
 
 /// What `/api/auth/methods` returns: which sign-in surfaces the
 /// running server is configured for. Unauthenticated by design so the
@@ -524,7 +524,7 @@ pub async fn update_me(
 /// regex. Reject only the obvious junk (no '@', no '.' after it, etc.).
 /// The OIDC path handles real-world validation; this is the password
 /// fallback's seatbelt.
-fn looks_like_email(s: &str) -> bool {
+pub(crate) fn looks_like_email(s: &str) -> bool {
     let Some(at) = s.find('@') else {
         return false;
     };

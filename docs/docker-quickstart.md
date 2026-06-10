@@ -121,41 +121,20 @@ the fix.
 
 ## 5. Create your first admin
 
-The server ships with no users; the first account that signs up
-through `POST /api/auth/signup` is auto-promoted to admin. Two
-ways to hit that endpoint:
+Open http://127.0.0.1:8080 in a browser. While the server has zero
+accounts, that page is a **first-time setup form**: enter your
+name, email, and a password (10+ characters), submit, and you land
+in the dashboard as the server's administrator. Once any account
+exists the form disappears permanently and `/` becomes a normal
+login page.
 
-**Easiest**: install a Teams desktop client (your own SnipDesk
-Teams build or a whitelabel one), point it at the server URL
-(Settings -> Team Library), and click **Create account**. The
-account you create there is the first admin.
+(When the server runs directly on your machine rather than in
+Docker, it opens this page in your default browser on first boot;
+in Docker you open it yourself - the boot log prints the URL.)
 
-**Via the CLI on your host**:
-
-```powershell
-# PowerShell
-$body = @{
-  email = "you@example.com"
-  password = "your-password-here"
-  display_name = "Your Name"
-} | ConvertTo-Json
-Invoke-RestMethod -Uri http://127.0.0.1:8080/api/auth/signup `
-                  -Method POST `
-                  -ContentType "application/json" `
-                  -Body $body
-```
-
-```bash
-# bash / zsh
-curl -X POST http://127.0.0.1:8080/api/auth/signup \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"your-password-here","display_name":"Your Name"}'
-```
-
-A successful response includes a session token; the first signup
-gets `role=admin` automatically because the table was empty.
-Subsequent signups land as `member` and need an existing admin to
-promote them.
+Everyone who signs up after this (desktop client **Create
+account**, or another admin adding them) lands as a regular
+`member`; promote from the dashboard's Users page or via the CLI.
 
 Confirm via the in-container CLI:
 
@@ -164,11 +143,10 @@ docker exec -it snipdesk-server snipdesk-server \
   --config /etc/snipdesk/config.toml users list
 ```
 
-## 6. Sign in
+## 6. Look around
 
-Open http://127.0.0.1:8080 in a browser. Log in with the email +
-password from step 5. You should land on the Users page; the nav
-also has Library, Stats, and Audit.
+You should be on the Users page; the nav also has Library, Stats,
+and Audit.
 
 The desktop client (any SnipDesk Teams build) can now point at
 this server: Settings → Team Library → Server URL =

@@ -215,11 +215,15 @@ async fn disable_then_enable_member() {
     assert_eq!(view["is_disabled"], false);
 }
 
-// GET / when not signed in serves the login form. This is enough to
-// catch routing regressions; the form HTML is hand-written and visual.
+// GET / when not signed in serves the login form - once at least one
+// account exists. (A zero-user database serves the first-run setup
+// form instead; that branch is covered in tests/dashboard_setup.rs.)
+// This is enough to catch routing regressions; the form HTML is
+// hand-written and visual.
 #[tokio::test]
 async fn dashboard_index_serves_login() {
     let app = make_app().await;
+    let _ = signup(&app, "admin@example.com").await;
     let resp = app
         .oneshot(
             Request::builder()

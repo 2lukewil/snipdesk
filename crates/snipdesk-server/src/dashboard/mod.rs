@@ -39,6 +39,10 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(pages::index))
         .route("/dashboard/login", post(pages::login_submit))
         .route("/dashboard/logout", post(pages::logout))
+        // First-run setup: only effective while the users table is
+        // empty (the INSERT no-ops otherwise), so leaving the route
+        // mounted permanently is harmless.
+        .route("/dashboard/setup", post(pages::setup_submit))
         // SSO entry for the dashboard. The IdP callback URL stays
         // on the API surface (/api/auth/oidc/:provider/callback) so
         // operators only register one redirect URI per provider;

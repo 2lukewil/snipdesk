@@ -182,7 +182,7 @@ entirely - the free edition is full-featured offline.
 
 1. Get the server URL from your admin (something like
    `https://snippets.yourcompany.com`).
-2. Open Settings -> Team Library.
+2. Open Settings -> Server.
 3. Enter the server URL.
 4. Pick one (the sign-in options the server shows match what your
    admin has configured):
@@ -205,7 +205,7 @@ Once signed in:
   configurable per device in Settings.
 - Shared library snippets from your team appear in the launcher
   with a small cloud glyph. They're mixed into the main view by
-  default; toggle them off in Settings -> Team Library if you
+  default; toggle them off in Settings -> Server if you
   prefer them only in the dedicated **Team Library** folder.
 - A **Trash** folder appears in the sidebar - deleted snippets stay
   there for 90 days (or whatever your admin set), recoverable with
@@ -233,7 +233,7 @@ snippet, then both come back online.
   hotkey fired. Try setting paste mode to "Clipboard only" in
   Settings -> General as a workaround; or report a bug with your OS
   + which apps you have open.
-- **Snippets aren't syncing.** Check Settings -> Team Library that
+- **Snippets aren't syncing.** Check Settings -> Server that
   the server URL is set and `signed in as <you>` appears. Click
   **Sync now** to force. If it errors, the error message says why
   (network unreachable, server expired your session, etc.).
@@ -242,7 +242,7 @@ snippet, then both come back online.
   `snipdesk://` link. If the OS didn't claim the link, the page
   also shows your sign-in token in a copy-paste field - copy it
   and paste into the **Paste sign-in token** field in Settings ->
-  Team Library.
+  Server.
 
 For anything else, the `snipdesk.log` file in your data folder is
 the right thing to attach to a bug report.

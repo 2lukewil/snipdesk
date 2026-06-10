@@ -280,7 +280,7 @@ the per-provider URLs with their IdP.
 If the OS doesn't claim the custom scheme (corporate-locked Windows,
 antivirus interference), the browser landing page also displays the
 token in a paste-able form. The desktop client has a fallback field
-under Settings -> Team Library to accept it.
+under Settings -> Server to accept it.
 
 ### Per-provider gating
 
@@ -417,7 +417,7 @@ one active device at a time.
 The Teams desktop client replaces the read-only `shared_url`
 JSON-pull from the Lite build with:
 
-- **Sign-in UI** in Settings -> Team Library: server URL plus
+- **Sign-in UI** in Settings -> Server: server URL plus
   email/password fields and a "Sign in with Google" button. The
   brand bundle may pre-fill the URL and hide the field; see
   [Whitelabel brand bundles](/whitelabel).

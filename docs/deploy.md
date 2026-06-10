@@ -253,7 +253,7 @@ config is what really matters.)
 
 Once TLS resolves, confirm `https://snippets.yourcompany.com/api/health`
 answers, then point desktop clients at that URL
-(Settings -> Team Library).
+(Settings -> Server).
 
 ### Cross-origin web clients (CORS)
 
@@ -287,7 +287,7 @@ docker compose restart snipdesk-server
 
 When at least one provider is configured, sign-in buttons appear
 automatically in both places that need them: the desktop client's
-Team Library tab and the dashboard login page. There is no client
+Server tab and the dashboard login page. There is no client
 configuration; clients ask the server what's enabled
 (`GET /api/auth/methods`) and render exactly that.
 

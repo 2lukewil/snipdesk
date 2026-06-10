@@ -366,7 +366,7 @@ body[data-sso-only="true"] .signin-credentials { display: none; }
 /* Whitelabel server-URL collapse. When scripts/brand.mjs has baked a
    server_url into Settings::default(), main.js sets
    body[data-brand-locked="true"] at startup. Inputs that would let the
-   user point this build elsewhere (Settings -> Team Library, the
+   user point this build elsewhere (Settings -> Server, the
    onboarding sign-in panel) hide; small read-only labels showing the
    baked URL take their place. */
 .brand-locked-show { display: none; }
@@ -1250,7 +1250,7 @@ body.compact .search-bar {
   border-color: var(--danger);
 }
 
-/* --- Team library status block (Team Library tab) --- */
+/* --- Team library status block (Server tab) --- */
 .team-status-block {
   background: var(--bg-3);
   border: 1px solid var(--border);

@@ -72,7 +72,7 @@ The same source tree produces both editions; which one you get is a
 build-time flag:
 
 - **Lite (default)** is fully offline. Feature-gated network code
-  never reaches the compiler, and the Team Library UI is stripped
+  never reaches the compiler, and the Server settings tab is stripped
   from the bundle.
 - **Teams (`--features teams`)** adds an HTTPS shared-library sync,
   a Settings tab, and a background sync thread.

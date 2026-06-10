@@ -149,7 +149,7 @@ You should be on the Users page; the nav also has Library, Stats,
 and Audit.
 
 The desktop client (any SnipDesk Teams build) can now point at
-this server: Settings → Team Library → Server URL =
+this server: Settings -> Server -> Server URL =
 `http://127.0.0.1:8080` (or your reverse-proxied URL).
 
 ## Recommended: docker-compose instead of docker run

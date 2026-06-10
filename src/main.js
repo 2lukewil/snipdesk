@@ -285,7 +285,7 @@ const state = {
   // in init() on Teams builds. When `server_url` is non-empty, the
   // build is whitelabel-locked and the UI hides the URL inputs.
   brandDefaults: { server_url: "", sso_only: false },
-  // Cached /api/auth/methods response. The Team Library sign-in
+  // Cached /api/auth/methods response. The Server-tab sign-in
   // surface (password fields, provider buttons, paste-fallback) is
   // shown/hidden based on this. null = not fetched yet; render
   // falls back to a conservative "URL input only" until the first
@@ -363,7 +363,7 @@ const els = {
   // Hotkeys tab
   setHotkey: document.getElementById("set-hotkey"),
   setQuickAddHotkey: document.getElementById("set-quick-add-hotkey"),
-  // Team Library tab. The legacy library-URL fields
+  // Server tab. The legacy library-URL fields
   // (set-team-url / set-team-interval / set-team-folder-name /
   // set-team-startup) were removed from the UI as part of the v1
   // de-bloat; the underlying settings.team_library_url plumbing
@@ -444,7 +444,7 @@ const els = {
 init();
 
 async function init() {
-  // Strip Team Library tab markup in free build.
+  // Strip Server tab markup in free build.
   if (!TEAMS_BUILD) {
     document.querySelector('.tab[data-tab="team"]')?.remove();
     document.querySelector('.tab-panel[data-tab="team"]')?.remove();
@@ -845,7 +845,7 @@ const onboarding = {
       console.warn("onboarding: oidc start failed", err);
       if (status) {
         status.textContent =
-          "Couldn't open browser. Open Settings -> Team Library to sign in manually.";
+          "Couldn't open browser. Open Settings -> Server to sign in manually.";
       }
     }
   },
@@ -2135,7 +2135,7 @@ function renderList() {
     if (state.selectedFolder === TEAM_FOLDER) {
       li.textContent = els.search.value
         ? "No team snippets match your search."
-        : "No team snippets yet. Open Settings → Team Library and click 'Sync now' to pull them in.";
+        : "No team snippets yet. Open Settings -> Server and click 'Sync now' to pull them in.";
     } else {
       li.textContent = els.search.value
         ? "No snippets match your search. Press Ctrl+N to add one."
@@ -3444,7 +3444,7 @@ function activateTab(name) {
   const panels = els.settings.querySelectorAll(".tab-panel");
   tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   panels.forEach((p) => p.classList.toggle("active", p.dataset.tab === name));
-  // Opening the Team Library tab triggers a fresh methods fetch so
+  // Opening the Server tab triggers a fresh methods fetch so
   // the sign-in surface (password / provider buttons / paste-fallback)
   // matches the server's current config. Cheap call - one round-trip
   // to /api/auth/methods, results cached in state.serverMethods.
@@ -3805,7 +3805,7 @@ async function loadServerMethods(serverUrl) {
 
 /// Show/hide the password section, Google button, "or" divider, and
 /// paste-token fallback in the signed-out panel based on what
-/// state.serverMethods reports. Called on Team Library tab open, on
+/// state.serverMethods reports. Called on Server tab open, on
 /// successful methods fetch, and from renderServerStatus when the
 /// signed-out panel is the visible one.
 function renderSignInSurface() {

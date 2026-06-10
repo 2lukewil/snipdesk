@@ -71,6 +71,55 @@ jobs:
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Releasing version $version"
 
+      # Guard against the tag-vs-config-mismatch auto-update loop. If
+      # someone tags v1.0.2 without first bumping Cargo.toml (and the
+      # other two version files), the resulting build has
+      # CARGO_PKG_VERSION = (old) baked in but the manifest claims
+      # (new). Tauri's updater plugin then compares installed=(old)
+      # against manifest=(new), prompts "update available", installs
+      # a binary that still reports (old), and loops forever on every
+      # launch. This step fails the build before any binaries get
+      # signed, so the operator catches the mistake immediately
+      # instead of on a customer machine.
+      - name: Verify tag matches workspace + tauri.conf.json versions
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.version.outputs.VERSION }}"
+          $cargoToml = Get-Content Cargo.toml -Raw
+          if ($cargoToml -match '(?ms)\[workspace\.package\][^\[]*?version\s*=\s*"([^"]+)"') {
+            $cargoVersion = $matches[1]
+          } else {
+            Write-Error "Couldn't find [workspace.package].version in Cargo.toml"
+            exit 1
+          }
+          if ($cargoVersion -ne $tagVersion) {
+            Write-Error @"
+          Tag v$tagVersion does not match Cargo.toml [workspace.package].version = $cargoVersion.
+
+          The desktop binary will embed CARGO_PKG_VERSION = $cargoVersion, but the
+          updater manifest will claim version $tagVersion. Once the release is
+          published, every running client compares installed=$cargoVersion against
+          manifest=$tagVersion and prompts 'update available' on every launch -
+          installing the (still-$cargoVersion) binary in a loop.
+
+          Fix: bump Cargo.toml, package.json, src-tauri/tauri.conf.json to $tagVersion,
+          commit, then re-tag at the bump commit and push the tag again.
+          Or use the snipdesk-release skill which does the bump + tag in one shot.
+          "@
+            exit 1
+          }
+          $tauriConf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($tauriConf.version -ne $tagVersion) {
+            Write-Error "Tag v$tagVersion does not match src-tauri/tauri.conf.json version = $($tauriConf.version). Bump both files and re-tag."
+            exit 1
+          }
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne $tagVersion) {
+            Write-Error "Tag v$tagVersion does not match package.json version = $($pkg.version). Bump both files and re-tag."
+            exit 1
+          }
+          Write-Host "Tag v$tagVersion matches Cargo.toml + tauri.conf.json + package.json. Proceeding."
+
       - name: npm ci
         run: npm ci
 

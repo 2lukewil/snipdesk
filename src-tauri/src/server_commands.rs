@@ -311,6 +311,11 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
     // library stays empty until the background loop's next tick,
     // which reads as "sign-in worked but nothing appeared".
     spawn_post_signin_sync(app.clone());
+    // The browser stole focus for the SSO dance; bring the window
+    // back so the user sees the signed-in state without alt-tabbing.
+    if let Some(win) = app.get_webview_window("main") {
+        crate::show_and_focus(app, &win);
+    }
     Ok(())
 }
 

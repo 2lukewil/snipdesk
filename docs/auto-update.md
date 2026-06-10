@@ -222,7 +222,10 @@ binary, a non-blocking toast appears in the status bar:
 
 Click *Install and restart* and the install runs through the status
 bar (download progress, silent install, relaunch) in about thirty
-seconds on a normal connection.
+seconds on a normal connection. The installer itself never shows a
+window: `plugins.updater.windows.installMode` is set to `quiet` in
+`tauri.conf.json`, so the NSIS run is fully invisible and the only
+UI the user sees is the client's own status bar.
 
 Click *Later* and the toast clears. The next launch re-prompts.
 No nagging within a session.

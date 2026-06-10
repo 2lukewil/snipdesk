@@ -2423,7 +2423,11 @@ pub async fn library_export(
                 csv_field(r.folder_path.as_deref().unwrap_or("")),
             ));
         }
-        ("text/csv; charset=utf-8", format!("library-{date}.csv"), out)
+        (
+            "text/csv; charset=utf-8",
+            format!("library-{date}.csv"),
+            out,
+        )
     } else {
         let entries: Vec<ExportEntry> = filtered
             .iter()
@@ -2746,12 +2750,7 @@ fn render_import_tree(
 }
 
 fn import_node_size(node: &ImportTreeNode) -> usize {
-    node.items.len()
-        + node
-            .children
-            .values()
-            .map(import_node_size)
-            .sum::<usize>()
+    node.items.len() + node.children.values().map(import_node_size).sum::<usize>()
 }
 
 fn render_import_node_children(node: &ImportTreeNode, out: &mut String) {

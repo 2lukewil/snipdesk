@@ -18,9 +18,11 @@ see [Build from source](/build).
   decrypt. The admin dashboard never exposes personal snippet bodies.
 - **A shared team library** of canned snippets, curated by admins,
   visible to every signed-in member.
-- **An admin dashboard** for user management, library curation,
-  audit log, and per-user activity, with no exposure of personal
-  snippet bodies.
+- **An admin dashboard** for user management, library curation
+  (including search, filtered JSON/CSV export, and a
+  tree-previewed import that shares the desktop client's file
+  format), audit log, and per-user activity, with no exposure of
+  personal snippet bodies.
 - **Single Docker container** deployment with no external
   dependencies beyond a config file and a TLS cert.
 

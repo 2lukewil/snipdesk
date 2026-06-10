@@ -172,6 +172,24 @@ In that folder:
 To move to a new machine: copy the whole folder. Or use Settings ->
 Import/Export -> Export to dump JSON, then Import on the new machine.
 
+Both directions are selective when you want them to be:
+
+- **Export** has a filter field - type a search and the count shows
+  "N of M match"; the export writes only those. Leave it empty to
+  export everything. CSV exports carry folder paths, so folder
+  structure survives a round-trip.
+- **Import** opens a preview first: your file's snippets appear as
+  a collapsible folder tree with everything selected except
+  duplicates of titles you already have (those start deselected
+  and badged). Tick folders or individual snippets, filter by
+  title to find things in big files, then import exactly that
+  selection.
+
+Admins have the same pair on the server's dashboard library page,
+and the file format is shared - an export from your app imports
+straight into the team library, and a library export seeds a new
+teammate's local collection.
+
 ## Teams sign-in (optional)
 
 If your team runs a snipdesk-server, you can sync personal snippets

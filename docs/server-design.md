@@ -286,7 +286,7 @@ under Settings -> Team Library to accept it.
 
 The OIDC handler accepts provider-specific knobs that gate sign-in.
 Configuration details for both providers live in
-[Deploying snipdesk-server](/deploy#5-set-up-google-oidc-optional-recommended).
+[Deploying snipdesk-server](/deploy#7-add-sso-optional).
 
 **Google `[oidc.google]`:**
 

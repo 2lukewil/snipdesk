@@ -1,13 +1,18 @@
 # Deploying snipdesk-server
 
 Production deployment guide for `snipdesk-server`. For a five-minute
-walk from a fresh machine to a working dashboard, see
-[Docker quickstart](/docker-quickstart). For the architecture this
-deployment is running, see [Server architecture](/server-design).
+local trial run, see [Docker quickstart](/docker-quickstart). For the
+architecture this deployment runs, see
+[Server architecture](/server-design).
 
 Audience: an operator setting up a real Teams deployment for their
 organisation. Assumes familiarity with Docker, reverse proxies, and
 TLS.
+
+The guide is two halves. **Steps 1-7** are the setup path: follow
+them top to bottom and you end with a TLS-fronted server and an
+admin account. **Operations, security posture, and troubleshooting**
+after that are reference material for the running system.
 
 ## What you're deploying
 
@@ -15,59 +20,67 @@ One binary (`snipdesk-server`) backed by a single SQLite file. No
 external dependencies. Talks HTTP on a configurable port; you
 terminate TLS at a reverse proxy in front of it.
 
-Endpoints:
+By the end of step 5, one directory on the host holds the entire
+deployment:
 
-- `/api/health` - liveness probe (200 OK / 503 when DB unreachable).
-- `/api/auth/*`, `/api/me`, `/api/snippets/*`, `/api/library/*`,
-  `/api/admin/users/*` - JSON API for the desktop client.
-- `/` and `/dashboard/*` - htmx admin dashboard, cookie-authed,
-  admin-only.
-- `/static/*` - vendored htmx + dashboard CSS, baked into the binary.
+```
+snipdesk/                   # any name, anywhere on the host
+├── docker-compose.yml      # written in step 5
+├── snipdesk-server.toml    # written in step 4 (keep out of git)
+├── .env                    # written in step 5 (keep out of git)
+└── data/                   # created in step 2
+    └── snipdesk.db         # created by the server on first boot
+```
+
+Two of those must survive restarts, image rebuilds, and host moves:
+
+- **`data/`** holds the SQLite database (plus its WAL and
+  shared-memory sidecar files). Losing it loses every user's
+  snippets.
+- **The master encryption key** (stored in `.env`) decrypts personal
+  snippets. Losing it makes every encrypted snippet permanently
+  unreadable even if you still have the database. Back it up
+  offline, like a password manager root key: multiple custodians,
+  never committed.
 
 ## 1. Pick where it runs
 
 Anywhere that runs Linux containers (or that you can drop a static
-Rust binary on). For most teams that means:
+Rust binary on):
 
 - **A small VM** (1 vCPU / 1 GB RAM is plenty for hundreds of users
   in tests). DigitalOcean, Hetzner, Vultr, AWS Lightsail all fine.
 - **Your existing Kubernetes cluster**, if you have one.
 - **A box under someone's desk**, if you trust your office network.
 
-Resource shape: the server is overwhelmingly idle. Hot path is one
-SQLite query per API call plus AES-GCM on writes. RAM scales with
-concurrent OIDC sign-ins (~1 KB per pending auth, capped at 1024).
-Disk grows with snippets - assume a few hundred bytes per snippet
-including the ciphertext+nonce overhead.
+The server is overwhelmingly idle. Hot path is one SQLite query per
+API call plus AES-GCM on writes. Disk grows with snippets; assume a
+few hundred bytes per snippet.
 
-## 2. Plan the persistent state
+## 2. Create the server directory
 
-Two things must survive process restarts and image rebuilds:
+Everything in this guide happens inside one directory. Create it
+along with the `data/` folder the database will live in:
 
-- **The SQLite database** at `<data_dir>/snipdesk.db` (plus the WAL
-  and shared-memory files in the same directory). Losing this loses
-  every user's snippets.
-- **The master encryption key.** Losing this makes every encrypted
-  personal snippet permanently unreadable, even if you still have the
-  DB. Generate once, store somewhere safe, rotate only with a
-  documented procedure (see "Key rotation" below).
+```bash
+mkdir -p snipdesk/data
+cd snipdesk
+```
 
-Treat the master key like a password manager root key: backed up
-offline, multiple custodians, never committed.
+```powershell
+# PowerShell
+New-Item -ItemType Directory -Force snipdesk\data
+cd snipdesk
+```
+
+`data/` is what step 5 mounts at `/var/lib/snipdesk` inside the
+container; the server creates `snipdesk.db` in it on first boot.
+Every command from here on runs from inside `snipdesk/`.
 
 ## 3. Generate the secrets
 
-The image ships with two one-shot subcommands that print a fresh
-secret and exit. `docker run --rm` runs them without leaving a
-container behind:
-
-```
-docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-key
-docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret
-```
-
-Each prints one base64 line to stdout. Pipe to your secret store
-of choice, or capture in a shell variable:
+The server needs two secrets. The image ships one-shot subcommands
+that print a fresh value and exit:
 
 ```powershell
 # PowerShell
@@ -81,200 +94,52 @@ master_key=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest ge
 jwt_secret=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret)
 ```
 
-For a whitelabel image, substitute `snipdesk-server-<slug>` in the
-image path.
+(For a whitelabel image, substitute `snipdesk-server-<slug>` in the
+image path.)
 
-The master key is the more sensitive of the two:
+They differ in blast radius, so store them accordingly:
 
-- Lose the JWT secret: users get bounced on the next request, fix
-  by putting the secret back. No data lost.
-- Lose the master key: every encrypted personal snippet is now
-  unrecoverable. Library snippets are still readable (they're
-  plaintext at rest).
+- **JWT secret** (goes in the config file, step 4): losing it just
+  bounces every session; put it back or generate a new one and
+  users sign in again. No data lost.
+- **Master key** (goes in `.env`, step 5): losing it makes every
+  encrypted personal snippet unrecoverable. **Copy it somewhere
+  safe now** - a password manager entry or your org's secret store
+  - before moving on.
 
 ## 4. Write the config
 
-Create `snipdesk-server.toml` in the working directory you'll mount
-into the container (typically alongside your `docker-compose.yml`):
+Create `snipdesk-server.toml` in the current directory. This is the
+complete config for a password-only deployment:
 
 ```toml
-# Public bind address. 0.0.0.0:8080 listens on all interfaces; the
-# reverse proxy in front terminates TLS.
 bind_addr = "0.0.0.0:8080"
-
-# Where the SQLite DB lives. In Docker, mount this from a named
-# volume or host path so the data survives container restarts.
 data_dir = "/var/lib/snipdesk"
+jwt_secret = "<paste the gen-jwt-secret output>"
 
-# HS256 signing secret for session JWTs. Output of
-# `docker run --rm <image> gen-jwt-secret`.
-jwt_secret = "<base64 from gen-jwt-secret>"
-
-# How long soft-deleted snippets stay around before the hourly purge
-# drops them. 90 days is the default and the right answer unless
-# users routinely sync from devices that have been offline longer.
-# Set to 0 to disable purge entirely.
-tombstone_retention_days = 90
-
-# Set true when the dashboard is reachable over HTTPS. The session
-# cookie gets the Secure attribute so browsers won't send it over
-# plain HTTP at all. Leave false for local-only dev.
+# The dashboard session cookie only travels over HTTPS. Keep true
+# in production; set false only for plain-HTTP local testing.
 secure_cookies = true
-
-[crypto]
-# AES-256-GCM key, base64. Source priority: SNIPDESK_MASTER_KEY env
-# var > master_key_file > master_key (inline). For container
-# deployments, prefer the env var (orchestrator manages the secret)
-# or a mounted file (e.g. Docker secret).
-master_key = "<base64 from gen-key>"
-# master_key_file = "/run/secrets/snipdesk-master-key"
-
-# Optional: "Sign in with Google" via OIDC. Omit this section for
-# password-only.
-[oidc.google]
-client_id = "<from Google Cloud Console>"
-client_secret = "<from Google Cloud Console>"
-redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/google/callback"
-# Workspace lock: reject any token whose hd claim doesn't match.
-# Comment out for "any Google account allowed" mode.
-required_hd = "yourcompany.com"
-# Softer fallback: allow emails whose domain matches one of these.
-allowed_email_domains = ["yourcompany.com"]
-
-# Optional: "Sign in with SSO" against a self-hosted Keycloak (or
-# any compliant OIDC IdP). Independent of [oidc.google] - configure
-# one, both, or neither.
-[oidc.keycloak]
-client_id = "<from your Keycloak realm client>"
-client_secret = "<from your Keycloak realm client>"
-issuer_url = "https://kc.yourcompany.com/realms/main"
-redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/keycloak/callback"
-# Optional: restrict sign-in to users who hold this realm role.
-# required_realm_role = "snipdesk-user"
-# Optional: realm role that promotes the user to admin in SnipDesk.
-# Re-checked on every sign-in (losing the role demotes them).
-# admin_role = "snipdesk-admin"
-# Optional button label. Falls back to "Sign in with SSO".
-display_name = "Sign in with Acme SSO"
 ```
 
-Keep this file out of source control. The full reference config
-([`snipdesk-server.example.toml`](https://github.com/2lukewil/snipdesk/blob/main/crates/snipdesk-server/snipdesk-server.example.toml))
-lives in the repo, and the image ships a copy at
-`/etc/snipdesk/config.toml.example`. To grab it from a running
-container:
+Notes:
 
-```
-docker cp snipdesk-server:/etc/snipdesk/config.toml.example .
-```
+- The **master key does not go in this file.** It arrives via the
+  `SNIPDESK_MASTER_KEY` environment variable in step 5, which keeps
+  the most dangerous secret out of the config file entirely.
+- `data_dir` is the path **inside the container**. The compose file
+  in step 5 maps your `data/` folder onto it; don't change one
+  without the other.
+- SSO (Google, Keycloak) is added in step 7, after the server is
+  running. Every other knob (retention, CORS, stats, branding,
+  update checks) has a sensible default and is documented in the
+  [reference config](https://github.com/2lukewil/snipdesk/blob/main/crates/snipdesk-server/snipdesk-server.example.toml).
 
-## 5. Set up Google OIDC (optional, recommended)
+Keep this file out of source control: it contains the JWT secret.
 
-Skip this section if you're running password-only.
+## 5. Boot it
 
-1. https://console.cloud.google.com/ -> create or select a project
-   you'll dedicate to SnipDesk.
-2. **APIs & Services -> OAuth consent screen.** User type
-   "External" for personal projects, "Internal" if you're using a
-   Workspace-owned GCP project (the latter restricts at the
-   consent-screen level too, not just `required_hd`). Add scopes
-   `openid`, `email`, `profile`. Add yourself as a test user if the
-   app is still in Testing.
-3. **APIs & Services -> Credentials -> Create credentials -> OAuth
-   client ID.** Application type Web application. Add an
-   **Authorized redirect URI** that matches `redirect_uri` in your
-   config exactly - typically your production URL plus
-   `/api/auth/oidc/google/callback`. For local dev you can add
-   `http://127.0.0.1:8080/api/auth/oidc/google/callback` as a
-   second URI. (The legacy unscoped path `/api/auth/oidc/callback`
-   still works as a Google shim if you have it registered already;
-   the per-provider path is the new canonical surface.)
-4. Copy the `client_id` and `client_secret` into the config.
-5. **Decide on Workspace lockdown.** `required_hd` is the strict
-   knob: Google sets the `hd` claim on tokens issued to Workspace
-   members, and the server rejects any token whose `hd` doesn't
-   match. Set it and only the matching Workspace can sign in. Leave
-   it unset and any Google account that passes the consent screen
-   can sign up.
-6. **Bootstrap the first admin.** The first user who signs up (via
-   email/password OR OIDC) is auto-promoted to admin. Sign in as
-   yourself before sharing the URL with the team, so you control the
-   admin role from the start.
-
-## 5a. Set up Keycloak SSO (optional)
-
-Skip this section unless you're running a self-hosted Keycloak
-(or any compliant OIDC IdP, e.g. Authentik, Authelia). Independent
-of Google: configure one, both, or neither.
-
-1. In the Keycloak admin console, pick the realm your users live
-   in (or create a fresh `snipdesk` realm).
-2. **Clients -> Create client.**
-   - Client type: **OpenID Connect**.
-   - Client ID: `snipdesk` (whatever you like; it goes into
-     `client_id` in the config).
-   - Client authentication: **On** (this server uses the
-     confidential-client flow with a `client_secret`).
-   - Authentication flow: leave **Standard flow** enabled;
-     untick Direct access grants and Implicit flow.
-3. **Settings on the new client:**
-   - Valid Redirect URIs: add your production URL plus
-     `/api/auth/oidc/keycloak/callback`. For local dev add
-     `http://127.0.0.1:8080/api/auth/oidc/keycloak/callback`
-     as a second entry.
-   - Web origins: copy the redirect URIs (or `+` to inherit).
-   - Leave the rest at defaults.
-4. **Credentials tab on the client:** copy the **Client secret**
-   into `client_secret` in your `[oidc.keycloak]` block. Treat it
-   like a password.
-5. **issuer_url:** the URL of your realm WITHOUT the
-   `.well-known/openid-configuration` suffix - the openidconnect
-   crate appends it. Example: `https://kc.yourcompany.com/realms/main`.
-6. **Optional: realm-role gating.** When `[oidc.keycloak]
-   required_realm_role` is set, only users who hold that realm
-   role can sign in. Create the role under Realm roles, assign it
-   to the groups / users who should have access.
-7. **Optional: admin role mapping.** `admin_role` is a realm role
-   that, when present on the user's ID token, sets `role = admin`
-   in the SnipDesk users table. The check runs on every sign-in -
-   removing the role in Keycloak demotes the user the next time
-   they sign in. Without this, SnipDesk admin status is managed
-   exclusively from the dashboard / CLI (same as the Google path).
-8. **Display name.** The desktop and dashboard buttons read
-   `display_name` from the config; fall back is "Sign in with SSO".
-   Use whatever your team recognises (e.g. "Sign in with Okta",
-   "Sign in with Acme SSO").
-
-After restart, the admin dashboard's login page shows a "Sign in
-with <display_name>" button under the password form, and the
-desktop client's Team Library tab renders the same button alongside
-the password form. Both flows share the IdP-side callback URL,
-so you only register one redirect URI per provider.
-
-### Dashboard SSO
-
-The admin dashboard accepts the same OIDC providers as the desktop
-client. The button stack appears on the login page (`/`) under the
-password form whenever any provider is configured. This closes the
-gap where an OIDC-only user (no password set on their account)
-would otherwise be unable to reach `/dashboard` at all.
-
-Non-admin members who try the dashboard SSO flow still get bounced
-to the "members can't access the dashboard" page - admin gating is
-unchanged. The IdP-side callback URL is the same as the desktop
-flow (`/api/auth/oidc/<provider>/callback`); the start endpoint
-(`/dashboard/oidc/<provider>/start`) is what tells the server to
-finish by setting the session cookie instead of firing the desktop
-deep link.
-
-## 6. Container deployment (recommended)
-
-Pre-built images are published to GHCR on every `server-v*` tag:
-`ghcr.io/2lukewil/snipdesk/snipdesk-server:latest` (vanilla) or
-`ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:latest`
-(whitelabel). Pull, don't build, unless you have a reason to.
-
-Minimal `docker-compose.yml`:
+Create `docker-compose.yml`:
 
 ```yaml
 services:
@@ -287,38 +152,51 @@ services:
       - ./data:/var/lib/snipdesk
       - ./snipdesk-server.toml:/etc/snipdesk/config.toml:ro
     environment:
-      # The master key prefers the env var over an inline
-      # `master_key` in the TOML: orchestrator-managed and easier
-      # to keep out of configuration-management.
       SNIPDESK_MASTER_KEY: "${SNIPDESK_MASTER_KEY}"
       RUST_LOG: "info,sqlx=warn,tower_http=info"
 ```
 
-Save the master key in a sibling `.env` so Compose can interpolate
-`${SNIPDESK_MASTER_KEY}` at startup:
+Create `.env` next to it so Compose can fill in the variable
+(this file is why the master key never has to appear in the
+compose file or the TOML):
 
 ```
-SNIPDESK_MASTER_KEY=<base64 from step 3>
+SNIPDESK_MASTER_KEY=<paste the gen-key output>
 ```
 
-The image's default command is
-`snipdesk-server --config /etc/snipdesk/config.toml`, so the
-compose file doesn't need a `command:` override as long as the
-config is mounted at that path.
-
-The container exposes only `127.0.0.1:8080` to the host. Put it
-behind a reverse proxy (next section); don't open 8080 to the
-internet.
-
-To build the image locally instead of pulling:
+Start it and watch the log:
 
 ```
-docker build -t snipdesk-server:local -f Dockerfile .
+docker compose up -d
+docker compose logs -f snipdesk-server
 ```
 
-## 7. Reverse proxy + TLS
+A healthy boot looks like:
 
-Pick whichever you already run. Two complete examples follow.
+```
+INFO snipdesk-server listening on 0.0.0.0:8080
+INFO master key loaded; preparing database
+INFO tombstone purge task starting (will sweep hourly)
+```
+
+Verify from the host, then claim the admin account:
+
+1. `curl http://127.0.0.1:8080/api/health` returns
+   `{"status":"ok", ...}`.
+2. Open `http://127.0.0.1:8080/` in a browser on the host (or
+   through an SSH tunnel): that's the dashboard login page.
+3. **Sign up immediately.** The first account created on a fresh
+   database is auto-promoted to admin. Do this before sharing the
+   URL so the admin role is yours.
+
+The container binds only to `127.0.0.1`, so nothing is reachable
+from outside the host until the reverse proxy in step 6 is up.
+That's intentional: claim admin before exposure, not after.
+
+## 6. Put TLS in front
+
+Pick whichever proxy you already run. Both examples forward
+`snippets.yourcompany.com` to the container.
 
 ### Caddy
 
@@ -368,17 +246,15 @@ server {
 flexible-SSL toggle to taste; `secure_cookies = true` in the server
 config is what really matters.)
 
-## 7a. Cross-origin web clients (CORS)
+Once TLS resolves, confirm `https://snippets.yourcompany.com/api/health`
+answers, then point desktop clients at that URL
+(Settings -> Team Library).
 
-CORS is off by default and only needs to be enabled when a separate
-web frontend on a different origin needs to call `/api/*`. The
-default topology (desktop client + admin dashboard, both same-origin
-with the server) never triggers a CORS preflight: same-origin
-requests skip it, the dashboard's htmx posts authenticate via cookie,
-and the desktop JSON API uses `Authorization: Bearer`.
+### Cross-origin web clients (CORS)
 
-To enable CORS for a web client on a different origin, add to the
-config:
+CORS is off by default and only matters if a separate web frontend
+on a different origin needs to call `/api/*`. The standard topology
+(desktop client + admin dashboard) never triggers it. To enable:
 
 ```toml
 cors_allowed_origins = [
@@ -387,52 +263,131 @@ cors_allowed_origins = [
 ]
 ```
 
-Each entry must include the scheme and (if non-default) the port.
-The server mounts a `tower_http::cors::CorsLayer` per entry:
+Each entry needs the scheme and (if non-default) the port. All
+methods and headers are allowed on listed origins; credentials are
+allowed. Restart to apply. Typo'd origins are dropped with a WARN
+log rather than failing the boot. There is no wildcard on purpose;
+list every origin, or have a reverse proxy serve the API
+same-origin via path-rewrite.
 
-- Methods: all (GET, POST, PUT, PATCH, DELETE).
-- Headers: all (so `Authorization`, `Content-Type` etc. flow through).
-- Credentials: allowed. The JSON API uses bearer tokens not cookies,
-  but the dashboard's session cookie also wants this so a future
-  web frontend can hit `/dashboard/*` from the same origin set.
+## 7. Add SSO (optional)
 
-Operational notes:
-
-- Restart the server to pick up changes; CORS is read at boot.
-- Bad origin strings (typos, missing scheme) are logged at WARN and
-  silently dropped from the list. If all origins fail to parse, the
-  CORS layer isn't mounted at all - the server logs that too.
-- Wildcard (`"*"`) is intentionally not special-cased. List every
-  origin you want; if you really need wildcard behaviour, set up a
-  reverse proxy that strips the `Origin` header and serves the API
-  same-origin via path-rewrite instead.
-
-Leave the list empty for any deployment that doesn't have a
-separate web client - empty is a hard "no CORS layer mounted,"
-matching v1's tighter security posture.
-
-## 8. First boot + admin signup
+Password sign-in always works; SSO is additive. Configure one
+provider, both, or neither. After editing the config, apply it
+with:
 
 ```
-docker compose up -d
-docker compose logs -f snipdesk-server
+docker compose restart snipdesk-server
 ```
 
-Expect:
+When at least one provider is configured, sign-in buttons appear
+automatically in both places that need them: the desktop client's
+Team Library tab and the dashboard login page. There is no client
+configuration; clients ask the server what's enabled
+(`GET /api/auth/methods`) and render exactly that.
 
+### Google Workspace
+
+Add to `snipdesk-server.toml`:
+
+```toml
+[oidc.google]
+client_id = "<from Google Cloud Console>"
+client_secret = "<from Google Cloud Console>"
+redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/google/callback"
+# Workspace lock: reject any token whose hd claim doesn't match.
+# Comment out for "any Google account allowed" mode.
+required_hd = "yourcompany.com"
+# Softer fallback: allow emails whose domain matches one of these.
+allowed_email_domains = ["yourcompany.com"]
 ```
-INFO snipdesk-server listening on 0.0.0.0:8080
-INFO master key loaded; preparing database
-INFO tombstone purge task starting (will sweep hourly)
+
+To get the `client_id` / `client_secret`:
+
+1. https://console.cloud.google.com/ -> create or select a project
+   you'll dedicate to SnipDesk.
+2. **APIs & Services -> OAuth consent screen.** User type
+   "External" for personal projects, "Internal" if you're using a
+   Workspace-owned GCP project (the latter restricts at the
+   consent-screen level too, not just `required_hd`). Add scopes
+   `openid`, `email`, `profile`. Add yourself as a test user if the
+   app is still in Testing.
+3. **APIs & Services -> Credentials -> Create credentials -> OAuth
+   client ID.** Application type Web application. Add an
+   **Authorized redirect URI** that matches `redirect_uri` in your
+   config exactly. For local testing you can add
+   `http://127.0.0.1:8080/api/auth/oidc/google/callback` as a
+   second URI.
+4. Copy the `client_id` and `client_secret` into the config and
+   restart.
+
+`required_hd` is the lockdown decision: Google stamps an `hd`
+claim on tokens issued to Workspace members, and the server rejects
+any token whose `hd` doesn't match. Set it and only your Workspace
+can sign in; leave it unset and any Google account that passes the
+consent screen can sign up.
+
+### Keycloak (or any compliant OIDC IdP)
+
+Works with Keycloak, Authentik, Authelia, or anything whose
+discovery document lives at
+`<issuer_url>/.well-known/openid-configuration`. Add to the config:
+
+```toml
+[oidc.keycloak]
+client_id = "snipdesk"
+client_secret = "<from the realm client's Credentials tab>"
+# The realm URL, without the .well-known suffix.
+issuer_url = "https://kc.yourcompany.com/realms/main"
+redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/keycloak/callback"
+# Optional: only realm members holding this role may sign in.
+# required_realm_role = "snipdesk-user"
+# Optional: this realm role grants admin in SnipDesk. Re-checked on
+# every sign-in, so revoking it in Keycloak demotes on next sign-in.
+# admin_role = "snipdesk-admin"
+# Button label. Falls back to "Sign in with SSO" when unset.
+display_name = "Sign in with Acme SSO"
 ```
 
-Then in a browser, hit `https://<your-host>/` - the dashboard's
-login page. Sign up. You're admin.
+Keycloak-side setup:
 
-After bootstrap, configure your desktop client to point at the same
-URL.
+1. In the admin console, pick the realm your users live in.
+2. **Clients -> Create client.** Type **OpenID Connect**, client ID
+   `snipdesk` (or anything; it goes into `client_id`). Turn
+   **Client authentication on** (the server uses the
+   confidential-client flow). Keep **Standard flow** enabled;
+   untick Direct access grants and Implicit flow.
+3. On the client's **Settings**: add the `redirect_uri` from your
+   config under Valid Redirect URIs (exactly). For local testing,
+   `http://127.0.0.1:8080/api/auth/oidc/keycloak/callback` can be a
+   second entry.
+4. On the client's **Credentials** tab: copy the client secret into
+   the config. Treat it like a password.
+5. If you want role gating, create the realm role(s) under Realm
+   roles and assign to the groups or users who should have access
+   (`required_realm_role`) or hold admin (`admin_role`).
 
-## 9. Operations
+### How the dashboard fits in
+
+The dashboard login page shows the same provider buttons under its
+password form. This matters for accounts created via SSO: they have
+no password, and without dashboard SSO they couldn't reach
+`/dashboard` at all. Admin gating is unchanged; a non-admin who
+signs into the dashboard via SSO sees the "members can't access the
+dashboard" page.
+
+One detail that keeps IdP setup simple: the desktop and dashboard
+flows share the same IdP-side callback URL
+(`/api/auth/oidc/<provider>/callback`), so each provider needs
+exactly one registered redirect URI. Which experience the user gets
+is determined by where the flow started, not where it lands.
+
+---
+
+Setup ends here. Everything below is reference for the running
+system.
+
+## Operations
 
 ### Health / monitoring
 
@@ -525,9 +480,7 @@ services:
 ```
 
 The mounted TOML can omit `[brand]` and `[oidc].allowed_deep_link_schemes`
-entirely; the image's env supplies them. A `docker compose pull`
-preserves the baked env because it lives on the image, so brand
-stays through every update.
+entirely; the image's env supplies them.
 
 The running server polls the GitHub releases feed every 6 hours by
 default (configurable via `[updater]` in the TOML, off via
@@ -619,9 +572,11 @@ The app side won't notice; the dashboard just shows newer entries.
 ### Tombstone purge
 
 The hourly background sweep deletes `is_deleted = 1` snippets older
-than `tombstone_retention_days`. Default 90 days. If you need to
-hold deleted data longer (legal hold, audit), bump the value and
-restart. Set to `0` to disable purging entirely.
+than `tombstone_retention_days` (default 90; configurable in the
+TOML). If you need to hold deleted data longer (legal hold, audit),
+bump the value and restart. Set to `0` to disable purging entirely.
+The default is right unless users routinely sync from devices that
+stay offline longer than the window.
 
 ### Key rotation
 
@@ -648,7 +603,7 @@ The library (shared snippets) is harder - it lives only on the
 server. Your backup strategy covers this; without backups, library
 content needs to be recreated manually.
 
-## 10. Security posture
+## Security posture
 
 What protects user data in v1.0:
 
@@ -678,12 +633,27 @@ the *Potential upgrade path: end-to-end encryption* section of
 The v1 schema is forward-compatible with that upgrade, but the
 upgrade itself is not part of v1.0.
 
-## 11. Troubleshooting
+## Troubleshooting
 
 **"no master encryption key configured"** at startup: the server
-couldn't find a key via any source. Either `SNIPDESK_MASTER_KEY` env
-var is unset, `master_key_file` points at something unreadable, or
-`master_key` is missing from the config. See section 3.
+couldn't find a key via any source. Either `SNIPDESK_MASTER_KEY` is
+missing from `.env` (or the env var is otherwise unset),
+`master_key_file` points at something unreadable, or `master_key`
+is missing from the config. See step 3.
+
+**"jwt_secret is required but missing"** at startup: the config
+file has no `jwt_secret`. Generate one (`gen-jwt-secret`, step 3)
+and add it to `snipdesk-server.toml`.
+
+**Container exits with `read config /etc/snipdesk/config.toml`**:
+the config volume isn't mounted, or the host path in the compose
+file doesn't point at your `snipdesk-server.toml`. Compare against
+the compose file in step 5.
+
+**Server starts but immediately exits with a SQLite error**: usually
+`data_dir` is unwritable. Confirm `./data` exists on the host (step
+2) and the volume line in the compose file maps it to
+`/var/lib/snipdesk`.
 
 **"migration N was previously applied but has been modified"**:
 shouldn't happen with the in-tree migrations (the self-repair in
@@ -699,20 +669,19 @@ docker compose exec snipdesk-server snipdesk-server --config /etc/snipdesk/confi
 ```
 
 **OIDC returns `redirect_uri_mismatch`**: the `redirect_uri` in your
-config doesn't EXACTLY match an Authorized Redirect URI in the
-Google Cloud Console. Add it there.
+config doesn't EXACTLY match the redirect URI registered with the
+IdP (Google Cloud Console / Keycloak Valid Redirect URIs). Fix
+whichever side is wrong; they must be byte-identical.
 
-**"this server doesn't have Google OIDC configured"** on the
-desktop's Sign in with Google: your config is missing the
-`[oidc.google]` section. Add it (section 5).
-
-**Server starts but immediately exits with a SQLite error**: usually
-`data_dir` is unwritable. Check container volume mounts and host
-file permissions.
+**Desktop shows no SSO button after configuring a provider**: the
+server wasn't restarted after the config edit, or the provider
+block failed to parse (check `docker compose logs` for a TOML
+error at boot). The client renders buttons strictly from
+`GET /api/auth/methods`; hit that URL directly to see what the
+server thinks is enabled.
 
 **Snippets aren't syncing on a client**: check the client's local
 `high_water_mark` sync state. The server-side `/api/snippets` and
 `/api/library` log lines (`tracing::info!` at debug level) show
 `since=N returned=M` - if `returned=0` even when there should be
 data, the client's cursor is past the server's data.
-

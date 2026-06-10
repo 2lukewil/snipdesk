@@ -3,7 +3,7 @@
 Five steps. Should take ~5 minutes from a fresh machine to a
 working dashboard you can sign in to. For TLS, Google SSO,
 whitelabel, backups, retention tuning, and everything else, see
-[deploy.md](deploy.md) once the basic flow works.
+the [production deploy guide](/deploy) once the basic flow works.
 
 ## You'll need
 
@@ -50,31 +50,23 @@ echo "Master key (save this!): $key"
 
 ## 3. Write the minimum-viable config
 
-```powershell
-# PowerShell
-@'
-bind_addr = "0.0.0.0:8080"
-data_dir = "/var/lib/snipdesk"
-'@ | Out-File -Encoding utf8 snipdesk-server.toml
-```
-
-First generate a JWT secret (the server refuses to start without
-one - it's the signing key for session tokens):
+The config needs a JWT secret (the signing key for session tokens;
+the server refuses to start without one). Generate it, then write
+the config file in one go:
 
 ```powershell
 # PowerShell
 $jwt = docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret
+@"
+bind_addr = "0.0.0.0:8080"
+data_dir = "/var/lib/snipdesk"
+jwt_secret = "$jwt"
+"@ | Out-File -Encoding utf8 snipdesk-server.toml
 ```
 
 ```bash
 # bash / zsh
 jwt=$(docker run --rm ghcr.io/2lukewil/snipdesk/snipdesk-server:latest gen-jwt-secret)
-```
-
-Then write the config (paste `$jwt` / `$jwt` into the value):
-
-```bash
-# bash / zsh
 cat > snipdesk-server.toml <<EOF
 bind_addr = "0.0.0.0:8080"
 data_dir = "/var/lib/snipdesk"
@@ -266,12 +258,12 @@ Available subcommands:
 
 When you're ready to put this in front of real users:
 
-- **TLS + reverse proxy**: [production deploy guide](/deploy#7-reverse-proxy-tls) (Caddy + nginx walkthroughs)
-- **Google Workspace SSO**: [production deploy guide](/deploy#5-set-up-google-oidc-optional-recommended)
-- **Keycloak / generic OIDC SSO**: [production deploy guide](/deploy#5a-set-up-keycloak-sso-optional)
-- **Backups + retention**: [production deploy guide](/deploy#9-operations)
+- **TLS + reverse proxy**: [production deploy guide](/deploy#6-put-tls-in-front) (Caddy + nginx walkthroughs)
+- **Google Workspace SSO**: [production deploy guide](/deploy#google-workspace)
+- **Keycloak / generic OIDC SSO**: [production deploy guide](/deploy#keycloak-or-any-compliant-oidc-idp)
+- **Backups + retention**: [production deploy guide](/deploy#operations)
 - **Per-customer whitelabel images**: [whitelabel brand bundles](/whitelabel)
-- **Production security checklist**: [production deploy guide](/deploy#10-security-posture)
+- **Production security checklist**: [production deploy guide](/deploy#security-posture)
 
 ## Troubleshooting
 
@@ -295,12 +287,10 @@ Get-ChildItem your-config.toml
 Get-Content your-config.toml
 
 # If you instead see a directory (mode d----), Docker auto-created it.
-# Remove it, recreate the config as a real file:
+# Remove it, then recreate the config as a real file by re-running
+# step 3 (the config must include jwt_secret or the boot fails on
+# the next error instead).
 Remove-Item -Recurse -Force your-config.toml
-@'
-bind_addr = "0.0.0.0:8080"
-data_dir = "/var/lib/snipdesk"
-'@ | Out-File -Encoding utf8 your-config.toml
 ```
 
 Then `docker rm -f snipdesk-server` and re-run the docker command.

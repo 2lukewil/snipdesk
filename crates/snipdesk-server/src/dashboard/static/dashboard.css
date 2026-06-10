@@ -218,6 +218,30 @@ textarea {
 }
 .sso-button:hover { border-color: var(--accent); color: var(--accent); }
 
+/* --- Library toolbar (search + export/import) --- */
+
+.library-toolbar { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
+.library-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 160px;
+  padding: 7px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.library-toolbar .btn {
+  white-space: nowrap;
+  text-decoration: none;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.library-toolbar .btn:hover { border-color: var(--accent); color: var(--accent); }
+
 /* --- Errors / banners --- */
 
 .banner {

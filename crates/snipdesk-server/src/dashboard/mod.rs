@@ -68,6 +68,8 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard/users/:id", put(pages::user_update_row))
         .route("/dashboard/users/:id", delete(pages::user_delete_row))
         .route("/dashboard/library", get(pages::library_page))
+        // Filtered download of the library (search + folder scoped).
+        .route("/dashboard/library/export", get(pages::library_export))
         .route(
             "/dashboard/library",
             post(pages::library_create).layer(DefaultBodyLimit::max(BODY_LIMIT_LARGE)),

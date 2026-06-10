@@ -1918,21 +1918,41 @@ pub async fn library_page(
         escape_html(&selected),
     ));
     body.push_str(&library_create_form(&selected));
+    // Search + export toolbar. The search input re-fetches the cards
+    // fragment as the admin types (debounced); the export links
+    // download exactly what the current folder + search show, their
+    // hrefs kept in sync by LIBRARY_PAGE_JS. The import link opens
+    // the upload page.
+    let q_value = q.q.as_deref().unwrap_or("");
+    body.push_str(&format!(
+        "<div class=\"library-toolbar\">\
+           <input type=\"search\" id=\"library-search-input\" name=\"q\" value=\"{q}\" \
+                  placeholder=\"Search title, body, tags\" autocomplete=\"off\" \
+                  hx-get=\"/dashboard/library/cards\" \
+                  hx-trigger=\"input changed delay:300ms, search\" \
+                  hx-target=\"#library-list\" \
+                  hx-include=\"#library-folder-input\" \
+                  hx-swap=\"innerHTML\" />\
+           <a class=\"btn\" id=\"library-export-json\" href=\"/dashboard/library/export?format=json\">Export JSON</a>\
+           <a class=\"btn\" id=\"library-export-csv\" href=\"/dashboard/library/export?format=csv\">Export CSV</a>\
+         </div>",
+        q = escape_html(q_value),
+    ));
     // Polls every 5s so another admin's adds / edits / deletes surface
-    // without a manual refresh. The folder filter rides along via
-    // hx-include on the hidden input above. The JS-expression gate on
-    // the trigger skips the poll when an inline edit form is open,
-    // otherwise the next tick would wipe whatever the admin was
-    // typing - the poll swaps the whole tbody's innerHTML, including
-    // their half-finished edit.
+    // without a manual refresh. The folder filter + search query ride
+    // along via hx-include. The JS-expression gate on the trigger
+    // skips the poll when an inline edit form is open, otherwise the
+    // next tick would wipe whatever the admin was typing - the poll
+    // swaps the whole tbody's innerHTML, including their
+    // half-finished edit.
     body.push_str(
         "<div class=\"library-list\" id=\"library-list\" \
               hx-get=\"/dashboard/library/cards\" \
               hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
-              hx-include=\"#library-folder-input\" \
+              hx-include=\"#library-folder-input,#library-search-input\" \
               hx-swap=\"innerHTML\">",
     );
-    let filtered = filter_library_rows(&rows, &selected);
+    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
     body.push_str(&render_library_cards_inner(&filtered));
     body.push_str("</div>");
     body.push_str("</div></div>");
@@ -2289,7 +2309,7 @@ pub async fn library_cards(
 ) -> Response {
     let rows = load_library(&state).await.unwrap_or_default();
     let selected = library_selected_folder(&q.folder);
-    let filtered = filter_library_rows(&rows, &selected);
+    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         render_library_cards_inner(&filtered),
@@ -2317,6 +2337,128 @@ pub async fn library_folders(
 
 /// Shared body of the cards container; same output whether we're
 /// rendering the initial page or a polling refresh.
+// ---- /dashboard/library/export (GET) ----
+
+#[derive(Debug, Deserialize)]
+pub struct LibraryExportQuery {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+/// The interchange shape shared with the desktop client: its JSON
+/// importer accepts exactly this (`NewSnippet[]`), and its exporter
+/// emits a superset of it. Tags travel as a plain array.
+#[derive(serde::Serialize)]
+struct ExportEntry {
+    title: String,
+    body: String,
+    tags: Vec<String>,
+    folder_path: Option<String>,
+}
+
+/// Decode the library's stored tags format (",tag1,tag2,") into a
+/// plain list.
+fn decode_tags(stored: &str) -> Vec<String> {
+    stored
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// RFC-4180-ish CSV field escaping; mirrors the desktop client's
+/// csv_field so files round-trip through either parser.
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Download the library as a file, scoped to whatever the current
+/// search + folder filter shows. JSON is the canonical interchange
+/// format (the desktop client imports it directly); CSV carries the
+/// same columns the client reads, plus folder_path.
+pub async fn library_export(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Query(q): Query<LibraryExportQuery>,
+) -> Response {
+    let rows = load_library(&state).await.unwrap_or_default();
+    let selected = library_selected_folder(&q.folder);
+    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
+
+    let format = q.format.as_deref().unwrap_or("json");
+    let date = Utc::now().format("%Y%m%d");
+    let (content_type, filename, payload) = if format == "csv" {
+        let mut out = String::from("title,body,tags,folder_path\n");
+        for r in &filtered {
+            out.push_str(&format!(
+                "{},{},{},{}\n",
+                csv_field(&r.title),
+                csv_field(&r.body),
+                csv_field(&decode_tags(&r.tags).join(";")),
+                csv_field(r.folder_path.as_deref().unwrap_or("")),
+            ));
+        }
+        ("text/csv; charset=utf-8", format!("library-{date}.csv"), out)
+    } else {
+        let entries: Vec<ExportEntry> = filtered
+            .iter()
+            .map(|r| ExportEntry {
+                title: r.title.clone(),
+                body: r.body.clone(),
+                tags: decode_tags(&r.tags),
+                folder_path: r.folder_path.clone().filter(|f| !f.is_empty()),
+            })
+            .collect();
+        let json = serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".into());
+        (
+            "application/json; charset=utf-8",
+            format!("library-{date}.json"),
+            json,
+        )
+    };
+
+    // Count + filter in the audit trail, never content.
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: Some(admin.user_id()),
+            actor_email: &actor_email,
+            action: crate::audit::action::LIBRARY_EXPORT,
+            target_kind: Some("library"),
+            target_id: None,
+            details: Some(serde_json::json!({
+                "count": filtered.len(),
+                "format": format,
+                "q": q.q.as_deref().unwrap_or(""),
+                "folder": selected,
+            })),
+        },
+    )
+    .await;
+
+    (
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        payload,
+    )
+        .into_response()
+}
+
 fn render_library_cards_inner(rows: &[&LibraryRow]) -> String {
     if rows.is_empty() {
         return String::from(
@@ -2531,6 +2673,29 @@ async fn load_library(state: &AppState) -> Result<Vec<LibraryRow>, ()> {
 pub struct LibraryPageQuery {
     #[serde(default)]
     pub folder: Option<String>,
+    /// Free-text filter over title/body/tags. Empty or absent means
+    /// no filter. Joins the folder filter (AND semantics).
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+/// Apply the search-bar filter on top of the folder filter.
+/// Case-insensitive substring match over title, body, and the raw
+/// tags string. In-memory for the same reason as
+/// `filter_library_rows`: the rows are already loaded for the
+/// sidebar counts.
+fn filter_library_query<'a>(rows: Vec<&'a LibraryRow>, q: &Option<String>) -> Vec<&'a LibraryRow> {
+    let needle = q.as_deref().unwrap_or("").trim().to_lowercase();
+    if needle.is_empty() {
+        return rows;
+    }
+    rows.into_iter()
+        .filter(|r| {
+            r.title.to_lowercase().contains(&needle)
+                || r.body.to_lowercase().contains(&needle)
+                || r.tags.to_lowercase().contains(&needle)
+        })
+        .collect()
 }
 
 /// Inline drag-drop + formatting-toolbar wiring for the library page.
@@ -2538,6 +2703,26 @@ pub struct LibraryPageQuery {
 /// global keypress can't trigger formatting on an unrelated input.
 const LIBRARY_PAGE_JS: &str = r#"<script>
 (function () {
+  // ---- Export links: keep hrefs in sync with the live search +
+  // folder filter so the download is exactly what the admin sees ----
+  function syncExportLinks() {
+    var qEl = document.getElementById("library-search-input");
+    var fEl = document.getElementById("library-folder-input");
+    var q = qEl ? qEl.value : "";
+    var folder = fEl ? fEl.value : "";
+    ["json", "csv"].forEach(function (fmt) {
+      var a = document.getElementById("library-export-" + fmt);
+      if (a) {
+        a.href = "/dashboard/library/export?format=" + fmt +
+          "&q=" + encodeURIComponent(q) +
+          "&folder=" + encodeURIComponent(folder);
+      }
+    });
+  }
+  document.body.addEventListener("input", function (e) {
+    if (e.target && e.target.id === "library-search-input") syncExportLinks();
+  });
+  syncExportLinks();
   // ---- Format toolbar: wraps the textarea selection with markdown markers ----
   document.body.addEventListener("click", function (e) {
     var btn = e.target.closest && e.target.closest(".fmt-btn");

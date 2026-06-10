@@ -173,6 +173,46 @@ Caveats:
   as a reason to re-verify, and run one manual update cycle with a
   Linux-built installer before a fleet relies on it.
 
+### Internal fleets: point the updater at your own releases
+
+The stock config's updater endpoint is this project's public GitHub
+releases feed. A fleet running internally-built installers (baked
+server URL, your own cadence) must NOT update from there - a public
+update would replace your build with a stock one. Override the
+endpoint and signing key at build time; no source change needed:
+
+```bash
+npx tauri build --features teams \
+  --config src-tauri/tauri.teams.conf.json \
+  --config '{"plugins":{"updater":{"endpoints":["https://your-host/path/snipdesk-teams-update.json"],"pubkey":"<your minisign public key>"}}}' \
+  --runner cargo-xwin --target x86_64-pc-windows-msvc
+```
+
+(Later `--config` flags merge over earlier ones.) Generate your own
+keypair once with `npx tauri signer generate`, sign builds with it
+via `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
+and host the manifest + installer wherever your fleet can reach
+(a GitLab release's generic package registry works). The manifest
+shape is what `scripts/generate-manifest.ps1` produces - on Linux
+runners, run it with `pwsh` or emit the same JSON with any tool:
+
+```json
+{
+  "version": "0.1.0",
+  "pub_date": "2026-06-10T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "<contents of the -setup.exe.sig file>",
+      "url": "https://your-host/path/YourApp-Teams-setup.exe"
+    }
+  }
+}
+```
+
+Alternatively, an internal fleet that updates by other means (MDM,
+manual reinstalls) can simply not host a manifest: the updater's
+check fails quietly and the app keeps working.
+
 ## Bake a default server URL
 
 Deployment builds can carry the organisation's server URL inside

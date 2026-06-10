@@ -187,6 +187,33 @@ An OIDC provider enabled from env needs its full required set
 (listed above); an incomplete set logs a warning at boot and leaves
 the provider disabled rather than half-configured.
 
+Two Kubernetes-specific notes:
+
+- **The container runs as UID 10001 (non-root).** A PVC mounts
+  root-owned by default, so without an ownership fix the server
+  can't create its SQLite file and exits with a data_dir-unwritable
+  error. Set the pod security context and the volume is writable:
+
+  ```yaml
+  securityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+  ```
+
+- **Claim the first admin before exposing the Ingress.** A fresh
+  database serves the create-first-admin form to whoever reaches
+  `/` first. Port-forward and submit it before the Service is
+  reachable from outside:
+
+  ```
+  kubectl port-forward deploy/snipdesk-server 8080:8080
+  # then open http://127.0.0.1:8080/ and create the admin account
+  ```
+
+Liveness/readiness probes point at `GET /api/health` (200 healthy,
+503 when the database is unreachable).
+
 ## 5. Boot it
 
 Create `docker-compose.yml`:

@@ -129,22 +129,19 @@ async fn setup_creates_admin_and_signs_in() {
         "setup should set the session cookie"
     );
 
-    let (count, role): (i64, String) = sqlx::query_as(
-        "SELECT COUNT(*), MAX(role) FROM users",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("read back");
+    let (count, role): (i64, String) = sqlx::query_as("SELECT COUNT(*), MAX(role) FROM users")
+        .fetch_one(&pool)
+        .await
+        .expect("read back");
     assert_eq!(count, 1);
     assert_eq!(role, "admin");
 
     // An audit row records the bootstrap.
-    let audited: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM audit_log WHERE action = 'user.create'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("audit count");
+    let audited: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'user.create'")
+            .fetch_one(&pool)
+            .await
+            .expect("audit count");
     assert_eq!(audited, 1);
 }
 

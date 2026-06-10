@@ -318,7 +318,11 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
 /// The redirect param tells the server's callback to return us via
 /// the `snipdesk://auth?token=...` deep link.
 #[tauri::command]
-pub fn server_oidc_start_url(app: AppHandle, server_url: String) -> CmdResult<String> {
+pub fn server_oidc_start_url(
+    app: AppHandle,
+    server_url: String,
+    start_path: Option<String>,
+) -> CmdResult<String> {
     let server_url = server_url.trim().trim_end_matches('/').to_string();
     if server_url.is_empty() {
         return Err("server URL is required before signing in".to_string());
@@ -330,12 +334,22 @@ pub fn server_oidc_start_url(app: AppHandle, server_url: String) -> CmdResult<St
     let state = app.state::<AppState>();
     persist_server_url(&app, &server_url)?;
     let _ = state;
+    // `start_path` comes from the /api/auth/methods response (each
+    // provider entry carries its own start_url). When the caller
+    // doesn't supply one (older client builds, or a missing methods
+    // fetch), fall back to the legacy unscoped Google route - the
+    // server keeps that route mounted as a Google shim.
+    let path = start_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.starts_with('/'))
+        .unwrap_or("/api/auth/oidc/start");
     // Percent-encoded `<scheme>://auth` so it survives the query
     // string round-trip without the server having to decode the
     // colon. The scheme characters themselves are URL-safe (lower
     // ASCII letters + digits), so no escaping is needed on them.
     Ok(format!(
-        "{server_url}/api/auth/oidc/start?redirect={DEEP_LINK_SCHEME}%3A%2F%2Fauth"
+        "{server_url}{path}?redirect={DEEP_LINK_SCHEME}%3A%2F%2Fauth"
     ))
 }
 

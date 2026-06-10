@@ -382,6 +382,7 @@ const els = {
   btnServerLogout: document.getElementById("btn-server-logout"),
   btnServerSync: document.getElementById("btn-server-sync"),
   btnServerOidc: document.getElementById("btn-server-oidc"),
+  serverProviders: document.getElementById("server-providers"),
   serverPasswordSection: document.getElementById("server-password-section"),
   serverAuthDivider: document.getElementById("server-auth-divider"),
   serverPasteFallback: document.getElementById("server-paste-fallback"),
@@ -3816,21 +3817,58 @@ function renderSignInSurface() {
   // without the server confirming the provider is wired.
   const showPassword = methods ? methods.password.enabled : true;
   const providers = methods ? methods.providers : [];
-  const hasGoogle = providers.some((p) => p.id === "google");
+  const googleProvider = providers.find((p) => p.id === "google") || null;
+  const otherProviders = providers.filter((p) => p.id !== "google");
   const hasAnyProvider = providers.length > 0;
 
   if (els.serverPasswordSection) {
     els.serverPasswordSection.classList.toggle("hidden", !showPassword);
   }
   if (els.btnServerOidc) {
-    els.btnServerOidc.classList.toggle("hidden", !hasGoogle);
+    // Google button is static markup with the brand-compliant SVG.
+    // Show it when the server reports google as configured; stash
+    // the start_url on a dataset attribute so doServerOidcStart can
+    // read it without re-querying state.serverMethods.
+    els.btnServerOidc.classList.toggle("hidden", !googleProvider);
+    if (googleProvider) {
+      els.btnServerOidc.dataset.startUrl = googleProvider.start_url || "";
+    }
   }
+  // Dynamic buttons for any non-Google provider (currently Keycloak,
+  // and any future IdP the server adds). Rendered inside the same
+  // container as the Google button, after it.
+  renderDynamicProviderButtons(otherProviders);
   if (els.serverAuthDivider) {
     // The divider only earns its place when both sides have content.
     els.serverAuthDivider.classList.toggle("hidden", !(showPassword && hasAnyProvider));
   }
   if (els.serverPasteFallback) {
     els.serverPasteFallback.classList.toggle("hidden", !hasAnyProvider);
+  }
+}
+
+/// Render a button per non-Google provider into #server-providers.
+/// Re-running this is idempotent: existing dynamic buttons are
+/// stripped first, then re-rendered from the current provider list.
+/// The Google button (with its branded SVG) stays in place because
+/// it's static markup; only buttons we own get torn down.
+function renderDynamicProviderButtons(providers) {
+  if (!els.serverProviders) return;
+  // Strip prior dynamic buttons. data-dynamic="1" tags ones we
+  // created; the static Google button has no such attribute.
+  els.serverProviders
+    .querySelectorAll('[data-dynamic="1"]')
+    .forEach((el) => el.remove());
+  for (const p of providers) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-secondary server-oidc-btn";
+    btn.dataset.dynamic = "1";
+    btn.dataset.providerId = p.id;
+    btn.dataset.startUrl = p.start_url || "";
+    btn.textContent = p.display_name || "Sign in with SSO";
+    btn.addEventListener("click", () => doServerOidcStart(p));
+    els.serverProviders.appendChild(btn);
   }
 }
 
@@ -3902,25 +3940,52 @@ async function doServerLogin() {
 /// server returns us via snipdesk://auth?token=... which the deep-
 /// link handler in Rust picks up. The B fallback (paste-token form)
 /// covers the case where the OS didn't claim the URL scheme.
-async function doServerOidcStart() {
+async function doServerOidcStart(provider) {
   if (!TEAMS_BUILD) return;
+  // `provider` is the entry from /api/auth/methods (passed by the
+  // dynamic-button click handler) OR undefined when invoked from the
+  // hardcoded Google button. In the Google case we synthesise a
+  // provider object from the dataset stamped during renderSignInSurface.
+  if (!provider && els.btnServerOidc && els.btnServerOidc.dataset.startUrl) {
+    provider = {
+      id: "google",
+      display_name: "Sign in with Google",
+      start_url: els.btnServerOidc.dataset.startUrl,
+    };
+  }
   // Whitelabel builds hide the URL input; fall back to the build-time
   // baked default so the SSO flow has something to talk to.
   const server_url =
     els.setServerUrl.value.trim() || state.brandDefaults?.server_url || "";
   if (!server_url) {
-    showServerError("Enter the server URL before signing in with Google.");
+    showServerError("Enter the server URL before signing in.");
     return;
   }
+  const isGoogle = provider && provider.id === "google";
+  const triggerButton = isGoogle
+    ? els.btnServerOidc
+    : els.serverProviders?.querySelector(
+        `[data-provider-id="${provider?.id}"]`,
+      );
+  const originalLabel = triggerButton
+    ? isGoogle
+      ? triggerButton.querySelector(".btn-google-label")?.textContent
+      : triggerButton.textContent
+    : null;
   clearServerError();
-  els.btnServerOidc.disabled = true;
-  // Update only the label span; assigning textContent on the button
-  // itself would wipe out the inline Google SVG.
-  const oidcLabel = els.btnServerOidc.querySelector(".btn-google-label");
-  if (oidcLabel) oidcLabel.textContent = "Opening browser...";
+  if (triggerButton) triggerButton.disabled = true;
+  if (isGoogle) {
+    const oidcLabel = els.btnServerOidc.querySelector(".btn-google-label");
+    if (oidcLabel) oidcLabel.textContent = "Opening browser...";
+  } else if (triggerButton) {
+    triggerButton.textContent = "Opening browser...";
+  }
   let startUrl = null;
   try {
-    startUrl = await invoke("server_oidc_start_url", { serverUrl: server_url });
+    startUrl = await invoke("server_oidc_start_url", {
+      serverUrl: server_url,
+      startPath: provider?.start_url || null,
+    });
     // tauri-plugin-shell exports `open` (not `openUrl`). It hands off
     // to the OS default browser. If it throws - permissions misconfig,
     // plugin not loaded in this build, etc. - we DON'T silently fall
@@ -3929,12 +3994,13 @@ async function doServerOidcStart() {
     // paste it into their browser manually.
     const { open: openExternal } = await import("@tauri-apps/plugin-shell");
     await openExternal(startUrl);
+    const label = provider?.display_name?.replace(/^Sign in with /, "") || "SSO";
     setStatus(
-      "Browser opened. Finish signing in with Google there - SnipDesk will pick up automatically.",
+      `Browser opened. Finish signing in with ${label} there - SnipDesk will pick up automatically.`,
       "ok",
     );
   } catch (err) {
-    console.error("Sign in with Google failed:", err);
+    console.error("Sign in failed:", err);
     if (startUrl) {
       // Best-fallback we can do without external tooling: copy the URL
       // to the clipboard so the user can paste it into their browser.
@@ -3950,9 +4016,13 @@ async function doServerOidcStart() {
       showServerError(String(err));
     }
   } finally {
-    els.btnServerOidc.disabled = false;
-    const lbl = els.btnServerOidc.querySelector(".btn-google-label");
-    if (lbl) lbl.textContent = "Sign in with Google";
+    if (triggerButton) triggerButton.disabled = false;
+    if (isGoogle) {
+      const lbl = els.btnServerOidc.querySelector(".btn-google-label");
+      if (lbl) lbl.textContent = originalLabel || "Sign in with Google";
+    } else if (triggerButton && originalLabel != null) {
+      triggerButton.textContent = originalLabel;
+    }
   }
 }
 
@@ -4442,7 +4512,8 @@ function bindEvents() {
     els.btnServerSignup.addEventListener("click", doServerSignup);
     els.btnServerLogout.addEventListener("click", doServerLogout);
     els.btnServerSync.addEventListener("click", doServerSyncNow);
-    if (els.btnServerOidc) els.btnServerOidc.addEventListener("click", doServerOidcStart);
+    if (els.btnServerOidc)
+      els.btnServerOidc.addEventListener("click", () => doServerOidcStart());
     if (els.btnServerPasteToken)
       els.btnServerPasteToken.addEventListener("click", doServerPasteToken);
     if (els.trashClose) els.trashClose.addEventListener("click", closeTrashModal);

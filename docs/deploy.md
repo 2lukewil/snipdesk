@@ -535,7 +535,7 @@ redirect_uri = "https://snippets.yourcompany.com/api/auth/oidc/keycloak/callback
 # Optional: this realm role grants admin in SnipDesk. Re-checked on
 # every sign-in, so revoking it in Keycloak demotes on next sign-in.
 # admin_role = "snipdesk-admin"
-# Button label. Falls back to "Sign in with SSO" when unset.
+# Button label. Falls back to "Sign in with Keycloak" when unset.
 display_name = "Sign in with Acme SSO"
 ```
 

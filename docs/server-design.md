@@ -258,7 +258,7 @@ can be configured per server:
 - **Keycloak** (or any compliant OIDC IdP whose discovery document
   is at `<issuer_url>/.well-known/openid-configuration`) via
   `[oidc.keycloak]`. Operator-controlled button label via
-  `display_name` (fallback "Sign in with SSO").
+  `display_name` (fallback "Sign in with Keycloak").
 
 Per-provider routes are the canonical URL surface:
 

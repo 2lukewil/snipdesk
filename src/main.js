@@ -911,6 +911,10 @@ const onboarding = {
         const label = oidcBtn.querySelector(".btn-google-label");
         if (label) label.textContent = "Signed in";
       }
+      // Dynamic provider buttons retire alongside the Google one.
+      document
+        .querySelectorAll("#onboarding-providers button")
+        .forEach((b) => (b.disabled = true));
       if (next) next.removeAttribute("disabled");
 
       // Auto-advance off the signin panel once OIDC completes. The
@@ -944,12 +948,23 @@ const onboarding = {
         const label = oidcBtn.querySelector(".btn-google-label");
         if (label) label.textContent = "Sign in with Google";
       }
+      document
+        .querySelectorAll("#onboarding-providers button")
+        .forEach((b) => (b.disabled = false));
       if (next) next.setAttribute("disabled", "");
     }
   },
 
-  async startOidc() {
+  async startOidc(provider) {
     if (!TEAMS_BUILD) return;
+    // No explicit provider = the static Google button. Resolve its
+    // methods entry (for the per-provider start_url) when we have
+    // one; otherwise the backend falls back to the legacy Google
+    // start route.
+    if (!provider) {
+      provider =
+        state.serverMethods?.providers?.find((p) => p.id === "google") || null;
+    }
     const urlInput = document.getElementById("onboarding-server-url");
     const status = document.getElementById("onboarding-signin-status");
     // Whitelabel builds hide the URL input and pre-fill from
@@ -991,7 +1006,10 @@ const onboarding = {
       console.warn("onboarding: pre-flight session validation failed", err);
     }
     try {
-      const startUrl = await invoke("server_oidc_start_url", { serverUrl: url });
+      const startUrl = await invoke("server_oidc_start_url", {
+        serverUrl: url,
+        startPath: provider?.start_url || null,
+      });
       const { open: openExternal } = await import("@tauri-apps/plugin-shell");
       await openExternal(startUrl);
       if (status) status.textContent = "Browser opened. Finish signing in there.";
@@ -3847,6 +3865,37 @@ function formatSyncTimestamp(unixSecs) {
   return d.toLocaleString();
 }
 
+/// Tooltip for the red sync glyph. The raw error from the backend is
+/// engineer-speak ("network error: <ureq detail>"); translate the
+/// known shapes into something a support agent can act on, and keep
+/// the raw detail on a second line for bug reports.
+function syncFailureTooltip(rawError) {
+  const raw = String(rawError || "");
+  let friendly;
+  if (raw.includes("couldn't store the refreshed session token")) {
+    friendly =
+      "Your session was renewed but couldn't be saved on this device. If you get signed out later, just sign in again.";
+  } else if (raw.startsWith("network error")) {
+    friendly =
+      "The server can't be reached right now. It may be down, or this device may be offline.";
+  } else if (raw.includes("unauthorized")) {
+    friendly =
+      "The server didn't accept this session. Signing out and back in should fix it.";
+  } else if (raw.startsWith("bad response")) {
+    friendly =
+      "The server replied in an unexpected way. The app and server versions may not match.";
+  } else {
+    friendly = raw;
+  }
+  let tip =
+    `Sync isn't working: ${friendly}\n` +
+    "Your snippets keep working on this device, and syncing resumes automatically once the server is reachable.";
+  if (friendly !== raw) {
+    tip += `\nDetails: ${raw}`;
+  }
+  return tip;
+}
+
 // ---------- Trash ----------
 
 /// Open the trash modal: local snapshots always, server tombstones
@@ -4138,6 +4187,16 @@ function renderSignInSurface() {
   // and any future IdP the server adds). Rendered inside the same
   // container as the Google button, after it.
   renderDynamicProviderButtons(otherProviders);
+  // The onboarding sign-in panel mirrors the same surface: the
+  // branded Google button only when the server reports Google, plus
+  // a button per other provider. Before this, onboarding showed ONLY
+  // the Google button, so a Keycloak-only server greeted new users
+  // with a sign-in that didn't exist.
+  const obGoogle = document.getElementById("onboarding-signin-oidc");
+  if (obGoogle && methods) {
+    obGoogle.classList.toggle("hidden", !googleProvider);
+  }
+  renderOnboardingProviderButtons(otherProviders);
   if (els.serverAuthDivider) {
     // The divider only earns its place when both sides have content.
     els.serverAuthDivider.classList.toggle("hidden", !(showPassword && hasAnyProvider));
@@ -4166,9 +4225,38 @@ function renderDynamicProviderButtons(providers) {
     btn.dataset.dynamic = "1";
     btn.dataset.providerId = p.id;
     btn.dataset.startUrl = p.start_url || "";
-    btn.textContent = p.display_name || "Sign in with SSO";
+    btn.textContent = p.display_name || providerFallbackLabel(p);
     btn.addEventListener("click", () => doServerOidcStart(p));
     els.serverProviders.appendChild(btn);
+  }
+}
+
+/// "Sign in with Keycloak", "Sign in with Okta", ... - name the
+/// provider rather than the meaningless-next-to-other-buttons
+/// "Sign in with SSO". Only reached when the server sent an empty
+/// display_name (current servers always send one).
+function providerFallbackLabel(p) {
+  const id = (p?.id || "").trim();
+  if (!id) return "Sign in with SSO";
+  return `Sign in with ${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+}
+
+/// Onboarding mirror of renderDynamicProviderButtons: one button per
+/// non-Google provider on the sign-in panel, wired to the onboarding
+/// OIDC flow (which persists the URL and pre-validates inherited
+/// sessions before opening the browser). Idempotent re-render.
+function renderOnboardingProviderButtons(providers) {
+  const host = document.getElementById("onboarding-providers");
+  if (!host) return;
+  host.replaceChildren();
+  for (const p of providers) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-secondary server-oidc-btn";
+    btn.dataset.providerId = p.id;
+    btn.textContent = p.display_name || providerFallbackLabel(p);
+    btn.addEventListener("click", () => onboarding.startOidc(p));
+    host.appendChild(btn);
   }
 }
 
@@ -4193,7 +4281,7 @@ function renderServerStatus() {
       els.syncIndicator.classList.toggle("err", hasErrors);
       els.syncIndicator.classList.toggle("ok", !hasErrors);
       els.syncIndicator.title = failing
-        ? `Sync failing: ${st.last_error}. Retrying automatically; your snippets keep working locally.`
+        ? syncFailureTooltip(st.last_error)
         : ls
           ? `Last sync ${formatSyncTimestamp(ls.at)} - ${ls.pushed} pushed, ${ls.pulled} pulled` +
             (ls.errors ? `, ${ls.errors} errors` : "")

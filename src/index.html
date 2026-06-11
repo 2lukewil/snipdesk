@@ -233,6 +233,9 @@
               </svg>
               <span class="btn-google-label">Sign in with Google</span>
             </button>
+            <!-- Non-Google providers (Keycloak etc.) render here as a
+                 button each, mirroring the Settings sign-in surface. -->
+            <div id="onboarding-providers" class="server-providers"></div>
             <details class="onboarding-paste-fallback">
               <summary>Browser didn't open SnipDesk? Paste sign-in token</summary>
               <p class="hint-inline">If your browser blocked or timed out the auto-launch, copy the token shown on the sign-in success page and paste it here.</p>

@@ -147,7 +147,7 @@ async fn methods_advertises_keycloak_with_config_display_name() {
 }
 
 #[tokio::test]
-async fn methods_keycloak_falls_back_to_sso_label_when_display_name_unset() {
+async fn methods_keycloak_falls_back_to_provider_label_when_display_name_unset() {
     let (_pool, mut state) = fresh_state().await;
     let mut cfg = keycloak_cfg();
     cfg.display_name = None;
@@ -155,7 +155,7 @@ async fn methods_keycloak_falls_back_to_sso_label_when_display_name_unset() {
     let app = router(state);
     let (_, body) = get_json(&app, "/api/auth/methods").await;
     let providers = body["providers"].as_array().expect("providers array");
-    assert_eq!(providers[0]["display_name"], "Sign in with SSO");
+    assert_eq!(providers[0]["display_name"], "Sign in with Keycloak");
 }
 
 #[tokio::test]

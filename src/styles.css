@@ -402,6 +402,11 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
 .server-oidc-btn {
   width: 100%;
 }
+/* Onboarding's dynamic provider buttons stack under the Google
+   button; breathing room between them and whatever sits above. */
+#onboarding-providers .server-oidc-btn {
+  margin-top: 8px;
+}
 
 /* Official "Sign in with Google" button. Follows the Google Identity
    branding guidelines: white background + #DADCE0 border in light mode,

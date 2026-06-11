@@ -108,8 +108,8 @@ master_key = ""
 # whose discovery document lives at issuer_url/.well-known/openid-
 # configuration). Independent of [oidc.google] - configure either,
 # both, or neither. When set the desktop client + dashboard render a
-# sign-in button driven by `display_name` (or "Sign in with SSO" if
-# unset).
+# sign-in button driven by `display_name` (or "Sign in with Keycloak"
+# if unset).
 #
 # [oidc.keycloak]
 # client_id = "snipdesk"
@@ -132,7 +132,7 @@ master_key = ""
 # # Same email-domain filter as Google. Applied after the realm-role
 # # check.
 # allowed_email_domains = ["yourcompany.com"]
-# # Label shown on the sign-in button. Falls back to "Sign in with SSO".
+# # Label shown on the sign-in button. Falls back to "Sign in with Keycloak".
 # display_name = "Sign in with Company SSO"
 
 # Deep-link URL schemes the OIDC start endpoint will trust in its

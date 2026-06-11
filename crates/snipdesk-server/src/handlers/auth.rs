@@ -101,14 +101,15 @@ pub async fn methods(State(state): State<AppState>) -> Json<AuthMethodsResponse>
     if let Some(kc) = state.oidc_keycloak.as_ref() {
         providers.push(AuthMethodProvider {
             id: "keycloak".to_string(),
-            // Operator-controlled label; the fallback matches what
-            // most internal-IdP deployments want shown ("Sign in
-            // with SSO"), and operators who run a branded realm
-            // can override with anything via `display_name`.
+            // Operator-controlled label; the fallback names the
+            // provider so users facing several buttons can tell
+            // them apart ("Sign in with SSO" next to "Sign in with
+            // Google" said nothing). Operators who run a branded
+            // realm can still override via `display_name`.
             display_name: kc
                 .display_name
                 .clone()
-                .unwrap_or_else(|| "Sign in with SSO".to_string()),
+                .unwrap_or_else(|| "Sign in with Keycloak".to_string()),
             start_url: "/api/auth/oidc/keycloak/start".to_string(),
         });
     }

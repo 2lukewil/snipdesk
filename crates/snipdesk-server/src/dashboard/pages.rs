@@ -330,7 +330,7 @@ fn configured_dashboard_sso(state: &AppState) -> Vec<(String, String)> {
         let label = kc
             .display_name
             .clone()
-            .unwrap_or_else(|| "Sign in with SSO".to_string());
+            .unwrap_or_else(|| "Sign in with Keycloak".to_string());
         providers.push(("keycloak".to_string(), label));
     }
     providers

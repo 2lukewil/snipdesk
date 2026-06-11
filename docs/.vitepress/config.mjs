@@ -92,6 +92,7 @@ export default defineConfig({
           items: [
             { text: "Build from source", link: "/build" },
             { text: "Auto-update & release flow", link: "/auto-update" },
+            { text: "CI reference (GitLab, Linux runners)", link: "/ci-reference" },
             { text: "Whitelabel brand bundles", link: "/whitelabel" },
           ],
         },

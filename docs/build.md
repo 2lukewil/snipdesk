@@ -250,6 +250,43 @@ A whitelabel brand bundle's `server_url` field does the same thing
 and takes precedence over the environment variable when both are
 present.
 
+## Managed server URL (no rebuild)
+
+The runtime alternative to baking: point STOCK builds at your
+server with a machine-level config that an administrator deploys
+and edits like any other managed file. The client checks, highest
+priority first:
+
+1. The `SNIPDESK_SERVER_URL` environment variable (set machine-wide
+   via Group Policy, Intune, or a wrapper script).
+2. A machine config file:
+
+   | OS | Path |
+   |---|---|
+   | Windows | `C:\ProgramData\snipdesk\config.json` |
+   | macOS | `/Library/Application Support/snipdesk/config.json` |
+   | Linux | `/etc/snipdesk/config.json` |
+
+   ```json
+   { "server_url": "https://snippets.yourcompany.com" }
+   ```
+
+3. The compile-time baked URL from the section above.
+
+A managed URL behaves exactly like a baked one - the URL fields
+disappear from Settings and onboarding, and every launch re-adopts
+the managed value over anything previously persisted. The
+difference is operational: if the server ever moves, edit the file
+(or the GPO variable) and every install follows on its next launch.
+No rebuild, no release tag, no reinstall. Users sign in again after
+a URL change, since auth tokens are keyed to the server that issued
+them.
+
+This means a fleet can run completely stock installers straight
+from the public releases page: deploy the config file alongside the
+installer in the same MDM package and the clients are locked to
+your server from first launch.
+
 ## Whitelabel (per-customer builds)
 
 Building a customer-branded installer or server image is its own flow.

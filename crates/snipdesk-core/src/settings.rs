@@ -223,6 +223,69 @@ fn default_server_url() -> String {
     baked.trim().trim_end_matches('/').to_string()
 }
 
+/// RUNTIME-managed server URL - the no-rebuild counterpart to the
+/// baked default above. Two sources, highest priority first:
+///
+///   1. The `SNIPDESK_SERVER_URL` environment variable (set
+///      machine-wide via GPO / Intune / a wrapper script).
+///   2. A machine-level config file an administrator deploys next
+///      to nothing else the app owns - per-user app data stays
+///      untouched. Windows: %ProgramData%\snipdesk\config.json;
+///      macOS: /Library/Application Support/snipdesk/config.json;
+///      Linux: /etc/snipdesk/config.json.
+///      Shape: { "server_url": "https://snippets.example.com" }
+///
+/// When present, the value is authoritative exactly like a baked
+/// brand URL: startup re-adopts it over whatever settings.json
+/// persisted (so editing the file re-points every install on next
+/// launch, no rebuild), and the UI hides the URL inputs. Absent or
+/// unreadable means "not managed" - fall through to the baked
+/// default / the user's own setting.
+pub fn managed_server_url() -> Option<String> {
+    let normalize = |s: &str| {
+        let t = s.trim().trim_end_matches('/').to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    };
+    if let Ok(v) = std::env::var("SNIPDESK_SERVER_URL") {
+        if let Some(url) = normalize(&v) {
+            return Some(url);
+        }
+    }
+    let path = managed_config_path()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    // Tolerate a BOM from Notepad / PowerShell-written files.
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let parsed: serde_json::Value = serde_json::from_str(raw).ok()?;
+    normalize(parsed.get("server_url")?.as_str()?)
+}
+
+/// OS-conventional machine-wide (not per-user) config location.
+fn managed_config_path() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var("ProgramData").ok()?;
+        Some(
+            std::path::PathBuf::from(base)
+                .join("snipdesk")
+                .join("config.json"),
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(std::path::PathBuf::from(
+            "/Library/Application Support/snipdesk/config.json",
+        ))
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        Some(std::path::PathBuf::from("/etc/snipdesk/config.json"))
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {

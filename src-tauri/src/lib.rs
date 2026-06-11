@@ -129,22 +129,25 @@ pub fn run() {
             // Settings before logging/backup - both read retention windows from it.
             let settings = settings::Settings::load_or_default(&settings_path);
 
-            // Deployment builds bake a default server URL (brand
-            // bundle or SNIPDESK_DEFAULT_SERVER_URL at compile time).
-            // The baked value is authoritative: if an update ships a
-            // new URL, adopt it over whatever an older release
-            // persisted, so the operator can move the fleet by
-            // pushing a tag. Stock builds bake "" and never enter
-            // this branch, so a self-managed user's hand-entered URL
-            // is untouched.
+            // Deployment builds carry a locked server URL from one of
+            // two places: a RUNTIME-managed source (SNIPDESK_SERVER_URL
+            // env var or the machine-level config.json - editable by an
+            // admin with no rebuild) or, failing that, the COMPILE-TIME
+            // baked default (brand bundle / SNIPDESK_DEFAULT_SERVER_URL).
+            // Whichever wins is authoritative: adopt it over whatever an
+            // older launch persisted, so the operator can move the fleet
+            // by editing one file (or by pushing a tag). Stock builds
+            // with neither source never enter this branch, so a
+            // self-managed user's hand-entered URL is untouched.
             #[cfg(feature = "teams")]
             let settings = {
                 let mut settings = settings;
-                let baked = settings::Settings::default().server_url;
-                if !baked.is_empty() && settings.server_url != baked {
-                    settings.server_url = baked;
+                let locked = settings::managed_server_url()
+                    .unwrap_or_else(|| settings::Settings::default().server_url);
+                if !locked.is_empty() && settings.server_url != locked {
+                    settings.server_url = locked;
                     if let Err(e) = settings.save(&settings_path) {
-                        eprintln!("failed to persist baked server URL: {e}");
+                        eprintln!("failed to persist locked server URL: {e}");
                     }
                 }
                 settings

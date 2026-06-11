@@ -38,6 +38,15 @@ them):
 | `UPDATER_ENDPOINT` | Where built clients poll for updates. With the registry-hosted manifest below: `https://gitlab.com/api/v4/projects/<PROJECT_ID>/packages/generic/snipdesk-client/latest/snipdesk-teams-update.json` |
 | `DEFAULT_SERVER_URL` | The snipdesk-server URL baked into the client so end users never type it (Settings hides the field). Example: `https://snippets.example.com` |
 
+Baking the URL is optional. The runtime alternative: deploy
+`C:\ProgramData\snipdesk\config.json` containing
+`{ "server_url": "https://snippets.example.com" }` to each machine
+(GPO/Intune file deployment). It locks and hides the URL exactly
+like a baked build, and if the server address ever changes you edit
+that one managed file instead of cutting a new client release. The
+`SNIPDESK_SERVER_URL` environment variable works too. Precedence:
+env var, then config.json, then the baked value.
+
 No registry credentials are needed: jobs push to the project's own
 container/package registries with the built-in `CI_JOB_TOKEN`.
 

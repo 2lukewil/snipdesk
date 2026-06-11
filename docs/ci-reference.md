@@ -40,12 +40,21 @@ them):
 
 Baking the URL is optional. The runtime alternative: deploy
 `C:\ProgramData\snipdesk\config.json` containing
-`{ "server_url": "https://snippets.example.com" }` to each machine
-(GPO/Intune file deployment). It locks and hides the URL exactly
-like a baked build, and if the server address ever changes you edit
-that one managed file instead of cutting a new client release. The
-`SNIPDESK_SERVER_URL` environment variable works too. Precedence:
-env var, then config.json, then the baked value.
+`{ "server_url": "https://snippets.example.com" }` to each machine.
+It locks and hides the URL exactly like a baked build, and if the
+server address ever changes you edit that one managed file instead
+of cutting a new client release. No management software needed -
+creating the folder doesn't require admin rights, so this one-liner
+(run once per machine, shippable to the team as a `.cmd`) does it:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:ProgramData\snipdesk" | Out-Null; Set-Content "$env:ProgramData\snipdesk\config.json" '{ "server_url": "https://snippets.example.com" }' -Encoding ascii
+```
+
+The `SNIPDESK_SERVER_URL` environment variable works too (set
+machine-wide, not via a wrapper script - autostart launches the
+real exe and would bypass a wrapper). Precedence: env var, then
+config.json, then the baked value.
 
 No registry credentials are needed: jobs push to the project's own
 container/package registries with the built-in `CI_JOB_TOKEN`.

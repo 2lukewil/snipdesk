@@ -287,6 +287,29 @@ from the public releases page: deploy the config file alongside the
 installer in the same MDM package and the clients are locked to
 your server from first launch.
 
+### Without management software
+
+No MDM, GPO, or Intune required. Creating a subfolder under
+`%ProgramData%` doesn't need admin rights on Windows, so any user
+can run this one-liner once (paste into PowerShell, or ship it to
+the team as a `.cmd` next to the installer):
+
+```powershell
+New-Item -ItemType Directory -Force "$env:ProgramData\snipdesk" | Out-Null; Set-Content "$env:ProgramData\snipdesk\config.json" '{ "server_url": "https://snippets.yourcompany.com" }' -Encoding ascii
+```
+
+The file persists across app updates and reinstalls. If the server
+address ever changes, send the team the same one-liner with the new
+URL; each machine follows on its next launch.
+
+Avoid the wrapper-script variant of the env var (a launcher that
+sets `SNIPDESK_SERVER_URL` and then starts the app): the variable
+only applies to processes started through the wrapper, and the
+autostart entry the app registers at login points at the real
+executable, so every boot would launch unmanaged. The env var
+source is intended for setups that can set it machine-wide; when in
+doubt, use the config file.
+
 ## Whitelabel (per-customer builds)
 
 Building a customer-branded installer or server image is its own flow.

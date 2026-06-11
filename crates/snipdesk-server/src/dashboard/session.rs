@@ -69,9 +69,36 @@ pub struct DashboardSession {
     pub claims: Claims,
 }
 
+/// Auth-failure response that knows about htmx. Plain navigations
+/// get a 303; htmx fragment requests (HX-Request header) get an
+/// HX-Redirect, which tells htmx to navigate the WHOLE page there.
+/// Without this, a dead session (server restart, secret rotation,
+/// expiry) made every polling fragment FOLLOW the redirect and swap
+/// the login or first-run page INTO the element it was refreshing -
+/// e.g. the setup page rendered inside the users table.
+fn auth_redirect(parts: &Parts, to: &str) -> Response {
+    let is_htmx = parts
+        .headers
+        .get("hx-request")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if is_htmx {
+        (
+            axum::http::StatusCode::OK,
+            [(
+                axum::http::HeaderName::from_static("hx-redirect"),
+                to.to_string(),
+            )],
+        )
+            .into_response()
+    } else {
+        Redirect::to(to).into_response()
+    }
+}
+
 #[axum::async_trait]
 impl FromRequestParts<AppState> for DashboardSession {
-    type Rejection = Redirect;
+    type Rejection = Response;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -81,9 +108,9 @@ impl FromRequestParts<AppState> for DashboardSession {
         let token = jar
             .get(COOKIE_NAME)
             .map(|c| c.value().to_string())
-            .ok_or_else(|| Redirect::to("/"))?;
-        let claims =
-            verify_token(&token, &state.jwt_secret).map_err(|_| Redirect::to("/?expired=1"))?;
+            .ok_or_else(|| auth_redirect(parts, "/"))?;
+        let claims = verify_token(&token, &state.jwt_secret)
+            .map_err(|_| auth_redirect(parts, "/?expired=1"))?;
         Ok(Self { claims })
     }
 }

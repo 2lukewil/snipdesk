@@ -201,3 +201,56 @@ async fn root_shows_login_once_an_account_exists() {
         "setup form should be gone once an account exists"
     );
 }
+
+/// Regression: a dead session (server restart with a new JWT secret,
+/// expiry) used to make htmx polling fragments FOLLOW the auth
+/// redirect and swap the login/setup page into the element they were
+/// refreshing - the first-run setup box rendered inside the users
+/// table. htmx requests must get an HX-Redirect instead, which
+/// navigates the whole page.
+#[tokio::test]
+async fn dead_session_htmx_poll_gets_full_page_redirect() {
+    let (_pool, app) = make_app().await;
+
+    // Stale/garbage cookie + the HX-Request marker htmx sends.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/users/rows")
+                .header("cookie", "snipdesk_dashboard=not-a-valid-jwt")
+                .header("hx-request", "true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "htmx auth failure is a 200 + HX-Redirect, not a 303"
+    );
+    let hx = resp
+        .headers()
+        .get("hx-redirect")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(hx, "/?expired=1", "must carry HX-Redirect");
+
+    // The same dead session WITHOUT the htmx marker keeps the plain
+    // browser redirect.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/dashboard/users/rows")
+                .header("cookie", "snipdesk_dashboard=not-a-valid-jwt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+}

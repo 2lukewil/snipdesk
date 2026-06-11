@@ -217,7 +217,7 @@ pub async fn index(
     // indexed table; once a single user exists this branch never runs
     // again.
     if user_count(&state).await == Some(0) {
-        return render_setup_page(&state, q.error.as_deref()).into_response();
+        return render_setup_page(&state, q.error.as_deref(), q.expired.is_some()).into_response();
     }
     // If the cookie is present and decodes to an admin claim, skip the
     // login form and send them in. (Members logged into the cookie get
@@ -455,7 +455,7 @@ async fn user_count(state: &AppState) -> Option<i64> {
 /// Render the create-first-admin page. `error` comes back through the
 /// `?error=` query param after a rejected submit so the form can show
 /// what to fix.
-fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
+fn render_setup_page(state: &AppState, error: Option<&str>, expired: bool) -> Html<String> {
     let banner = match error {
         Some("setup_email") => {
             "<div class=\"banner error\">That doesn't look like an email address.</div>"
@@ -466,6 +466,19 @@ fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
         Some("setup_name") => "<div class=\"banner error\">Enter a display name.</div>",
         Some("setup_failed") => {
             "<div class=\"banner error\">Setup failed. Check the server logs and try again.</div>"
+        }
+        // SSO callback failures bounce here on zero-user servers;
+        // swallowing the code re-rendered the page with no hint that
+        // anything went wrong.
+        Some("signin") => {
+            "<div class=\"banner error\">Sign-in failed. Try again or check the server logs.</div>"
+        }
+        // A dead session from a previous server instance can land
+        // here (e.g. the database was reset); say so rather than
+        // looking like a page the user has never seen before.
+        _ if expired => {
+            "<div class=\"banner info\">Your previous session is no longer valid - \
+             this server has no accounts yet. Create or sign in the first one below.</div>"
         }
         _ => "",
     };

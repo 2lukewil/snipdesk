@@ -67,3 +67,6 @@ brands/*
 snipdesk-server.toml
 crates/snipdesk-server/snipdesk-server.toml
 crates/snipdesk-server/data/
+
+# Local editor/agent tooling
+.claude/

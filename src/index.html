@@ -182,26 +182,6 @@
         </div>
       </section>
 
-      <!-- Import preview modal: folder tree with per-snippet
-           checkboxes. Populated by buildImportTree() in main.js from
-           the parse_snippet_file IPC result. -->
-      <section id="import-preview" class="modal hidden">
-        <div class="modal-card wide">
-          <h2 id="imp-title">Import preview</h2>
-          <p class="hint-block" id="imp-hint"></p>
-          <div class="imp-toolbar">
-            <label class="row"><input type="checkbox" id="imp-master" /> Select all</label>
-            <input id="imp-search" type="search" placeholder="Filter by title" autocomplete="off" />
-            <span id="imp-count" class="hint-inline"></span>
-          </div>
-          <div id="imp-tree" class="modal-body imp-tree"></div>
-          <div class="modal-actions">
-            <button id="imp-cancel" class="btn-secondary" type="button">Cancel</button>
-            <button id="imp-confirm" class="btn-primary" type="button">Import selected</button>
-          </div>
-        </div>
-      </section>
-
       <!-- Variable prompt modal -->
       <section id="var-prompt" class="modal hidden">
         <div class="modal-card">
@@ -244,10 +224,13 @@
             </p>
             <button id="onboarding-signin-oidc" class="btn-google btn-block" type="button" disabled>
               <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
-                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
-                <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
-                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+                <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+              </svg>
+              <svg class="btn-check-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M20 6L9 17l-5-5" fill="none" stroke="#34A853" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
               <span class="btn-google-label">Sign in with Google</span>
             </button>
@@ -265,7 +248,7 @@
               <summary>Other sign-in options</summary>
               <p class="hint-inline">For email/password sign-in, open Settings -&gt; Server after this tour.</p>
             </details>
-            <p id="onboarding-signin-status" class="hint-inline"></p>
+            <p id="onboarding-signin-status" class="onboarding-status"></p>
             <div class="onboarding-actions">
               <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip for now</button>
@@ -277,7 +260,7 @@
             <h2>Try your hotkey</h2>
             <p>SnipDesk lives in the background. Press <kbd id="onboarding-hotkey-label">Alt+Space</kbd> from any window to summon it.</p>
             <p class="onboarding-instruction">Click below and we'll hide the window so you can try it for real.</p>
-            <p id="onboarding-hotkey-status" class="hint-inline"></p>
+            <p id="onboarding-hotkey-status" class="onboarding-status"></p>
             <div class="onboarding-actions">
               <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
               <button class="btn-secondary" data-onboarding-skip>Skip</button>
@@ -288,9 +271,12 @@
 
           <div class="onboarding-panel" data-step="typing">
             <h2>How fast do you type?</h2>
-            <p>Type the passage below. We'll measure your speed so the dashboard's time-saved estimate stays honest. Skip if you'd rather not.</p>
-            <div id="onboarding-typing-phrase" class="onboarding-phrase"></div>
-            <textarea id="onboarding-typing-input" class="onboarding-typing-input" spellcheck="false" autocomplete="off"></textarea>
+            <p>Type the passage below - your keystrokes fill it in as you go. We'll measure your speed so the dashboard's time-saved estimate stays honest. Skip if you'd rather not.</p>
+            <div id="onboarding-typing-phrase" class="onboarding-phrase" tabindex="-1"></div>
+            <!-- Invisible capture field: the phrase above is the only
+                 visible "box". Typing lands here; per-character state
+                 paints onto the phrase spans. -->
+            <input id="onboarding-typing-input" class="typing-capture" type="text" autocomplete="off" spellcheck="false" aria-label="Type the passage" />
             <div id="onboarding-typing-result" class="onboarding-result hidden"></div>
             <div class="onboarding-actions">
               <button class="btn-secondary onboarding-back" data-onboarding-back type="button">Back</button>
@@ -340,54 +326,72 @@
             <button class="tab" data-tab="team" role="tab">Server</button>
             <button class="tab" data-tab="editor" role="tab">Editor</button>
             <button class="tab" data-tab="savings" role="tab">Savings</button>
+            <button class="tab" data-tab="import" role="tab">Import</button>
+            <button class="tab" data-tab="export" role="tab">Export</button>
             <button class="tab" data-tab="about" role="tab">About</button>
           </nav>
 
           <div class="modal-body tab-body">
             <!-- General -->
             <div class="tab-panel active" data-tab="general">
-              <label>
-                <span>Paste behavior</span>
-                <select id="set-paste-mode">
-                  <option value="auto_paste">Auto-paste into active window</option>
-                  <option value="clipboard">Copy to clipboard only</option>
-                </select>
-              </label>
-              <label>
-                <span>Auto-paste delay (ms)</span>
-                <input id="set-delay" type="number" min="0" max="2000" step="10" />
-              </label>
-              <label>
-                <span>Sort snippets</span>
-                <select id="set-sort-mode">
-                  <option value="usage">Most used first</option>
-                  <option value="alphabetical">Alphabetical</option>
-                </select>
-              </label>
-              <label class="row">
-                <input id="set-close" type="checkbox" />
-                <span>Close window after paste</span>
-              </label>
-              <label class="row">
-                <input id="set-autostart" type="checkbox" />
-                <span>Start SnipDesk when Windows starts</span>
-              </label>
-              <label class="row">
-                <input id="set-close-to-tray" type="checkbox" />
-                <span>Minimize to tray on close (X button)</span>
-              </label>
-              <label class="row">
-                <input id="set-minimize-to-tray" type="checkbox" />
-                <span>Minimize to tray on minimize</span>
-              </label>
-              <label class="row">
-                <input id="set-start-in-tray" type="checkbox" />
-                <span>Start hidden in tray <em>- launches silently instead of opening the window</em></span>
-              </label>
-              <label class="row">
-                <input id="set-auto-check-updates" type="checkbox" />
-                <span>Check for updates automatically <em>- on launch, notify when a new version is available</em></span>
-              </label>
+              <div class="general-selects">
+                <label>
+                  <span>Paste behavior</span>
+                  <select id="set-paste-mode">
+                    <option value="auto_paste">Auto-paste into active window</option>
+                    <option value="clipboard">Copy to clipboard only</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Auto-paste delay (ms)</span>
+                  <input id="set-delay" type="number" min="0" max="2000" step="10" />
+                </label>
+                <label>
+                  <span>Sort snippets</span>
+                  <select id="set-sort-mode">
+                    <option value="usage">Most used first</option>
+                    <option value="alphabetical">Alphabetical</option>
+                  </select>
+                </label>
+              </div>
+              <div class="toggle-list">
+                <label class="row">
+                  <input id="set-close" type="checkbox" />
+                  <span>Close window after paste</span>
+                </label>
+                <label class="row">
+                  <input id="set-autostart" type="checkbox" />
+                  <span>Start SnipDesk when Windows starts</span>
+                </label>
+                <label class="row">
+                  <input id="set-close-to-tray" type="checkbox" />
+                  <span>Minimize to tray on close (X button)</span>
+                </label>
+                <label class="row">
+                  <input id="set-minimize-to-tray" type="checkbox" />
+                  <span>Minimize to tray on minimize</span>
+                </label>
+                <label class="row">
+                  <input id="set-start-in-tray" type="checkbox" />
+                  <span>Start hidden in tray <em>- launches silently instead of opening the window</em></span>
+                </label>
+                <label class="row">
+                  <input id="set-hide-on-blur" type="checkbox" />
+                  <span>Hide to tray when focus is lost <em>- launcher-style click-away dismissal</em></span>
+                </label>
+                <label class="row">
+                  <input id="set-always-on-top" type="checkbox" />
+                  <span>Always on top <em>- keep SnipDesk above other windows</em></span>
+                </label>
+                <label class="row">
+                  <input id="set-auto-check-updates" type="checkbox" />
+                  <span>Check for updates automatically <em>- on launch, notify when a new version is available</em></span>
+                </label>
+                <label class="row" id="row-show-team-inline">
+                  <input id="set-show-team-inline" type="checkbox" />
+                  <span>Show shared snippets in All / folder views <em>- when off, they only appear under Team Library</em></span>
+                </label>
+              </div>
               <div class="row footer-row">
                 <button id="btn-replay-onboarding" type="button" class="btn-secondary">Replay onboarding</button>
                 <em class="hint-inline">Walks you through the first-run setup again.</em>
@@ -427,14 +431,6 @@
               <label class="row">
                 <input id="set-show-usage" type="checkbox" />
                 <span>Show usage count <em>- "N usages" badge beside each snippet</em></span>
-              </label>
-              <label class="row">
-                <input id="set-hide-on-blur" type="checkbox" />
-                <span>Hide to tray when focus is lost <em>- launcher-style click-away dismissal</em></span>
-              </label>
-              <label class="row">
-                <input id="set-always-on-top" type="checkbox" />
-                <span>Always on top <em>- keep SnipDesk above other windows</em></span>
               </label>
             </div>
 
@@ -516,10 +512,10 @@
                   <div id="server-providers">
                     <button id="btn-server-oidc" class="btn-google server-oidc-btn hidden" type="button">
                       <svg class="btn-google-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-                        <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
-                        <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
-                        <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238A11.91 11.91 0 0 1 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
-                        <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
                       </svg>
                       <span class="btn-google-label">Sign in with Google</span>
                     </button>
@@ -570,20 +566,8 @@
                     <button id="btn-server-sync" class="btn-secondary" type="button">Sync now</button>
                     <button id="btn-server-logout" class="btn-secondary" type="button">Sign out</button>
                   </div>
-                  <p class="hint-inline">
-                    Your typing speed / hourly wage / currency drive the
-                    admin dashboard's per-user hours-and-money-saved
-                    estimate. Set them in the
-                    <strong>Savings</strong> tab; changes sync to the
-                    server when you save.
-                  </p>
                 </div>
               </div>
-
-              <label class="row" style="margin-top:14px">
-                <input id="set-show-team-inline" type="checkbox" />
-                <span>Show shared snippets in All / folder views <em>- when off, shared snippets only appear under the dedicated Team Library folder</em></span>
-              </label>
             </div>
 
             <!-- Editor / Format rules -->
@@ -667,16 +651,45 @@
                 <button id="btn-open-logs" class="btn-secondary" type="button">Open logs folder</button>
               </div>
               <div id="log-path-display" class="log-path-display"></div>
-              <hr class="settings-divider" />
+            </div>
+
+            <!-- Import: pick a file, then the selection tree renders
+                 inline below. The shared #imp-surface starts here and
+                 is moved into the Export panel when that tab opens. -->
+            <div class="tab-panel" data-tab="import">
               <p class="hint-block">
-                Export your snippets to JSON or CSV, or import from a previous
-                export. Both open a picker where you choose exactly which
-                folders and snippets to include.
+                Import snippets from a JSON or CSV export. Everything new
+                starts selected; duplicates of existing titles start
+                deselected. Expand folders to cherry-pick.
               </p>
               <div class="maint-buttons">
-                <button id="btn-export" class="btn-secondary" type="button">Export</button>
-                <button id="btn-import" class="btn-secondary" type="button">Import</button>
+                <button id="btn-import" class="btn-secondary" type="button">Choose file...</button>
               </div>
+              <div id="import-slot" class="tree-slot">
+                <div id="imp-surface" class="imp-surface hidden">
+                  <div class="imp-toolbar">
+                    <label class="row"><input type="checkbox" id="imp-master" /> Select all</label>
+                    <input id="imp-search" type="search" placeholder="Filter by title" autocomplete="off" />
+                    <span id="imp-count" class="hint-inline"></span>
+                  </div>
+                  <div id="imp-tree" class="imp-tree"></div>
+                  <div class="imp-actions">
+                    <button id="imp-cancel" class="btn-secondary" type="button">Clear</button>
+                    <button id="imp-confirm" class="btn-primary" type="button">Import selected</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Export: tree loads as soon as the tab opens. -->
+            <div class="tab-panel" data-tab="export">
+              <p class="hint-block">
+                Export to JSON or CSV. Everything starts selected; untick
+                folders or snippets to leave them out, then choose where
+                to save.
+              </p>
+              <p id="export-empty" class="hint-inline hidden">Nothing to export yet.</p>
+              <div id="export-slot" class="tree-slot"></div>
             </div>
           </div>
 

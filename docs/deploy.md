@@ -327,6 +327,7 @@ Create `docker-compose.yml`:
 services:
   snipdesk-server:
     image: ghcr.io/2lukewil/snipdesk/snipdesk-server:latest
+    container_name: snipdesk-server
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -655,6 +656,7 @@ Example `docker-compose.yml` for the customer:
 services:
   snipdesk-server:
     image: ghcr.io/2lukewil/snipdesk-server-acme:latest
+    container_name: snipdesk-server
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"

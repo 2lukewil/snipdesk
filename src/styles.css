@@ -212,7 +212,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 4px 10px 2px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -350,7 +350,7 @@ html, body {
   white-space: nowrap;
 }
 .snip-count {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-dim);
   font-weight: 500;
   background: var(--bg);
@@ -453,6 +453,24 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+}
+/* Post-sign-in state: the green check replaces the provider logo
+   (toggled via .is-signed-in in renderSigninStatus). */
+.btn-check-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: none;
+}
+.btn-google.is-signed-in .btn-google-icon {
+  display: none;
+}
+.btn-google.is-signed-in .btn-check-icon {
+  display: block;
+}
+.btn-google.is-signed-in:disabled {
+  opacity: 1;
+  cursor: default;
 }
 .btn-google-label {
   /* Optical centering: the icon's visual weight nudges the label
@@ -577,7 +595,7 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   margin-top: 3px;
 }
 .snip-tag {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -586,7 +604,7 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   margin-right: 4px;
 }
 .snip-folder {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-dim);
   opacity: 0.8;
   margin-top: 3px;
@@ -758,7 +776,7 @@ body.compact .search-bar {
 .modal-card label em {
   font-style: normal;
   color: var(--text-dim);
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 /* Mirrors .modal-card label styling; see HTML comment for the role="group" rationale. */
@@ -779,7 +797,7 @@ body.compact .search-bar {
 .modal-card .field-block em {
   font-style: normal;
   color: var(--text-dim);
-  opacity: 0.7;
+  opacity: 0.85;
 }
 .modal-card input[type="text"],
 .modal-card input[type="number"],
@@ -832,10 +850,6 @@ body.compact .search-bar {
   display: flex;
   gap: 8px;
 }
-.io-buttons {
-  display: flex;
-  gap: 8px;
-}
 .btn-primary,
 .btn-secondary {
   padding: 7px 14px;
@@ -863,7 +877,7 @@ body.compact .search-bar {
 .hint-inline {
   font-style: normal;
   color: var(--text-dim);
-  opacity: 0.7;
+  opacity: 0.85;
   font-size: 11px;
 }
 
@@ -1137,7 +1151,7 @@ body.compact .search-bar {
   border-radius: 3px;
   padding: 0 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .format-toolbar {
@@ -1362,11 +1376,6 @@ body.compact .search-bar {
 .log-path-display:empty {
   display: none;
 }
-.settings-divider {
-  border: 0;
-  border-top: 1px solid var(--border);
-  margin: 14px 0 6px;
-}
 
 /* --- Server sync section (Teams tab) --- */
 .server-section {
@@ -1418,7 +1427,7 @@ body.compact .search-bar {
   background: var(--bg-3);
   padding: 1px 6px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .server-identity-sep {
   opacity: 0.5;
@@ -1516,7 +1525,7 @@ body.compact .search-bar {
 .folder-count {
   margin-left: auto;
   padding-left: 8px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-dim);
   opacity: 0.75;
   flex-shrink: 0;
@@ -1665,9 +1674,45 @@ body.compact .search-bar {
   color: var(--text-dim);
 }
 
+/* Step status line (sign-in panel + hotkey panel). Quiet while
+   waiting; flips to a green confirmation banner on success so the
+   moment doesn't read as dim gray-on-gray fine print. */
+.onboarding-card p.onboarding-status {
+  font-size: 13px;
+  color: var(--text-dim);
+  min-height: 18px;
+  margin: 10px 0 0;
+}
+.onboarding-card p.onboarding-status:empty {
+  display: none;
+}
+.onboarding-card p.onboarding-status.is-success {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #2ea043 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, #2ea043 45%, var(--border));
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.onboarding-card p.onboarding-status.is-success::before {
+  content: "✓";
+  color: #34a853;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+}
+
 /* Typing test phrase + input. The phrase is rendered as inline
    spans so main.js can colour per-character match state without
    touching the input itself. */
+/* Single-box typing test: the passage doubles as the input surface.
+   Untyped characters render faint; each keystroke turns its character
+   opaque (green = correct, red = miss). The real <input> is invisible
+   (.typing-capture); clicking the passage focuses it. */
 .onboarding-phrase {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
@@ -1680,21 +1725,38 @@ body.compact .search-bar {
   white-space: pre-wrap;
   word-break: break-word;
   user-select: none;
+  cursor: text;
 }
-.onboarding-phrase .ch.ok { color: color-mix(in srgb, #2ea043 70%, var(--text)); }
+.onboarding-phrase.is-focused {
+  border-color: var(--accent);
+}
+.onboarding-phrase .ch {
+  opacity: 0.35;
+}
+.onboarding-phrase .ch.ok {
+  opacity: 1;
+  color: color-mix(in srgb, #2ea043 70%, var(--text));
+}
 .onboarding-phrase .ch.bad {
+  opacity: 1;
   color: #f85149;
   background: color-mix(in srgb, #f85149 18%, transparent);
   border-radius: 2px;
 }
 .onboarding-phrase .ch.cursor {
+  opacity: 0.8;
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 2px;
 }
-.onboarding-typing-input {
-  width: 100%;
-  min-height: 90px;
-  resize: vertical;
+/* Focusable but invisible; the phrase box is the visual stand-in. */
+.onboarding-card input.typing-capture {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .onboarding-result {
   margin-top: 10px;
@@ -1709,12 +1771,32 @@ body.compact .search-bar {
 /* Footer-row in Settings General for the "Replay onboarding"
    button - sits at the bottom under the regular toggles. */
 .footer-row {
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: 8px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* General tab: the three dropdowns share one row so the toggle
+   list below fits without scrolling at the default window size. */
+.general-selects {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 480px) {
+  .general-selects {
+    grid-template-columns: 1fr;
+  }
+}
+/* Tighter rhythm than the tab-body's 10px gap: nine toggle rows
+   need to coexist with the selects above without overflowing. */
+.toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Inline keyboard hint glyph used in the hotkey panel. */
@@ -1728,19 +1810,45 @@ body.compact .search-bar {
   border-bottom-width: 2px;
 }
 
-/* --- Selection tree modal (import preview / export picker) --- */
+/* --- Selection tree surface (Import / Export settings tabs) ---
+   One #imp-surface node shared by both tabs; main.js reparents it
+   into whichever tab is active. Flex column so the tree absorbs
+   the leftover height instead of forcing the tab to scroll. */
 
-/* The tree modal opens FROM the settings modal (its buttons live in
-   Settings -> Import/Export) and must stack above it. All .modal
-   sections share z-index 10 and paint in DOM order, which put this
-   one behind settings. */
-#import-preview { z-index: 20; }
+.tree-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.imp-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.imp-surface.hidden {
+  display: none;
+}
+.imp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Let the import/export panels claim the full tab-body height so
+   the tree scrolls internally instead of the page. */
+.tab-panel[data-tab="import"].active,
+.tab-panel[data-tab="export"].active {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 
 .imp-toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-bottom: 10px;
 }
 .imp-toolbar input[type="search"] {
   flex: 1;
@@ -1756,7 +1864,8 @@ body.compact .search-bar {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 8px 10px;
-  max-height: 320px;
+  flex: 1 1 auto;
+  min-height: 100px;
   overflow-y: auto;
   background: var(--bg);
 }

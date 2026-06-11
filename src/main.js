@@ -429,13 +429,13 @@ const els = {
   // Settings footer
   setSave: document.getElementById("set-save"),
   setCancel: document.getElementById("set-cancel"),
-  btnExport: document.getElementById("btn-export"),
   btnImport: document.getElementById("btn-import"),
   btnTrash: document.getElementById("btn-trash"),
   syncIndicator: document.getElementById("sync-indicator"),
-  importPreview: document.getElementById("import-preview"),
-  impTitle: document.getElementById("imp-title"),
-  impHint: document.getElementById("imp-hint"),
+  impSurface: document.getElementById("imp-surface"),
+  importSlot: document.getElementById("import-slot"),
+  exportSlot: document.getElementById("export-slot"),
+  exportEmpty: document.getElementById("export-empty"),
   impMaster: document.getElementById("imp-master"),
   impSearch: document.getElementById("imp-search"),
   impCount: document.getElementById("imp-count"),
@@ -456,10 +456,12 @@ const els = {
 init();
 
 async function init() {
-  // Strip Server tab markup in free build.
+  // Strip Server tab markup in free build, plus the team-snippet
+  // visibility toggle that moved to General.
   if (!TEAMS_BUILD) {
     document.querySelector('.tab[data-tab="team"]')?.remove();
     document.querySelector('.tab-panel[data-tab="team"]')?.remove();
+    document.getElementById("row-show-team-inline")?.remove();
   }
 
   state.settings = await invoke("get_settings");
@@ -799,6 +801,7 @@ const onboarding = {
 
   renderSigninStatus() {
     const status = document.getElementById("onboarding-signin-status");
+    const oidcBtn = document.getElementById("onboarding-signin-oidc");
     const next = document.querySelector(
       '#onboarding [data-step="signin"] [data-onboarding-next]',
     );
@@ -809,7 +812,18 @@ const onboarding = {
       // always undefined, and fell through to the literal sentinel.
       const u = state.serverStatus.user;
       const display = u?.display_name || u?.email || "(signed in)";
-      if (status) status.textContent = `Signed in as ${display}.`;
+      if (status) {
+        status.textContent = `Signed in as ${display}`;
+        status.classList.add("is-success");
+      }
+      // The provider button's job is done: swap the logo for a green
+      // check (CSS keys off .is-signed-in) and retire the button.
+      if (oidcBtn) {
+        oidcBtn.classList.add("is-signed-in");
+        oidcBtn.disabled = true;
+        const label = oidcBtn.querySelector(".btn-google-label");
+        if (label) label.textContent = "Signed in";
+      }
       if (next) next.removeAttribute("disabled");
 
       // Auto-advance off the signin panel once OIDC completes. The
@@ -831,7 +845,15 @@ const onboarding = {
         }, 800);
       }
     } else {
-      if (status) status.textContent = "Waiting for sign-in...";
+      if (status) {
+        status.textContent = "Waiting for sign-in...";
+        status.classList.remove("is-success");
+      }
+      if (oidcBtn) {
+        oidcBtn.classList.remove("is-signed-in");
+        const label = oidcBtn.querySelector(".btn-google-label");
+        if (label) label.textContent = "Sign in with Google";
+      }
       if (next) next.setAttribute("disabled", "");
     }
   },
@@ -930,7 +952,10 @@ const onboarding = {
     const label = document.getElementById("onboarding-hotkey-label");
     if (label) label.textContent = formatHotkey(state.settings?.hotkey);
     const status = document.getElementById("onboarding-hotkey-status");
-    if (status) status.textContent = "";
+    if (status) {
+      status.textContent = "";
+      status.classList.remove("is-success");
+    }
   },
 
   async hideAndTryHotkey() {
@@ -943,9 +968,23 @@ const onboarding = {
     // Subscribe BEFORE hiding so we never miss the re-open event.
     try {
       this.hotkeyUnlisten = await listen("snipdesk://opened", () => {
-        if (status) status.textContent = "Got it. That's how you'll summon SnipDesk anytime.";
+        if (status) {
+          status.textContent =
+            "Nailed it! That's how you'll summon SnipDesk from anywhere.";
+          status.classList.add("is-success");
+        }
         if (hideBtn) hideBtn.classList.add("hidden");
         if (next) next.classList.remove("hidden");
+        // Let the celebration land, then move on by itself. Guarded:
+        // the user may have clicked Back / Skip / a dot in the window.
+        setTimeout(() => {
+          if (
+            this.steps[this.index] === "hotkey" &&
+            !els.onboarding.classList.contains("hidden")
+          ) {
+            this.advance();
+          }
+        }, 1600);
       });
     } catch (err) {
       console.warn("onboarding: failed to subscribe to opened event", err);
@@ -976,6 +1015,13 @@ const onboarding = {
     // Mark the very first char as the cursor.
     const first = phraseEl.querySelector(".ch");
     if (first) first.classList.add("cursor");
+    // The phrase IS the input surface: the real <input> is invisible,
+    // so clicking the passage has to route focus to it, and the
+    // focus ring paints on the phrase box. Property assignment (not
+    // addEventListener) keeps Replay from stacking handlers.
+    phraseEl.onclick = () => input.focus();
+    input.onfocus = () => phraseEl.classList.add("is-focused");
+    input.onblur = () => phraseEl.classList.remove("is-focused");
     input.value = "";
     this.typing = { startedAt: null, finishedAt: null, wpm: null };
     document.getElementById("onboarding-typing-result").classList.add("hidden");
@@ -1331,7 +1377,7 @@ function closeAllModals() {
   els.linkPrompt.classList.add("hidden");
   els.settings.classList.add("hidden");
   els.dupWarn.classList.add("hidden");
-  if (els.importPreview) els.importPreview.classList.add("hidden");
+  resetTreeSurface();
   state.pendingLinkInsert = null;
   hideContextMenu();
 }
@@ -3498,6 +3544,10 @@ function activateTab(name) {
                 "";
     if (url) loadServerMethods(url);
   }
+  // The Import and Export tabs share one tree surface; each visit
+  // claims it for the active tab.
+  if (name === "export") prepareExportTab();
+  if (name === "import") prepareImportTab();
 }
 
 function openSettings() {
@@ -4433,6 +4483,7 @@ function closeSettings() {
   // Cancel revert - accent preview shouldn't linger on the launcher.
   applyAccentColor(state.settings?.accent_color || "");
   els.settings.classList.add("hidden");
+  resetTreeSurface();
   focusSearch();
 }
 
@@ -4467,15 +4518,30 @@ async function withDialogSuppressed(fn) {
   }
 }
 
-// ---- Selection tree modal (shared by import and export) ----
+// ---- Selection tree surface (shared by the Import and Export
+// settings tabs). One physical #imp-surface node is moved between
+// the two tab panels; whichever tab is active owns it. ----
 
-/// Entries backing the open modal; indices line up with the
+/// Entries backing the visible tree; indices line up with the
 /// data-idx attributes in the rendered tree. Import entries carry
 /// a `duplicate` flag (pre-deselected + badged); export entries
 /// carry an `id` and all start selected.
 let treeModalEntries = null;
 /// "import" | "export" - decides what the confirm button does.
 let treeModalMode = "import";
+
+/// Park the surface back in the Import tab, hidden and empty.
+/// Called when settings closes so a half-done import doesn't
+/// linger into the next open.
+function resetTreeSurface() {
+  if (!els.impSurface) return;
+  treeModalEntries = null;
+  els.impSurface.classList.add("hidden");
+  els.impTree.replaceChildren();
+  if (els.importSlot && els.impSurface.parentElement !== els.importSlot) {
+    els.importSlot.appendChild(els.impSurface);
+  }
+}
 
 /// Group entries by folder_path into a nested tree. Folderless
 /// entries land under a "(no folder)" group at the root.
@@ -4626,15 +4692,21 @@ function applyImportSearch() {
   });
 }
 
-/// Render entries into the tree modal and show it. The caller sets
-/// mode-specific chrome (title, hint, confirm label) first.
-function openTreeModal(entries) {
+/// Render entries into the shared surface inside the given slot
+/// and show it. The caller sets treeModalMode + confirm label first.
+function renderTreeSurface(entries, slot) {
   treeModalEntries = entries;
+  if (slot && els.impSurface.parentElement !== slot) {
+    slot.appendChild(els.impSurface);
+  }
   els.impTree.replaceChildren();
   els.impSearch.value = "";
   renderImportTree(buildImportTreeModel(entries), els.impTree, entries);
   updateImportCounts();
-  els.importPreview.classList.remove("hidden");
+  // Clear only makes sense for import (forget the parsed file);
+  // the export tree reloads on every tab visit.
+  els.impCancel.classList.toggle("hidden", treeModalMode === "export");
+  els.impSurface.classList.remove("hidden");
 }
 
 async function importSnippets() {
@@ -4659,11 +4731,8 @@ async function importSnippets() {
       return;
     }
     treeModalMode = "import";
-    els.impTitle.textContent = "Import preview";
-    els.impHint.textContent =
-      "Everything new starts selected; duplicates of existing titles start deselected. Expand folders to cherry-pick.";
     els.impConfirm.textContent = "Import selected";
-    openTreeModal(entries);
+    renderTreeSurface(entries, els.importSlot);
   } catch (err) {
     const message = typeof err === "string" ? err : err?.message || String(err);
     setStatus(`Import failed`, "err");
@@ -4671,9 +4740,10 @@ async function importSnippets() {
   }
 }
 
-/// Export entry point: same tree modal over the user's own
+/// Export tab activation: same tree surface over the user's own
 /// snippets, everything selected, confirm writes the checked set.
-async function openExportModal() {
+/// Reloads on every visit so the tree always reflects the library.
+async function prepareExportTab() {
   try {
     const snippets =
       (await invoke("list_snippets", {
@@ -4682,24 +4752,39 @@ async function openExportModal() {
         folder: null,
         sort: null,
       })) || [];
-    if (snippets.length === 0) {
-      setStatus("Nothing to export yet", "err");
+    const empty = snippets.length === 0;
+    if (els.exportEmpty) els.exportEmpty.classList.toggle("hidden", !empty);
+    if (empty) {
+      treeModalEntries = null;
+      els.impSurface.classList.add("hidden");
       return;
     }
     treeModalMode = "export";
-    els.impTitle.textContent = "Export snippets";
-    els.impHint.textContent =
-      "Everything starts selected. Untick folders or snippets to leave them out, then choose where to save.";
     els.impConfirm.textContent = "Export selected";
-    openTreeModal(
+    renderTreeSurface(
       snippets.map((s) => ({
         id: s.id,
         title: s.title,
         folder_path: s.folder_path,
       })),
+      els.exportSlot,
     );
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
+  }
+}
+
+/// Import tab activation: park the surface back in this tab. A
+/// previously parsed file survives tab-hopping only if the surface
+/// still holds import entries; an Export visit reloads it with
+/// export rows, so coming back means choosing the file again.
+function prepareImportTab() {
+  if (!els.impSurface) return;
+  if (els.impSurface.parentElement !== els.importSlot) {
+    els.importSlot.appendChild(els.impSurface);
+    treeModalEntries = null;
+    els.impTree.replaceChildren();
+    els.impSurface.classList.add("hidden");
   }
 }
 
@@ -4721,15 +4806,15 @@ async function confirmTreeSelection() {
         ],
       })
     );
-    if (!path) return; // keep the modal open; selection survives
+    if (!path) return; // keep the tree as-is; selection survives
     const format = path.toLowerCase().endsWith(".csv") ? "csv" : "json";
     els.impConfirm.disabled = true;
     try {
       const ids = selected.map((s) => s.id);
       const n = await invoke("export_snippets", { args: { path, format, ids } });
+      // Surface + selection stay put so a follow-up export (other
+      // format, other subset) doesn't start from scratch.
       setStatus(`Exported ${n} snippet${n === 1 ? "" : "s"}`, "ok");
-      els.importPreview.classList.add("hidden");
-      treeModalEntries = null;
     } catch (err) {
       setStatus(`Error: ${err}`, "err");
     } finally {
@@ -4757,8 +4842,9 @@ async function confirmTreeSelection() {
       parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
     }
     setStatus(parts.join(" - "), skipped > 0 && imported === 0 ? "err" : "ok");
-    els.importPreview.classList.add("hidden");
     treeModalEntries = null;
+    els.impSurface.classList.add("hidden");
+    els.impTree.replaceChildren();
     await refresh();
   } catch (err) {
     setStatus(`Import failed: ${err}`, "err");
@@ -4958,13 +5044,14 @@ function bindEvents() {
   enableHotkeyCapture(els.setHotkey);
   enableHotkeyCapture(els.setQuickAddHotkey, { allowClear: true });
   els.setCancel.addEventListener("click", closeSettings);
-  els.btnExport.addEventListener("click", openExportModal);
   els.btnImport.addEventListener("click", importSnippets);
   if (els.btnTrash) els.btnTrash.addEventListener("click", () => openTrashModal());
   if (els.impCancel)
     els.impCancel.addEventListener("click", () => {
-      els.importPreview.classList.add("hidden");
+      // Import-only "Clear": forget the parsed file.
       treeModalEntries = null;
+      els.impSurface.classList.add("hidden");
+      els.impTree.replaceChildren();
     });
   if (els.impConfirm)
     els.impConfirm.addEventListener("click", confirmTreeSelection);

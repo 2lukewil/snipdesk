@@ -177,6 +177,7 @@ or `compose.yaml`):
 services:
   snipdesk-server:
     image: ghcr.io/2lukewil/snipdesk/snipdesk-server:latest
+    container_name: snipdesk-server
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
@@ -187,6 +188,12 @@ services:
       SNIPDESK_MASTER_KEY: "${SNIPDESK_MASTER_KEY}"
       RUST_LOG: "info,sqlx=warn,tower_http=info"
 ```
+
+Without `container_name`, Compose generates
+`<directory>-<service>-1` (for example
+`snipdesk-server-snipdesk-server-1` when the compose file lives in
+a folder called `snipdesk-server`). Pinning the name keeps `docker
+ps` and `docker logs` commands short.
 
 Whitelabel deployments swap the image line for their per-customer
 tag (`ghcr.io/2lukewil/snipdesk/snipdesk-server-<slug>:latest`)

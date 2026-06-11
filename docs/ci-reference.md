@@ -171,10 +171,16 @@ client-windows:
       --config src-tauri/tauri.teams.conf.json
       --config "{\"plugins\":{\"updater\":{\"endpoints\":[\"$UPDATER_ENDPOINT\"],\"pubkey\":\"$UPDATER_PUBKEY\"}}}"
       --runner cargo-xwin --target x86_64-pc-windows-msvc
-    # Collect artifacts. The Teams build self-renames its installer.
+    # Collect artifacts. Raw `tauri build` names the installer
+    # SnipDesk_<version>_x64-setup.exe; the canonical
+    # SnipDesk-Teams-setup.exe rename normally happens in the
+    # scripts/build-teams.mjs wrapper, which this job bypasses to
+    # add the cross flags - so rename here. (Caught by running this
+    # exact job in a container; without the rename the collect step
+    # fails.)
     - BUNDLE=target/x86_64-pc-windows-msvc/release/bundle/nsis
-    - test -f "$BUNDLE/SnipDesk-Teams-setup.exe"
-    - test -f "$BUNDLE/SnipDesk-Teams-setup.exe.sig"
+    - mv "$BUNDLE/SnipDesk_${VERSION}_x64-setup.exe" "$BUNDLE/SnipDesk-Teams-setup.exe"
+    - mv "$BUNDLE/SnipDesk_${VERSION}_x64-setup.exe.sig" "$BUNDLE/SnipDesk-Teams-setup.exe.sig"
     # Update manifest: same shape scripts/generate-manifest.ps1
     # emits, written with plain shell so the job needs no pwsh.
     - PKG_BASE="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/snipdesk-client"

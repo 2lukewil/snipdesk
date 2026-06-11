@@ -3416,6 +3416,11 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
     originalValue = input.value;
     input.value = "";
     input.placeholder = "Press a key combination...";
+    // Mute global shortcuts for the duration of the capture so
+    // pressing the currently-bound chord records it instead of
+    // ALSO firing its action (which used to hide the window mid-
+    // capture). Fire-and-forget; worst case the old behavior.
+    invoke("set_hotkey_capture", { active: true }).catch(() => {});
   });
 
   input.addEventListener("blur", () => {
@@ -3424,6 +3429,7 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
     // Backspace below (only for inputs where blank means "disabled").
     if (!input.value) input.value = originalValue;
     input.placeholder = originalPlaceholder;
+    invoke("set_hotkey_capture", { active: false }).catch(() => {});
   });
 
   input.addEventListener("keydown", (e) => {
@@ -3747,13 +3753,22 @@ function makeTrashRow({ title, deletedAt, bodyText, folder, onRestore }) {
   const row = document.createElement("div");
   row.className = "trash-row";
 
+  // Compact two-line row: everything except the body preview shares
+  // the header line (title, folder, timestamp, Restore) so each item
+  // costs two text lines instead of four.
   const header = document.createElement("div");
   header.className = "trash-row-head";
   const titleEl = document.createElement("strong");
   titleEl.textContent = title || "(untitled)";
   header.appendChild(titleEl);
+  if (folder) {
+    const folderEl = document.createElement("span");
+    folderEl.className = "muted small trash-row-folder";
+    folderEl.textContent = `📁 ${folder}`;
+    header.appendChild(folderEl);
+  }
   const when = document.createElement("span");
-  when.className = "muted small";
+  when.className = "muted small trash-row-when";
   when.textContent = `deleted ${formatRelativeTime(deletedAt)}`;
   header.appendChild(when);
   row.appendChild(header);
@@ -3764,15 +3779,6 @@ function makeTrashRow({ title, deletedAt, bodyText, folder, onRestore }) {
   body.textContent = flat.length > 200 ? flat.slice(0, 200) + "..." : flat;
   row.appendChild(body);
 
-  if (folder) {
-    const folderEl = document.createElement("div");
-    folderEl.className = "trash-row-folder muted small";
-    folderEl.textContent = `📁 ${folder}`;
-    row.appendChild(folderEl);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "trash-row-actions";
   const restoreBtn = document.createElement("button");
   restoreBtn.className = "btn-primary small";
   restoreBtn.textContent = "Restore";
@@ -3790,8 +3796,7 @@ function makeTrashRow({ title, deletedAt, bodyText, folder, onRestore }) {
       setStatus(`Restore failed: ${err}`, "err");
     }
   });
-  actions.appendChild(restoreBtn);
-  row.appendChild(actions);
+  header.appendChild(restoreBtn);
   return row;
 }
 
@@ -5043,6 +5048,16 @@ function bindEvents() {
   // (blank = disabled); the main launcher hotkey is always required.
   enableHotkeyCapture(els.setHotkey);
   enableHotkeyCapture(els.setQuickAddHotkey, { allowClear: true });
+  // Defaults mirror Settings::default() in snipdesk-core. Windows
+  // owns Alt+Space (window system menu), so typing it into the
+  // capture field is impossible - this button is the road back.
+  const btnResetHotkeys = document.getElementById("btn-reset-hotkeys");
+  if (btnResetHotkeys) {
+    btnResetHotkeys.addEventListener("click", () => {
+      els.setHotkey.value = "Alt+Space";
+      els.setQuickAddHotkey.value = "Alt+Shift+Space";
+    });
+  }
   els.setCancel.addEventListener("click", closeSettings);
   els.btnImport.addEventListener("click", importSnippets);
   if (els.btnTrash) els.btnTrash.addEventListener("click", () => openTrashModal());

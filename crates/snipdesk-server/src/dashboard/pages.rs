@@ -1981,7 +1981,10 @@ pub async fn library_page(
               hx-swap=\"innerHTML\">",
     );
     let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
-    body.push_str(&render_library_cards_inner(&filtered));
+    body.push_str(&render_library_cards_inner(
+        &filtered,
+        q.q.as_deref().unwrap_or(""),
+    ));
     body.push_str("</div>");
     body.push_str("</div></div>");
     // Drag-drop + formatting-toolbar JS, scoped to the library page.
@@ -2340,7 +2343,7 @@ pub async fn library_cards(
     let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        render_library_cards_inner(&filtered),
+        render_library_cards_inner(&filtered, q.q.as_deref().unwrap_or("")),
     )
         .into_response()
 }
@@ -2970,7 +2973,7 @@ pub async fn library_import_confirm(
     .into_response()
 }
 
-fn render_library_cards_inner(rows: &[&LibraryRow]) -> String {
+fn render_library_cards_inner(rows: &[&LibraryRow], q: &str) -> String {
     if rows.is_empty() {
         return String::from(
             "<p class=\"muted\">No library snippets in this view. \
@@ -2979,7 +2982,7 @@ fn render_library_cards_inner(rows: &[&LibraryRow]) -> String {
     }
     let mut out = String::new();
     for r in rows {
-        out.push_str(&render_library_card(r));
+        out.push_str(&render_library_card_highlighted(r, q));
     }
     out
 }
@@ -3027,7 +3030,14 @@ fn library_format_toolbar() -> &'static str {
      <button type=\"button\" class=\"fmt-btn\" data-prefix=\"[\" data-suffix=\"](https://)\" title=\"Link\">link</button>"
 }
 
+/// Card without an active search: post-mutation fragment responses
+/// (create/edit swaps) render through here since the swap target is
+/// a single card and the search box state lives client-side.
 fn render_library_card(r: &LibraryRow) -> String {
+    render_library_card_highlighted(r, "")
+}
+
+fn render_library_card_highlighted(r: &LibraryRow, q: &str) -> String {
     let tags_html = if r.tags.trim().trim_matches(',').is_empty() {
         String::new()
     } else {
@@ -3083,9 +3093,9 @@ fn render_library_card(r: &LibraryRow) -> String {
            </div>\
          </div>",
         id_attr = escape_html(&r.id),
-        title = escape_html(&r.title),
+        title = highlight_matches(&r.title, q),
         title_attr = escape_html(&r.title),
-        body = render_body_with_vars(&r.body),
+        body = render_body_with_vars(&r.body, q),
         when = format_relative(r.updated_at),
         tags = tags_html,
         folder = folder,
@@ -3093,13 +3103,61 @@ fn render_library_card(r: &LibraryRow) -> String {
     )
 }
 
+/// HTML-escape `text` and wrap case-insensitive occurrences of `q`
+/// in the same `.search-match` styling the desktop client's list
+/// uses. Escaping happens per-piece BEFORE markup is added, so
+/// neither the content nor the query can inject HTML. The lowercase
+/// search runs over a byte-offset map back into the original string,
+/// so multi-byte characters (and the rare char whose lowercase form
+/// has a different byte length) can't cause a mid-char slice.
+fn highlight_matches(text: &str, q: &str) -> String {
+    let needle = q.trim().to_lowercase();
+    if needle.is_empty() {
+        return escape_html(text);
+    }
+    let mut lower = String::with_capacity(text.len());
+    let mut map: Vec<usize> = Vec::with_capacity(text.len() + 1);
+    for (off, ch) in text.char_indices() {
+        for lc in ch.to_lowercase() {
+            let mut buf = [0u8; 4];
+            let s = lc.encode_utf8(&mut buf);
+            for _ in 0..s.len() {
+                map.push(off);
+            }
+            lower.push_str(s);
+        }
+    }
+    map.push(text.len());
+    let mut out = String::with_capacity(text.len() + 64);
+    let mut plain_from = 0usize; // byte offset in `text`
+    let mut search_from = 0usize; // byte offset in `lower`
+    while let Some(rel) = lower[search_from..].find(&needle) {
+        let start = search_from + rel;
+        let end = start + needle.len();
+        let orig_start = map[start];
+        let orig_end = map[end];
+        if orig_end > orig_start && orig_start >= plain_from {
+            out.push_str(&escape_html(&text[plain_from..orig_start]));
+            out.push_str("<strong class=\"search-match\">");
+            out.push_str(&escape_html(&text[orig_start..orig_end]));
+            out.push_str("</strong>");
+            plain_from = orig_end;
+        }
+        search_from = end;
+    }
+    out.push_str(&escape_html(&text[plain_from..]));
+    out
+}
+
 /// HTML-escape a snippet body and wrap `{variable_name}` tokens in
 /// the same chip styling the desktop client's preview uses, so
 /// template placeholders read identically on both surfaces. The
 /// token pattern mirrors the client's extractVarNames regex
-/// (`[A-Za-z0-9_-]+` between braces). Escaping happens per-piece
-/// BEFORE markup is added, so body content can't inject HTML.
-fn render_body_with_vars(body: &str) -> String {
+/// (`[A-Za-z0-9_-]+` between braces). Plain segments between tokens
+/// additionally pick up `.search-match` highlighting for the active
+/// library search query. Escaping happens per-piece BEFORE markup is
+/// added, so body content can't inject HTML.
+fn render_body_with_vars(body: &str, q: &str) -> String {
     let mut out = String::with_capacity(body.len() + 32);
     let bytes = body.as_bytes();
     let mut plain_start = 0;
@@ -3114,7 +3172,7 @@ fn render_body_with_vars(body: &str) -> String {
                         .bytes()
                         .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
                 if valid {
-                    out.push_str(&escape_html(&body[plain_start..i]));
+                    out.push_str(&highlight_matches(&body[plain_start..i], q));
                     out.push_str(&format!(
                         "<span class=\"preview-var\">{{{}}}</span>",
                         escape_html(token)
@@ -3127,7 +3185,7 @@ fn render_body_with_vars(body: &str) -> String {
         }
         i += 1;
     }
-    out.push_str(&escape_html(&body[plain_start..]));
+    out.push_str(&highlight_matches(&body[plain_start..], q));
     out
 }
 
@@ -3751,15 +3809,18 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     emitChildrenOf("");
   }
 
-  var sortSel = document.getElementById("lib-sort-mode-select");
-  if (sortSel) {
-    sortSel.value = loadSortMode();
-    sortSel.addEventListener("change", function () {
-      saveSortMode(sortSel.value);
-      applySortMode();
-      applyFolderCollapse();
-    });
-  }
+  // Delegated: the select lives inside the sidebar fragment htmx
+  // re-swaps every 10s, so a listener bound to the element itself
+  // dies on the first swap. That was the "switching to manual does
+  // nothing / select snaps back to alphabetical" bug - the change
+  // never persisted, and the next applySortMode() reset the select
+  // from the stale stored mode.
+  document.body.addEventListener("change", function (e) {
+    if (!e.target || e.target.id !== "lib-sort-mode-select") return;
+    saveSortMode(e.target.value);
+    applySortMode();
+    applyFolderCollapse();
+  });
   applySortMode();
 
   // ---- Folder reorder via in-row drop indicators ----
@@ -5457,4 +5518,52 @@ fn render_library_update_diff(details: &serde_json::Value) -> Option<String> {
         return None;
     }
     Some(sections)
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use super::*;
+
+    #[test]
+    fn empty_query_is_plain_escape() {
+        assert_eq!(highlight_matches("a < b", ""), "a &lt; b");
+        assert_eq!(highlight_matches("a < b", "   "), "a &lt; b");
+    }
+
+    #[test]
+    fn case_insensitive_match_wraps_original_casing() {
+        assert_eq!(
+            highlight_matches("Refund the ORDER", "order"),
+            "Refund the <strong class=\"search-match\">ORDER</strong>"
+        );
+    }
+
+    #[test]
+    fn multiple_matches_and_escaping() {
+        assert_eq!(
+            highlight_matches("<x> ab AB", "ab"),
+            "&lt;x&gt; <strong class=\"search-match\">ab</strong> \
+             <strong class=\"search-match\">AB</strong>"
+        );
+        // Query content is escaped too, never injected as markup.
+        assert_eq!(
+            highlight_matches("a <b> c", "<b>"),
+            "a <strong class=\"search-match\">&lt;b&gt;</strong> c"
+        );
+    }
+
+    #[test]
+    fn multibyte_text_does_not_panic_or_misalign() {
+        let s = "Grusse aus Munchen \u{1F600} caffe";
+        assert_eq!(highlight_matches(s, "zzz"), escape_html(s));
+        assert!(highlight_matches("\u{00C9}clair eclair", "eclair")
+            .contains("<strong class=\"search-match\">eclair</strong>"));
+    }
+
+    #[test]
+    fn body_vars_and_highlight_compose() {
+        let html = render_body_with_vars("Hi {name}, your order shipped", "order");
+        assert!(html.contains("<span class=\"preview-var\">{name}</span>"));
+        assert!(html.contains("<strong class=\"search-match\">order</strong>"));
+    }
 }

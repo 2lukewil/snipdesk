@@ -254,6 +254,13 @@ textarea {
   font-size: 13px;
 }
 
+/* Search-match emphasis in library card titles/bodies. Mirrors the
+   desktop client's .search-match (bold + accent). */
+.search-match {
+  font-weight: 700;
+  color: var(--accent);
+}
+
 /* --- Selection modal (library export picker / import preview) --- */
 
 .dash-modal {

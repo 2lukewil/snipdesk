@@ -41,6 +41,13 @@ pub struct AppState {
     /// momentarily report is_minimized=true) re-triggers minimize-to-tray
     /// and cycles the window open/closed.
     pub was_minimized: AtomicBool,
+    /// Set while a Settings hotkey-capture field has focus. Global
+    /// shortcuts stay registered with the OS but their handlers
+    /// no-op, so typing a chord into the capture field can't also
+    /// trigger the action it's currently bound to (the old behavior
+    /// hid the window mid-capture when the user pressed the active
+    /// hotkey).
+    pub hotkeys_suspended: AtomicBool,
     /// Team-library sync status - three atomics rather than a Mutex<struct>
     /// because the frontend polls these on every status tick.
     #[cfg(feature = "teams")]
@@ -153,6 +160,7 @@ pub fn run() {
                 hide_on_blur_suppressed: AtomicBool::new(false),
                 target_hwnd: AtomicIsize::new(0),
                 was_minimized: AtomicBool::new(false),
+                hotkeys_suspended: AtomicBool::new(false),
                 #[cfg(feature = "teams")]
                 team_last_fetched_unix: AtomicI64::new(0),
                 #[cfg(feature = "teams")]
@@ -287,6 +295,9 @@ pub fn run() {
             let app_handle = app.handle().clone();
             app.global_shortcut()
                 .on_shortcut(shortcut, move |_app, _sc, event| {
+                    if hotkeys_are_suspended(&app_handle) {
+                        return;
+                    }
                     if event.state() == ShortcutState::Pressed {
                         if let Some(win) = app_handle.get_webview_window("main") {
                             toggle_window_with_state(&app_handle, &win);
@@ -302,6 +313,9 @@ pub fn run() {
                     if let Err(err) =
                         app.global_shortcut()
                             .on_shortcut(quick_sc, move |_app, _sc, event| {
+                                if hotkeys_are_suspended(&quick_handle) {
+                                    return;
+                                }
                                 if event.state() == ShortcutState::Pressed {
                                     trigger_quick_add_from_selection(&quick_handle);
                                 }
@@ -459,6 +473,7 @@ pub fn run() {
             commands::get_var_history,
             commands::use_snippet,
             commands::get_settings,
+            commands::set_hotkey_capture,
             commands::update_settings,
             commands::export_snippets,
             commands::import_snippets,
@@ -791,6 +806,17 @@ pub fn apply_autostart(handle: &tauri::AppHandle, enabled: bool) -> tauri::Resul
         let _ = autolaunch.disable();
     }
     Ok(())
+}
+
+/// True while a Settings hotkey-capture field has focus (see
+/// `AppState::hotkeys_suspended`). Shared by every global-shortcut
+/// handler so a chord typed into the capture field never doubles as
+/// the action it's bound to.
+pub fn hotkeys_are_suspended(handle: &tauri::AppHandle) -> bool {
+    handle
+        .try_state::<AppState>()
+        .map(|s| s.hotkeys_suspended.load(Ordering::SeqCst))
+        .unwrap_or(false)
 }
 
 /// Pretty-print a hotkey for the tray. Falls back to the input on parse failure.

@@ -170,10 +170,9 @@
       <section id="trash-modal" class="modal hidden">
         <div class="modal-card wide">
           <h2>Trash</h2>
-          <p class="hint-block" id="trash-hint">
-            Deleted snippets are kept on this device (and on the server
-            when you're signed in) before they're purged. Restore one to
-            bring it back.
+          <p class="hint-inline" id="trash-hint">
+            Deleted snippets are kept here until purged; Restore brings
+            one back.
           </p>
           <div id="trash-list" class="modal-body trash-list"></div>
           <div class="modal-actions">
@@ -449,6 +448,14 @@
               <div class="hint-block">
                 Modifier tokens: <code>Ctrl</code>, <code>Shift</code>, <code>Alt</code>, <code>Cmd</code>, <code>CommandOrControl</code>.<br />
                 Key tokens: letter, digit, <code>F1</code>-<code>F12</code>, <code>Space</code>, <code>Enter</code>, <code>Esc</code>, arrow keys.
+              </div>
+              <!-- Windows reserves Alt+Space for the window system
+                   menu, so the default launcher chord can't be typed
+                   into the capture field - this button is the only
+                   way back to it. -->
+              <div class="row">
+                <button id="btn-reset-hotkeys" type="button" class="btn-secondary">Reset to defaults</button>
+                <em class="hint-inline">Launcher: Alt+Space, quick add: Alt+Shift+Space. Takes effect on Save.</em>
               </div>
             </div>
 

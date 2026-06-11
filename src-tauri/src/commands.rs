@@ -281,6 +281,17 @@ pub fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
     Ok(s.clone())
 }
 
+/// Toggled by the Settings hotkey-capture fields on focus/blur.
+/// While active, every global-shortcut handler no-ops so the chord
+/// being typed can't simultaneously fire the action it's bound to.
+#[tauri::command]
+pub fn set_hotkey_capture(state: State<'_, AppState>, active: bool) -> CmdResult<()> {
+    state
+        .hotkeys_suspended
+        .store(active, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn update_settings(
     app: AppHandle,
@@ -310,6 +321,9 @@ pub fn update_settings(
         let handle = app.clone();
         app.global_shortcut()
             .on_shortcut(shortcut_new, move |_app, _sc, event| {
+                if crate::hotkeys_are_suspended(&handle) {
+                    return;
+                }
                 if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                     if let Some(win) = handle.get_webview_window("main") {
                         // Routed through the toggle helper so the new hotkey
@@ -333,6 +347,9 @@ pub fn update_settings(
                 if let Err(err) =
                     app.global_shortcut()
                         .on_shortcut(sc_new, move |_app, _sc, event| {
+                            if crate::hotkeys_are_suspended(&handle) {
+                                return;
+                            }
                             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed
                             {
                                 crate::trigger_quick_add_from_selection(&handle);

@@ -1260,7 +1260,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     // Sized like the recent-grid so they sit on the same row.
     if !top_users.is_empty() || !top_library.is_empty() {
         body.push_str("<div class=\"recent-grid\">");
-        body.push_str("<div><h2>Top contributors</h2>");
+        body.push_str("<div><h2>Top users</h2>");
         if top_users.is_empty() {
             body.push_str("<p class=\"muted\">No paste activity reported yet.</p>");
         } else {

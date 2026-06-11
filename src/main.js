@@ -513,6 +513,11 @@ async function init() {
     } catch (err) {
       console.warn("team_chars_pasted load failed", err);
     }
+    // Startup reconciliation: push the local Savings profile to the
+    // server once per session so the dashboard's stats never run on
+    // values that drifted while signed out or during a failed push.
+    // Fire-and-forget - never delays first paint.
+    ensureProfileSynced();
   }
 
   await refresh();
@@ -565,6 +570,10 @@ async function init() {
     await listen("snipdesk://server-sync", async () => {
       await loadServerStatus();
       await refresh();
+      // Covers the OIDC deep-link sign-in path (which never goes
+      // through afterSignedIn): first sync after sign-in reconciles
+      // the Savings profile. No-op when already pushed this session.
+      ensureProfileSynced();
     });
 
     // The background loop emits this when the server returns 401 and
@@ -4387,6 +4396,8 @@ async function afterSignedIn() {
   } catch (err) {
     console.warn("initial sync after sign-in failed", err);
   }
+  // Reconcile the Savings profile with the freshly signed-in server.
+  ensureProfileSynced();
 }
 
 async function doServerLogout() {
@@ -4400,6 +4411,9 @@ async function doServerLogout() {
   if (!ok) return;
   try {
     await invoke("server_logout");
+    // Next sign-in (even as the same user) re-pushes the profile:
+    // values may change while signed out.
+    profileSyncedFor = null;
     await loadServerStatus();
     await refresh();
   } catch (err) {
@@ -4438,6 +4452,21 @@ async function doServerSyncNow() {
 //     (USD, AUD, EUR ...). The local Savings field accepts a free-
 //     form symbol like "$" for the footer, which isn't ISO; in that
 //     case we pass null so the server uses its dashboard default.
+/// Push the Savings profile to the server once per signed-in session
+/// (keyed on server + user). Covers the holes the explicit
+/// saveSettings push leaves open: values set while signed out, and
+/// pushes that failed silently offline. Called at startup, after
+/// every sign-in path, and from the post-sign-in sync event; the key
+/// makes the extra calls free.
+let profileSyncedFor = null;
+async function ensureProfileSynced() {
+  if (!TEAMS_BUILD || !state.serverStatus?.signed_in) return;
+  const key = `${state.serverStatus.server_url}|${state.serverStatus.user?.id || ""}`;
+  if (profileSyncedFor === key) return;
+  profileSyncedFor = key;
+  await syncProfileToServer(state.settings);
+}
+
 async function syncProfileToServer(settings) {
   if (!TEAMS_BUILD) return;
   if (!state.serverStatus?.signed_in) return;

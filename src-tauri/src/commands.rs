@@ -672,10 +672,17 @@ pub fn check_title_conflict(
 /// it and read the resulting status; the scheduled loop only logs.
 #[cfg(feature = "teams")]
 #[tauri::command]
-pub fn sync_team_library(app: AppHandle) -> CmdResult<SyncStatus> {
-    crate::run_one_team_sync(&app);
-    // Returns last-known status either way; `last_error` distinguishes ok vs fail.
-    team_library_status(app.state::<AppState>())
+pub async fn sync_team_library(app: AppHandle) -> CmdResult<SyncStatus> {
+    // Off the main thread: run_one_team_sync does a blocking HTTP
+    // fetch, and sync commands execute on the main thread in Tauri 2.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::run_one_team_sync(&app);
+        // Returns last-known status either way; `last_error`
+        // distinguishes ok vs fail.
+        team_library_status(app.state::<AppState>())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(feature = "teams")]

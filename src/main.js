@@ -576,6 +576,13 @@ async function init() {
       ensureProfileSynced();
     });
 
+    // A sync attempt failed (server unreachable, etc.). Repaint the
+    // footer glyph now instead of waiting for the next status poll;
+    // everything else keeps working from the local database.
+    await listen("snipdesk://server-sync-failed", async () => {
+      await loadServerStatus();
+    });
+
     // The background loop emits this when the server returns 401 and
     // it wipes the stored token. Refresh the UI so the user sees the
     // login form again instead of a stale "signed in as" line.
@@ -3967,12 +3974,22 @@ function escapeHtmlBasic(s) {
 /// server sees the change immediately rather than waiting up to 5
 /// minutes for the background sync. Heartbeat-style ticks live
 /// separately (see startServerHeartbeat).
+/// One sync at a time: with the server unreachable each attempt can
+/// take the full HTTP timeout, and the heartbeat + focus + mutation
+/// triggers would otherwise stack concurrent attempts for nothing.
+let syncInFlight = false;
 function syncIfTeams() {
   if (!TEAMS_BUILD) return;
   if (!state.serverStatus?.signed_in) return;
-  invoke("server_sync_now").catch((err) => {
-    console.debug("background sync after mutation failed:", err);
-  });
+  if (syncInFlight) return;
+  syncInFlight = true;
+  invoke("server_sync_now")
+    .catch((err) => {
+      console.debug("background sync after mutation failed:", err);
+    })
+    .finally(() => {
+      syncInFlight = false;
+    });
 }
 
 /// 60-second heartbeat that flushes any unsynced data + updates the
@@ -3992,14 +4009,10 @@ function startServerHeartbeat() {
   if (!TEAMS_BUILD) return;
   if (serverHeartbeatTimer) return;
   serverHeartbeatTimer = setInterval(() => {
-    if (!state.serverStatus?.signed_in) return;
-    // Sneak past the standard background-sync interval (which runs
-    // every 5 minutes); this is a "keep state warm" tick, not a
-    // full reconciliation. Errors are silent - the background loop
-    // will eventually retry.
-    invoke("server_sync_now").catch((err) => {
-      console.debug("heartbeat sync failed:", err);
-    });
+    // Shares syncIfTeams' single-flight guard: during an outage each
+    // attempt can run to the HTTP timeout, and stacked heartbeats
+    // would just queue more losses.
+    syncIfTeams();
   }, 60_000);
 }
 
@@ -4127,13 +4140,20 @@ function renderServerStatus() {
     els.syncIndicator.classList.toggle("hidden", !signedIn);
     if (signedIn) {
       const ls = st.last_sync;
-      const hasErrors = Boolean(ls && ls.errors);
+      // A live failure (server unreachable, sync erroring) outranks
+      // whatever the last successful sync said - the old logic only
+      // looked at last_sync and kept a stale green glyph through an
+      // outage.
+      const failing = Boolean(st.last_error);
+      const hasErrors = failing || Boolean(ls && ls.errors);
       els.syncIndicator.classList.toggle("err", hasErrors);
       els.syncIndicator.classList.toggle("ok", !hasErrors);
-      els.syncIndicator.title = ls
-        ? `Last sync ${formatSyncTimestamp(ls.at)} - ${ls.pushed} pushed, ${ls.pulled} pulled` +
-          (ls.errors ? `, ${ls.errors} errors` : "")
-        : "Signed in - no sync yet";
+      els.syncIndicator.title = failing
+        ? `Sync failing: ${st.last_error}. Retrying automatically; your snippets keep working locally.`
+        : ls
+          ? `Last sync ${formatSyncTimestamp(ls.at)} - ${ls.pushed} pushed, ${ls.pulled} pulled` +
+            (ls.errors ? `, ${ls.errors} errors` : "")
+          : "Signed in - no sync yet";
     }
   }
   if (st.signed_in && st.user) {

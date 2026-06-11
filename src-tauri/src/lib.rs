@@ -56,6 +56,12 @@ pub struct AppState {
     pub team_snippet_count: AtomicUsize,
     #[cfg(feature = "teams")]
     pub team_last_error: Mutex<Option<String>>,
+    /// Most recent server-sync failure, None after a clean tick.
+    /// Feeds ServerStatus.last_error so the footer sync glyph can
+    /// show "sync failing" instead of a stale green from the last
+    /// success before the server went away.
+    #[cfg(feature = "teams")]
+    pub server_sync_error: Mutex<Option<String>>,
 }
 
 // capture_foreground_hwnd / restore_foreground now live in snipdesk_core::paste.
@@ -167,6 +173,8 @@ pub fn run() {
                 team_snippet_count: AtomicUsize::new(0),
                 #[cfg(feature = "teams")]
                 team_last_error: Mutex::new(None),
+                #[cfg(feature = "teams")]
+                server_sync_error: Mutex::new(None),
             });
             app.manage(settings::SettingsPath(settings_path));
 

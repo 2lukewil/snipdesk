@@ -125,16 +125,23 @@ fn persist_server_url(app: &AppHandle, url: &str) -> Result<(), String> {
 /// reachable. Unauthenticated server-side, so the caller doesn't
 /// need credentials yet.
 #[tauri::command]
-pub fn server_auth_methods(server_url: String) -> CmdResult<api::AuthMethodsResponse> {
-    let trimmed = server_url.trim().trim_end_matches('/').to_string();
-    if trimmed.is_empty() {
-        return Err("server URL is empty".to_string());
-    }
-    api::auth_methods(&trimmed).map_err(map_api_err)
+pub async fn server_auth_methods(server_url: String) -> CmdResult<api::AuthMethodsResponse> {
+    run_blocking(move || {
+        let trimmed = server_url.trim().trim_end_matches('/').to_string();
+        if trimmed.is_empty() {
+            return Err("server URL is empty".to_string());
+        }
+        api::auth_methods(&trimmed).map_err(map_api_err)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn server_signup(app: AppHandle, args: SignupArgs) -> CmdResult<UserDto> {
+pub async fn server_signup(app: AppHandle, args: SignupArgs) -> CmdResult<UserDto> {
+    run_blocking(move || server_signup_blocking(app, args)).await
+}
+
+fn server_signup_blocking(app: AppHandle, args: SignupArgs) -> CmdResult<UserDto> {
     let state = app.state::<AppState>();
     let auth = api::signup(
         &args.server_url,
@@ -150,7 +157,11 @@ pub fn server_signup(app: AppHandle, args: SignupArgs) -> CmdResult<UserDto> {
 }
 
 #[tauri::command]
-pub fn server_login(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> {
+pub async fn server_login(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> {
+    run_blocking(move || server_login_blocking(app, args)).await
+}
+
+fn server_login_blocking(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> {
     let state = app.state::<AppState>();
     let auth = api::login(&args.server_url, &args.email, &args.password).map_err(map_api_err)?;
     credentials::store(&args.server_url, &auth.token).map_err(|e| e.to_string())?;
@@ -217,12 +228,47 @@ pub fn server_status(state: State<'_, AppState>) -> CmdResult<ServerStatus> {
         },
         signed_in,
         last_sync: load_last_sync(&state),
-        last_error: None,
+        last_error: state.server_sync_error.lock().ok().and_then(|g| g.clone()),
     })
 }
 
+/// Record the outcome of any sync attempt (background tick, manual
+/// Sync now, post-mutation kick) so the footer glyph reflects
+/// reality. Failures emit an event so the frontend repaints without
+/// waiting for the next poll; successes clear silently (the normal
+/// server-sync event already repaints).
+fn record_sync_failure(app: &AppHandle, state: &AppState, err: &str) {
+    if let Ok(mut g) = state.server_sync_error.lock() {
+        *g = Some(err.to_string());
+    }
+    let _ = app.emit("snipdesk://server-sync-failed", err.to_string());
+}
+
+fn record_sync_success(state: &AppState) {
+    if let Ok(mut g) = state.server_sync_error.lock() {
+        *g = None;
+    }
+}
+
+/// Run blocking work (network, keychain) off the main thread. Sync
+/// `#[tauri::command]` fns execute ON the main thread in Tauri 2, so
+/// a hanging request inside one froze the whole window - the
+/// "client lags when the server is down" bug. Every network-touching
+/// command goes through here now.
+async fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> CmdResult<T> + Send + 'static,
+) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("background task failed: {e}"))?
+}
+
 #[tauri::command]
-pub fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
+pub async fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
+    run_blocking(move || server_sync_now_blocking(app)).await
+}
+
+fn server_sync_now_blocking(app: AppHandle) -> CmdResult<SyncOutcome> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -237,8 +283,16 @@ pub fn server_sync_now(app: AppHandle) -> CmdResult<SyncOutcome> {
             handle_account_inactive(&app, &state, &server_url, &msg);
             return Err(msg);
         }
-        Err(e) => return Err(map_api_err(e)),
+        Err(e) => {
+            // Manual / kicked syncs share the failure ledger with the
+            // background loop so the footer glyph turns regardless of
+            // which path noticed the outage.
+            let msg = map_api_err(e);
+            record_sync_failure(&app, &state, &msg);
+            return Err(msg);
+        }
     };
+    record_sync_success(&state);
     save_last_sync(&state, &outcome)?;
     refresh_team_snippet_count(&app, &state);
     // Persist the refreshed user record so server_status sees the new
@@ -295,27 +349,45 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
     if token.is_empty() {
         return Err("empty token in deep link".to_string());
     }
-    let state = app.state::<AppState>();
-    let server_url = current_server_url(&state);
-    if server_url.is_empty() {
-        return Err("no server URL configured; can't bind incoming token".to_string());
-    }
-    // Validate against the server before persisting. If the user
-    // somehow opened the deep link against the wrong server (or the
-    // token was already revoked), the /api/me call returns an error
-    // and we don't write garbage to the keychain.
-    let me = api::me(&server_url, &token).map_err(map_api_err)?;
-    credentials::store(&server_url, &token).map_err(|e| e.to_string())?;
-    save_signed_in_user(&state, &me.user)?;
-    // Real sync, not just a notification: without it the team
-    // library stays empty until the background loop's next tick,
-    // which reads as "sign-in worked but nothing appeared".
-    spawn_post_signin_sync(app.clone());
-    // The browser stole focus for the SSO dance; bring the window
-    // back so the user sees the signed-in state without alt-tabbing.
+    // The deep-link event fires on the MAIN thread; the validation
+    // round-trip below must not run there or a slow/dead server
+    // freezes the window right as it comes to the foreground. The
+    // window raise stays synchronous (it's why the user is looking
+    // at the app); the network half moves to a worker thread.
     if let Some(win) = app.get_webview_window("main") {
         crate::show_and_focus(app, &win);
     }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let server_url = current_server_url(&state);
+        if server_url.is_empty() {
+            eprintln!("deep link: no server URL configured; can't bind incoming token");
+            return;
+        }
+        // Validate against the server before persisting. If the user
+        // somehow opened the deep link against the wrong server (or
+        // the token was already revoked), the /api/me call errors
+        // and we don't write garbage to the keychain.
+        let me = match api::me(&server_url, &token) {
+            Ok(me) => me,
+            Err(e) => {
+                eprintln!("deep link token validation failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = credentials::store(&server_url, &token) {
+            eprintln!("deep link: credential store failed: {e}");
+            return;
+        }
+        if let Err(e) = save_signed_in_user(&state, &me.user) {
+            eprintln!("deep link: save user failed: {e}");
+        }
+        // Real sync, not just a notification: without it the team
+        // library stays empty until the background loop's next tick,
+        // which reads as "sign-in worked but nothing appeared".
+        spawn_post_signin_sync(app.clone());
+    });
     Ok(())
 }
 
@@ -357,7 +429,11 @@ fn spawn_post_signin_sync(app: AppHandle) {
 /// is wiped so the rest of the UI agrees; network errors return Err
 /// and wipe nothing (offline must not sign anyone out).
 #[tauri::command]
-pub fn server_validate_session(app: AppHandle) -> CmdResult<Option<UserDto>> {
+pub async fn server_validate_session(app: AppHandle) -> CmdResult<Option<UserDto>> {
+    run_blocking(move || server_validate_session_blocking(app)).await
+}
+
+fn server_validate_session_blocking(app: AppHandle) -> CmdResult<Option<UserDto>> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -438,7 +514,11 @@ pub fn server_oidc_start_url(
 /// it's valid, and persists it to the keychain just like the deep-
 /// link path would have.
 #[tauri::command]
-pub fn server_oidc_paste_token(app: AppHandle, token: String) -> CmdResult<UserDto> {
+pub async fn server_oidc_paste_token(app: AppHandle, token: String) -> CmdResult<UserDto> {
+    run_blocking(move || server_oidc_paste_token_blocking(app, token)).await
+}
+
+fn server_oidc_paste_token_blocking(app: AppHandle, token: String) -> CmdResult<UserDto> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("token is empty".to_string());
@@ -467,7 +547,11 @@ pub fn server_oidc_paste_token(app: AppHandle, token: String) -> CmdResult<UserD
 /// trash panel without writing them to the local DB - they're
 /// transient, and the source of truth is the server until restored.
 #[tauri::command]
-pub fn server_trash_list(app: AppHandle) -> CmdResult<Vec<api::TrashView>> {
+pub async fn server_trash_list(app: AppHandle) -> CmdResult<Vec<api::TrashView>> {
+    run_blocking(move || server_trash_list_blocking(app)).await
+}
+
+fn server_trash_list_blocking(app: AppHandle) -> CmdResult<Vec<api::TrashView>> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -484,7 +568,11 @@ pub fn server_trash_list(app: AppHandle) -> CmdResult<Vec<api::TrashView>> {
 /// back into the local snippets table via the normal upsert path, so
 /// we just kick off `server_sync_now` after a successful restore.
 #[tauri::command]
-pub fn server_trash_restore(app: AppHandle, id: String) -> CmdResult<()> {
+pub async fn server_trash_restore(app: AppHandle, id: String) -> CmdResult<()> {
+    run_blocking(move || server_trash_restore_blocking(app, id)).await
+}
+
+fn server_trash_restore_blocking(app: AppHandle, id: String) -> CmdResult<()> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -557,7 +645,11 @@ where
 /// reflects the new values immediately (the next /api/me probe would
 /// pick them up too, but we don't want a 60s lag).
 #[tauri::command]
-pub fn server_update_profile(app: AppHandle, args: UpdateProfileArgs) -> CmdResult<UserDto> {
+pub async fn server_update_profile(app: AppHandle, args: UpdateProfileArgs) -> CmdResult<UserDto> {
+    run_blocking(move || server_update_profile_blocking(app, args)).await
+}
+
+fn server_update_profile_blocking(app: AppHandle, args: UpdateProfileArgs) -> CmdResult<UserDto> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -577,7 +669,11 @@ pub fn server_update_profile(app: AppHandle, args: UpdateProfileArgs) -> CmdResu
 }
 
 #[tauri::command]
-pub fn server_migrate_local_snippets(app: AppHandle) -> CmdResult<usize> {
+pub async fn server_migrate_local_snippets(app: AppHandle) -> CmdResult<usize> {
+    run_blocking(move || server_migrate_local_snippets_blocking(app)).await
+}
+
+fn server_migrate_local_snippets_blocking(app: AppHandle) -> CmdResult<usize> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if server_url.is_empty() {
@@ -646,6 +742,7 @@ pub fn start_server_sync_thread(handle: AppHandle) {
 
             match sync::tick(&state.db, &server_url, &token) {
                 Ok(outcome) => {
+                    record_sync_success(&state);
                     let _ = save_last_sync(&state, &outcome);
                     refresh_team_snippet_count(&handle, &state);
                     if let Some(u) = &outcome.user {
@@ -673,7 +770,11 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     let _ = handle.emit("snipdesk://server-auth-warning", ());
                 }
                 Err(e) => {
+                    // Surface the failure: the footer glyph reads
+                    // ServerStatus.last_error, and the emitted event
+                    // repaints it now instead of on the next poll.
                     eprintln!("background sync error: {e}");
+                    record_sync_failure(&handle, &state, &map_api_err(e));
                 }
             }
             last_sync = SystemTime::now();

@@ -137,6 +137,24 @@ fn url(base: &str, path: &str) -> String {
     format!("{base}{path}")
 }
 
+/// Shared agent with explicit timeouts. The bare `ureq::get(...)`
+/// free functions have NO overall timeout: against a host that
+/// accepts the connection but never answers (sleeping VPN, dying
+/// container proxy, half-open TCP), a request hangs indefinitely -
+/// and anything waiting on it hangs with it. 5s to connect, 20s for
+/// the whole request: generous for the largest realistic sync pull,
+/// strict enough that an unreachable server degrades to a periodic
+/// retried error instead of a wedged client.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+    })
+}
+
 fn handle_response<T: serde::de::DeserializeOwned>(
     res: Result<ureq::Response, ureq::Error>,
 ) -> ApiResult<T> {
@@ -216,7 +234,7 @@ pub struct AuthMethodProvider {
 }
 
 pub fn auth_methods(server_url: &str) -> ApiResult<AuthMethodsResponse> {
-    let res = ureq::get(&url(server_url, "/api/auth/methods")).call();
+    let res = agent().get(&url(server_url, "/api/auth/methods")).call();
     handle_response(res)
 }
 
@@ -233,7 +251,8 @@ pub fn signup(
     password: &str,
     display_name: &str,
 ) -> ApiResult<AuthResponse> {
-    let res = ureq::post(&url(server_url, "/api/auth/signup"))
+    let res = agent()
+        .post(&url(server_url, "/api/auth/signup"))
         .set("content-type", "application/json")
         .send_json(SignupBody {
             email,
@@ -250,7 +269,8 @@ struct LoginBody<'a> {
 }
 
 pub fn login(server_url: &str, email: &str, password: &str) -> ApiResult<AuthResponse> {
-    let res = ureq::post(&url(server_url, "/api/auth/login"))
+    let res = agent()
+        .post(&url(server_url, "/api/auth/login"))
         .set("content-type", "application/json")
         .send_json(LoginBody { email, password });
     handle_response(res)
@@ -270,7 +290,8 @@ pub struct MeResponse {
 }
 
 pub fn me(server_url: &str, token: &str) -> ApiResult<MeResponse> {
-    let res = ureq::get(&url(server_url, "/api/me"))
+    let res = agent()
+        .get(&url(server_url, "/api/me"))
         .set("authorization", &format!("Bearer {token}"))
         .call();
     handle_response(res)
@@ -295,7 +316,8 @@ pub struct UpdateMeBody {
 /// validates ranges and unknown currency codes; map_api_err on the
 /// IPC side turns those into user-visible strings.
 pub fn update_me(server_url: &str, token: &str, body: &UpdateMeBody) -> ApiResult<UserDto> {
-    let res = ureq::request("PATCH", &url(server_url, "/api/me"))
+    let res = agent()
+        .request("PATCH", &url(server_url, "/api/me"))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(serde_json::to_value(body).unwrap_or(serde_json::Value::Null));
@@ -303,7 +325,8 @@ pub fn update_me(server_url: &str, token: &str, body: &UpdateMeBody) -> ApiResul
 }
 
 pub fn list_snippets(server_url: &str, token: &str, since: i64) -> ApiResult<SyncResponse> {
-    let res = ureq::get(&url(server_url, "/api/snippets"))
+    let res = agent()
+        .get(&url(server_url, "/api/snippets"))
         .set("authorization", &format!("Bearer {token}"))
         .query("since", &since.to_string())
         .call();
@@ -322,7 +345,8 @@ pub fn create_snippet(
     token: &str,
     body: &CreateBody<'_>,
 ) -> ApiResult<WriteResponse> {
-    let res = ureq::post(&url(server_url, "/api/snippets"))
+    let res = agent()
+        .post(&url(server_url, "/api/snippets"))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(body);
@@ -343,7 +367,8 @@ pub fn update_snippet(
     body: &UpdateBody<'_>,
 ) -> ApiResult<WriteResponse> {
     let path = format!("/api/snippets/{id}");
-    let res = ureq::put(&url(server_url, &path))
+    let res = agent()
+        .put(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(body);
@@ -352,7 +377,8 @@ pub fn update_snippet(
 
 pub fn delete_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> {
     let path = format!("/api/snippets/{id}");
-    let res = ureq::delete(&url(server_url, &path))
+    let res = agent()
+        .delete(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .call();
     handle_unit(res)
@@ -377,7 +403,8 @@ pub struct TrashView {
 }
 
 pub fn list_trash(server_url: &str, token: &str) -> ApiResult<Vec<TrashView>> {
-    let res = ureq::get(&url(server_url, "/api/snippets/trash"))
+    let res = agent()
+        .get(&url(server_url, "/api/snippets/trash"))
         .set("authorization", &format!("Bearer {token}"))
         .call();
     handle_response(res)
@@ -386,7 +413,8 @@ pub fn list_trash(server_url: &str, token: &str) -> ApiResult<Vec<TrashView>> {
 pub fn restore_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<WriteResponse> {
     let path = format!("/api/snippets/{id}/restore");
     // POST with empty body - the id in the URL is the only input.
-    let res = ureq::post(&url(server_url, &path))
+    let res = agent()
+        .post(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .send_string("");
     handle_response(res)
@@ -426,7 +454,8 @@ pub struct LibrarySyncResponse {
 }
 
 pub fn list_library(server_url: &str, token: &str, since: i64) -> ApiResult<LibrarySyncResponse> {
-    let res = ureq::get(&url(server_url, "/api/library"))
+    let res = agent()
+        .get(&url(server_url, "/api/library"))
         .set("authorization", &format!("Bearer {token}"))
         .query("since", &since.to_string())
         .call();
@@ -445,7 +474,8 @@ pub fn create_library_snippet(
     token: &str,
     body: &LibraryCreateBody<'_>,
 ) -> ApiResult<WriteResponse> {
-    let res = ureq::post(&url(server_url, "/api/library"))
+    let res = agent()
+        .post(&url(server_url, "/api/library"))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(body);
@@ -466,7 +496,8 @@ pub fn update_library_snippet(
     body: &LibraryUpdateBody<'_>,
 ) -> ApiResult<WriteResponse> {
     let path = format!("/api/library/{id}");
-    let res = ureq::put(&url(server_url, &path))
+    let res = agent()
+        .put(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(body);
@@ -475,7 +506,8 @@ pub fn update_library_snippet(
 
 pub fn delete_library_snippet(server_url: &str, token: &str, id: &str) -> ApiResult<()> {
     let path = format!("/api/library/{id}");
-    let res = ureq::delete(&url(server_url, &path))
+    let res = agent()
+        .delete(&url(server_url, &path))
         .set("authorization", &format!("Bearer {token}"))
         .call();
     handle_unit(res)
@@ -505,7 +537,8 @@ pub struct UsageReport<'a> {
 /// delivery: a network failure here drops the batch; the next sync
 /// tick retries from a fresh snapshot.
 pub fn report_usage(server_url: &str, token: &str, body: &UsageReport<'_>) -> ApiResult<()> {
-    let res = ureq::post(&url(server_url, "/api/usage/report"))
+    let res = agent()
+        .post(&url(server_url, "/api/usage/report"))
         .set("authorization", &format!("Bearer {token}"))
         .set("content-type", "application/json")
         .send_json(serde_json::to_value(body).unwrap_or(serde_json::Value::Null));

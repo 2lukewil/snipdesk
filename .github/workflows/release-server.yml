@@ -149,6 +149,13 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: snipdesk-server ${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
+          # Never claim the repo-wide "Latest" badge: the desktop
+          # updater resolves its manifest through
+          # releases/latest/download/, which must always point at a
+          # CLIENT release (the one carrying snipdesk-update.json).
+          # A server release grabbing "latest" 404s every running
+          # client's update check until the next client tag.
+          make_latest: 'false'
           body: |
             Docker images published:
 

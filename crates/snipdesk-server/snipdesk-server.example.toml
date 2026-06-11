@@ -22,6 +22,15 @@ data_dir = "./data"
 #   snipdesk-server gen-jwt-secret
 jwt_secret = ""
 
+# Email/password authentication master switch. Set to false for an
+# SSO-only deployment: the password endpoints reject server-side and
+# every sign-in surface (desktop client, dashboard login, first-run
+# setup) shows only the configured OIDC providers. Requires at least
+# one [oidc.*] provider - the server refuses to start otherwise.
+# The first admin is then whoever signs in through the IdP first.
+#
+# password_enabled = false
+
 # Origins allowed to make cross-origin requests to /api/*. Empty
 # (default) = same-origin only; no CORS layer mounted. Populate when
 # a separate web frontend needs to talk to the API. Each entry must

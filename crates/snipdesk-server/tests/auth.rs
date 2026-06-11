@@ -35,6 +35,7 @@ async fn make_app() -> axum::Router {
         oidc_keycloak: None,
         oidc_allowed_schemes: vec!["snipdesk".to_string()],
         secure_cookies: false,
+        password_enabled: true,
         stats: snipdesk_server::config::StatsConfig::default(),
         fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
         cors_allowed_origins: Vec::new(),
@@ -434,4 +435,75 @@ async fn me_patch_rejects_out_of_range_values() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "unknown_currency");
+}
+
+/// Same harness with password auth switched off (SSO-only mode).
+async fn make_sso_only_app() -> axum::Router {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect in-memory sqlite");
+    db::run_migrations(&pool).await.expect("migrations");
+    let state = AppState {
+        pool,
+        master_key: Arc::new(MasterKey::generate()),
+        jwt_secret: "test-jwt-secret-not-for-production".into(),
+        oidc_google: None,
+        oidc_keycloak: None,
+        oidc_allowed_schemes: vec!["snipdesk".to_string()],
+        secure_cookies: false,
+        password_enabled: false,
+        stats: snipdesk_server::config::StatsConfig::default(),
+        fx_cache: std::sync::Arc::new(snipdesk_server::fx::FxCache::default()),
+        cors_allowed_origins: Vec::new(),
+        brand_name: "SnipDesk".to_string(),
+        update_cache: std::sync::Arc::new(snipdesk_server::updater::UpdateCache::default()),
+    };
+    router(state)
+}
+
+#[tokio::test]
+async fn sso_only_rejects_password_endpoints_and_reports_it() {
+    let app = make_sso_only_app().await;
+
+    // /api/auth/methods is the client's source of truth.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/methods")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let methods: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(methods["password"]["enabled"], false);
+
+    // Hand-crafted POSTs are rejected server-side, not just hidden.
+    let (status, body) = post_json(
+        &app,
+        "/api/auth/signup",
+        serde_json::json!({
+            "email": "a@example.com",
+            "password": "longenough123",
+            "display_name": "A"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "signup must 403: {body}");
+    assert_eq!(body["error"], "password_disabled");
+
+    let (status, body) = post_json(
+        &app,
+        "/api/auth/login",
+        serde_json::json!({ "email": "a@example.com", "password": "longenough123" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "login must 403: {body}");
+    assert_eq!(body["error"], "password_disabled");
 }

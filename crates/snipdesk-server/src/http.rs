@@ -49,6 +49,11 @@ pub struct AppState {
     /// Dashboard session cookie gets the `Secure` attribute when this
     /// is `true`. Forwarded from `secure_cookies` in the TOML config.
     pub secure_cookies: bool,
+    /// Email/password auth master switch (config `password_enabled`,
+    /// env SNIPDESK_PASSWORD_ENABLED). When false the deployment is
+    /// SSO-only: the password endpoints reject server-side and every
+    /// sign-in surface renders only the configured OIDC providers.
+    pub password_enabled: bool,
     /// Stats-page knobs (wpm / wage / currency conversion). Cheap
     /// to clone (small map of FX rates) - we pass by value rather
     /// than Arc-wrap.

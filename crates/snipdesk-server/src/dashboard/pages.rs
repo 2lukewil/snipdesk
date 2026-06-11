@@ -244,16 +244,48 @@ pub async fn index(
     };
     let redirect_to = safe_next(q.redirect_to.as_deref());
     let sso_buttons = render_dashboard_sso_buttons(&state, &redirect_to);
+    // SSO-only deployments drop the password form entirely; the SSO
+    // buttons (and their "or" divider, which only makes sense with
+    // two sides) adapt via strip_sso_divider.
+    let password_form = if state.password_enabled {
+        format!(
+            "<form method=\"post\" action=\"/dashboard/login\" class=\"stack\">\
+               <input type=\"hidden\" name=\"redirect_to\" value=\"{rt}\" />\
+               <label>Email\
+                 <input type=\"email\" name=\"email\" autocomplete=\"username\" required autofocus />\
+               </label>\
+               <label>Password\
+                 <input type=\"password\" name=\"password\" autocomplete=\"current-password\" required />\
+               </label>\
+               <button type=\"submit\" class=\"primary\">Sign in</button>\
+             </form>",
+            rt = escape_html(&redirect_to),
+        )
+    } else {
+        String::new()
+    };
+    let sso_buttons = if state.password_enabled {
+        sso_buttons
+    } else {
+        strip_sso_divider(&sso_buttons)
+    };
     Html(render(
         LOGIN,
         &[
             ("BANNER", &banner),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
-            ("REDIRECT_TO", &escape_html(&redirect_to)),
+            ("PASSWORD_FORM", &password_form),
             ("SSO_BUTTONS", &sso_buttons),
         ],
     ))
     .into_response()
+}
+
+/// Remove the "or" divider from an SSO button stack. Used when the
+/// password form isn't rendered - a divider with only one side reads
+/// as a leftover.
+fn strip_sso_divider(sso: &str) -> String {
+    sso.replace("<div class=\"sso-divider\"><span>or</span></div>", "")
 }
 
 /// Render the SSO button stack that appears under the password
@@ -349,6 +381,11 @@ pub async fn login_submit(
     jar: CookieJar,
     Form(body): Form<LoginForm>,
 ) -> Response {
+    // SSO-only deployments never render the password form; reject a
+    // hand-crafted POST the same way the JSON login endpoint does.
+    if !state.password_enabled {
+        return Redirect::to("/?error=signin").into_response();
+    }
     let email = body.email.trim().to_lowercase();
 
     let row: Option<LoginRow> =
@@ -436,15 +473,40 @@ fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
     // the identity provider instead of a password: the OIDC callback
     // already promotes the very first account to admin (atomic
     // zero-users CASE in the INSERT), so the buttons just reuse the
-    // login page's dashboard SSO start routes.
+    // login page's dashboard SSO start routes. SSO-only deployments
+    // drop the password form and make the SSO path the headline.
+    let password_form = if state.password_enabled {
+        "<form method=\"post\" action=\"/dashboard/setup\" class=\"stack\">\
+           <label>Your name\
+             <input type=\"text\" name=\"display_name\" autocomplete=\"name\" required autofocus />\
+           </label>\
+           <label>Email\
+             <input type=\"email\" name=\"email\" autocomplete=\"username\" required />\
+           </label>\
+           <label>Password (10+ characters)\
+             <input type=\"password\" name=\"password\" autocomplete=\"new-password\" minlength=\"10\" required />\
+           </label>\
+           <button type=\"submit\" class=\"primary\">Create admin account</button>\
+         </form>"
+            .to_string()
+    } else {
+        String::new()
+    };
     let sso = render_dashboard_sso_buttons(state, "/");
     let sso_block = if sso.is_empty() {
         String::new()
-    } else {
+    } else if state.password_enabled {
         format!(
             "{sso}<p class=\"sub\">Signing in through your identity provider \
              also works: the first account to sign in becomes the \
              administrator.</p>",
+        )
+    } else {
+        format!(
+            "{sso}<p class=\"sub\">This server is SSO-only. Sign in through \
+             your identity provider; the first account becomes the \
+             administrator.</p>",
+            sso = strip_sso_divider(&sso),
         )
     };
     Html(render(
@@ -452,6 +514,7 @@ fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
         &[
             ("BANNER", banner),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
+            ("PASSWORD_FORM", &password_form),
             ("SSO_BUTTONS", &sso_block),
         ],
     ))
@@ -475,6 +538,12 @@ pub async fn setup_submit(
     jar: CookieJar,
     Form(body): Form<SetupForm>,
 ) -> Response {
+    // SSO-only: the first admin signs in through the IdP (the OIDC
+    // callback's zero-users promotion); a hand-crafted password
+    // setup POST is rejected like every other password endpoint.
+    if !state.password_enabled {
+        return Redirect::to("/?error=setup_failed").into_response();
+    }
     let email = body.email.trim().to_lowercase();
     let display_name = body.display_name.trim().to_string();
     if !crate::handlers::auth::looks_like_email(&email) {

@@ -161,6 +161,7 @@ for the stable knobs, env for the secrets).
 | `SNIPDESK_OIDC_KEYCLOAK_*` | `[oidc.keycloak]`. Required set to enable: `SNIPDESK_OIDC_KEYCLOAK_CLIENT_ID`, `SNIPDESK_OIDC_KEYCLOAK_CLIENT_SECRET`, `SNIPDESK_OIDC_KEYCLOAK_ISSUER_URL`, `SNIPDESK_OIDC_KEYCLOAK_REDIRECT_URI`. Optional: `SNIPDESK_OIDC_KEYCLOAK_REQUIRED_REALM_ROLE`, `SNIPDESK_OIDC_KEYCLOAK_ADMIN_ROLE`, `SNIPDESK_OIDC_KEYCLOAK_ALLOWED_EMAIL_DOMAINS`, `SNIPDESK_OIDC_KEYCLOAK_DISPLAY_NAME` |
 | `SNIPDESK_UPDATER_ENABLED` | `[updater].enabled` - set `false` for zero outbound HTTP from the server |
 | `SNIPDESK_OPEN_BROWSER` | set `false` to stop a zero-account server from opening the first-run setup page in the local browser (containers never open one; this is for bare-host and scripted runs) |
+| `SNIPDESK_PASSWORD_ENABLED` | `password_enabled` - set `false` for an SSO-only deployment: the password endpoints reject server-side and every sign-in surface (desktop client, dashboard login, first-run setup) shows only the configured OIDC providers. The server refuses to start with this `false` and no OIDC provider configured, since nobody could sign in. The first admin is then whoever signs in through the IdP first |
 
 The remaining tuning tables (`[stats]`, `[fx]`, the rest of
 `[updater]`) stay TOML-only; deployments that tune those mount a

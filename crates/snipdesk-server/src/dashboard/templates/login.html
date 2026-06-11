@@ -11,16 +11,7 @@
     <h1>{{BRAND_NAME}} admin</h1>
     <p class="sub">Sign in with your {{BRAND_NAME}} Teams account. Members can use the desktop client; this dashboard is admin-only.</p>
     {{BANNER}}
-    <form method="post" action="/dashboard/login" class="stack">
-      <input type="hidden" name="redirect_to" value="{{REDIRECT_TO}}" />
-      <label>Email
-        <input type="email" name="email" autocomplete="username" required autofocus />
-      </label>
-      <label>Password
-        <input type="password" name="password" autocomplete="current-password" required />
-      </label>
-      <button type="submit" class="primary">Sign in</button>
-    </form>
+    {{PASSWORD_FORM}}
     {{SSO_BUTTONS}}
   </div>
 </body>

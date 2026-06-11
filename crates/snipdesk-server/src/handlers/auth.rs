@@ -114,7 +114,9 @@ pub async fn methods(State(state): State<AppState>) -> Json<AuthMethodsResponse>
     }
 
     Json(AuthMethodsResponse {
-        password: AuthMethodPassword { enabled: true },
+        password: AuthMethodPassword {
+            enabled: state.password_enabled,
+        },
         providers,
     })
 }
@@ -163,10 +165,25 @@ pub struct AuthResponse {
     pub user: UserDto,
 }
 
+/// 403 for password endpoints on SSO-only deployments. The UI never
+/// shows the forms when /api/auth/methods reports password disabled;
+/// this is the server-side gate behind that convenience.
+fn require_password_auth(state: &AppState) -> Result<(), ApiError> {
+    if state.password_enabled {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden(
+            "password_disabled",
+            "this server is SSO-only; sign in through your identity provider",
+        ))
+    }
+}
+
 pub async fn signup(
     State(state): State<AppState>,
     Json(body): Json<SignupBody>,
 ) -> Result<(StatusCode, Json<AuthResponse>), ApiError> {
+    require_password_auth(&state)?;
     let email = body.email.trim().to_lowercase();
     let display_name = body.display_name.trim().to_string();
     if !looks_like_email(&email) {
@@ -283,6 +300,7 @@ pub async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<AuthResponse>, ApiError> {
+    require_password_auth(&state)?;
     let email = body.email.trim().to_lowercase();
 
     // Fetch by email; may be None. We run the verify path below

@@ -116,6 +116,17 @@ async fn main() -> Result<()> {
 async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
     let cfg = config::Config::load(&config_path)
         .with_context(|| format!("load config {}", config_path.display()))?;
+    // SSO-only sanity: disabling password auth with zero OIDC
+    // providers configured would leave a server nobody can sign in
+    // to (including the first admin). Refuse loudly at boot rather
+    // than letting the deployment discover it at the login page.
+    if !cfg.password_enabled && cfg.oidc.google.is_none() && cfg.oidc.keycloak.is_none() {
+        anyhow::bail!(
+            "password_enabled = false requires at least one OIDC provider \
+             ([oidc.google] or [oidc.keycloak], or the SNIPDESK_OIDC_* env sets); \
+             refusing to start a server nobody could sign in to"
+        );
+    }
     let master_key = config::load_master_key(&cfg.crypto)?;
     tracing::info!(
         bind_addr = %cfg.bind_addr,
@@ -150,6 +161,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         oidc_keycloak: cfg.oidc.keycloak.clone(),
         oidc_allowed_schemes: cfg.oidc.allowed_deep_link_schemes.clone(),
         secure_cookies: cfg.secure_cookies,
+        password_enabled: cfg.password_enabled,
         stats: cfg.stats.clone(),
         fx_cache,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),

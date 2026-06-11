@@ -70,6 +70,17 @@ pub struct Config {
     #[serde(default)]
     pub secure_cookies: bool,
 
+    /// Master switch for email/password authentication. `false`
+    /// makes the deployment SSO-only: the desktop sign-in surface,
+    /// dashboard login, and first-run setup all show only the
+    /// configured OIDC providers, and the password endpoints reject
+    /// server-side (the UI hiding is convenience; this is the gate).
+    /// Refused at boot when no OIDC provider is configured, because
+    /// that combination locks everyone out. Env override:
+    /// SNIPDESK_PASSWORD_ENABLED.
+    #[serde(default = "default_password_enabled")]
+    pub password_enabled: bool,
+
     /// Origins allowed to make cross-origin JSON-API requests. Empty
     /// (default) means no CORS layer at all - same-origin only, which
     /// matches the v1 desktop-client + dashboard topology where both
@@ -342,6 +353,7 @@ impl Default for Config {
             tombstone_retention_days: default_tombstone_retention_days(),
             oidc: OidcConfig::default(),
             secure_cookies: false,
+            password_enabled: default_password_enabled(),
             cors_allowed_origins: Vec::new(),
             stats: StatsConfig::default(),
             fx: None,
@@ -395,6 +407,10 @@ impl Default for OidcConfig {
 
 fn default_oidc_deep_link_schemes() -> Vec<String> {
     vec!["snipdesk".to_string()]
+}
+
+fn default_password_enabled() -> bool {
+    true
 }
 
 #[derive(Deserialize, Clone)]
@@ -615,6 +631,16 @@ impl Config {
                     value = %v,
                     "SNIPDESK_SECURE_COOKIES is not a boolean (true/false); keeping {}",
                     self.secure_cookies
+                ),
+            }
+        }
+        if let Some(v) = env_string("SNIPDESK_PASSWORD_ENABLED") {
+            match parse_env_bool(&v) {
+                Some(b) => self.password_enabled = b,
+                None => tracing::warn!(
+                    value = %v,
+                    "SNIPDESK_PASSWORD_ENABLED is not a boolean (true/false); keeping {}",
+                    self.password_enabled
                 ),
             }
         }

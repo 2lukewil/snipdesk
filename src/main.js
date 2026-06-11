@@ -5421,7 +5421,10 @@ async function onKeyDown(ev) {
     if (ev.key === "Escape") {
       ev.preventDefault();
       closeEditor();
-    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+    } else if (
+      (ev.ctrlKey || ev.metaKey) &&
+      (ev.key.toLowerCase() === "s" || ev.code === "KeyS")
+    ) {
       ev.preventDefault();
       await saveEditor();
     }
@@ -5456,23 +5459,27 @@ async function onKeyDown(ev) {
     return;
   }
 
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "n") {
+  // Chords match ev.code (the physical key) as well as ev.key: with
+  // an IME in composition mode (Japanese input especially) ev.key
+  // reports "Process" for every keystroke, which silently killed all
+  // of these. ev.code is layout- and IME-independent.
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "n" || ev.code === "KeyN")) {
     ev.preventDefault();
     openEditor();
     return;
   }
-  if ((ev.ctrlKey || ev.metaKey) && ev.key === ",") {
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === "," || ev.code === "Comma")) {
     ev.preventDefault();
     openSettings();
     return;
   }
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "e") {
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "e" || ev.code === "KeyE")) {
     ev.preventDefault();
     const s = state.snippets[state.selectedIndex];
     if (s) openEditor(s);
     return;
   }
-  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "d") {
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "d" || ev.code === "KeyD")) {
     ev.preventDefault();
     const s = state.snippets[state.selectedIndex];
     if (s) await duplicateSnippet(s.id);

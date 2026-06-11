@@ -4593,8 +4593,11 @@ async function saveSettings() {
     // Mirror the saved Savings-tab values into the server's
     // per-user override so the admin dashboard's hours-and-money
     // estimate reflects this user's actual numbers. Silent no-op
-    // when not Teams or not signed in.
-    await syncProfileToServer(state.settings);
+    // when not Teams or not signed in. Deliberately NOT awaited:
+    // the local save is the source of truth and already succeeded;
+    // with the server unreachable, awaiting here held the Save
+    // button (and the whole modal) hostage for the network timeout.
+    syncProfileToServer(state.settings);
     setStatus("Settings saved", "ok");
     closeSettings();
     await refresh();

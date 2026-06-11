@@ -1936,10 +1936,32 @@ pub async fn library_page(
         } else {
             String::new()
         };
+        // banner-flash: LIBRARY_PAGE_JS fades these out after a few
+        // seconds and strips the query params so a refresh doesn't
+        // resurrect them.
         body.push_str(&format!(
-            "<div class=\"banner {}\">Imported {imported} snippet{}{detail}.</div>",
+            "<div class=\"banner {} banner-flash\">Imported {imported} snippet{}{detail}.</div>",
             if imported > 0 { "info" } else { "error" },
             if imported == 1 { "" } else { "s" },
+        ));
+    }
+    if let Some(folder) = q.folder_deleted.as_deref().filter(|f| !f.is_empty()) {
+        let outcome = if let Some(n) = q.deleted {
+            format!(
+                " and its {n} snippet{} (recoverable from each client's trash until purge)",
+                if n == 1 { "" } else { "s" }
+            )
+        } else if let Some(n) = q.moved.filter(|n| *n > 0) {
+            format!(
+                "; moved {n} snippet{} to Unfiled",
+                if n == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        };
+        body.push_str(&format!(
+            "<div class=\"banner info banner-flash\">Deleted folder <em>{}</em>{outcome}.</div>",
+            escape_html(folder),
         ));
     }
     body.push_str("<div class=\"library-layout\">");
@@ -2339,6 +2361,18 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // navigation in an admin sidebar doesn't lean on that the way
     // public docs do.
     let folder_href = format!("/dashboard/library?folder={}", escape_html(path));
+    // Hover-revealed delete affordance, real folders only. The click
+    // handler in LIBRARY_PAGE_JS opens the confirm modal; the row's
+    // own click navigation explicitly ignores this button.
+    let delete_btn = match kind {
+        FolderNodeKind::Real => format!(
+            "<button type=\"button\" class=\"lib-folder-del\" \
+                data-folder-delete=\"{p}\" title=\"Delete folder\" \
+                aria-label=\"Delete folder {p}\">&#215;</button>",
+            p = escape_html(path),
+        ),
+        _ => String::new(),
+    };
     format!(
         "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
@@ -2346,13 +2380,14 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
             {drop_attrs} {drag_attrs}{style}>\
            {caret}{glyph}\
            <span class=\"label\">{label_safe}</span>\
-           <span class=\"count\">{count}</span>\
+           <span class=\"count\">{count}</span>{del}\
          </div>",
         path_attr = escape_html(path),
         href_attr = escape_html(&folder_href),
         label_safe = escape_html(label),
         caret = caret_html,
         glyph = tree_glyph,
+        del = delete_btn,
     )
 }
 
@@ -3325,6 +3360,14 @@ pub struct LibraryPageQuery {
     pub imported: Option<usize>,
     #[serde(default)]
     pub skipped: Option<usize>,
+    /// Set by the folder-delete redirect: the deleted folder's path
+    /// plus what happened to its contents (one of moved/deleted).
+    #[serde(default)]
+    pub folder_deleted: Option<String>,
+    #[serde(default)]
+    pub moved: Option<usize>,
+    #[serde(default)]
+    pub deleted: Option<usize>,
 }
 
 /// Apply the search-bar filter on top of the folder filter.
@@ -3472,6 +3515,43 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     importFile.value = "";
     importFile.click();
   });
+  // ---- Folder delete: hover button on sidebar rows opens the
+  // contents-aware confirm modal. Delegated because the sidebar is
+  // htmx-swapped every 10s. preventDefault + the .lib-folder-del
+  // check in the row-navigation handler keep the click from also
+  // navigating into the folder. ----
+  document.body.addEventListener("click", function (e) {
+    var del = e.target.closest && e.target.closest(".lib-folder-del");
+    if (!del) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var path = del.getAttribute("data-folder-delete") || "";
+    if (!path) return;
+    fetch("/dashboard/library/folders/delete/confirm?path=" + encodeURIComponent(path))
+      .then(function (r) { return r.text(); })
+      .then(openModal);
+  });
+  // ---- One-shot result banners (import results, folder deletes)
+  // fade out after a few seconds. The query params that produced
+  // them are stripped immediately so a refresh doesn't resurrect
+  // a stale banner. ----
+  (function () {
+    var flashes = document.querySelectorAll(".banner-flash");
+    if (flashes.length === 0) return;
+    try {
+      var url = new URL(window.location.href);
+      ["imported", "skipped", "folder_deleted", "moved", "deleted"].forEach(function (k) {
+        url.searchParams.delete(k);
+      });
+      window.history.replaceState({}, "", url.toString());
+    } catch (_e) {}
+    setTimeout(function () {
+      flashes.forEach(function (b) {
+        b.classList.add("banner-fading");
+        setTimeout(function () { b.remove(); }, 600);
+      });
+    }, 5000);
+  })();
   importFile.addEventListener("change", function () {
     var f = importFile.files && importFile.files[0];
     if (!f) return;
@@ -3738,6 +3818,9 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   // doesn't double-fire as navigation. Any other click on the
   // row resolves to its data-folder-href and goes there.
   document.body.addEventListener("click", function (e) {
+    // Delete-button clicks open the confirm modal (handled by their
+    // own delegated listener); they must never double as navigation.
+    if (e.target.closest && e.target.closest(".lib-folder-del")) return;
     var caret = e.target.closest && e.target.closest(".lib-folder-caret");
     if (caret) {
       e.preventDefault();
@@ -4796,6 +4879,202 @@ pub async fn library_folder_move(
         .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct FolderDeleteConfirmQuery {
+    pub path: String,
+}
+
+/// GET /dashboard/library/folders/delete/confirm?path=... - the
+/// contents-aware confirmation modal. Empty folders get a plain
+/// confirm; folders with snippets (recursively) get the choice
+/// between moving contents to Unfiled and tombstoning them too.
+pub async fn library_folder_delete_confirm(
+    State(state): State<AppState>,
+    _admin: DashboardAdmin,
+    Query(q): Query<FolderDeleteConfirmQuery>,
+) -> Response {
+    let path = q.path.trim().trim_matches('/').to_string();
+    if path.is_empty() || path == FOLDER_ALL || path == FOLDER_UNFILED {
+        return modal_fragment(
+            "<div class=\"banner error\">That folder can't be deleted.</div>".to_string(),
+        );
+    }
+    let like = format!("{path}/%");
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_snippets \
+         WHERE is_deleted = 0 AND (folder_path = ?1 OR folder_path LIKE ?2)",
+    )
+    .bind(&path)
+    .bind(&like)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    let path_safe = escape_html(&path);
+    let body = if count == 0 {
+        format!(
+            "<h2>Delete folder</h2>\
+             <p class=\"muted\"><em>{path_safe}</em> is empty (no snippets, \
+              including subfolders).</p>\
+             <form method=\"post\" action=\"/dashboard/library/folders/delete\" class=\"imp-form\">\
+               <input type=\"hidden\" name=\"path\" value=\"{path_safe}\" />\
+               <input type=\"hidden\" name=\"mode\" value=\"move\" />\
+               <div class=\"imp-actions\">\
+                 <button type=\"submit\" class=\"btn danger\">Delete folder</button>\
+               </div>\
+             </form>",
+        )
+    } else {
+        format!(
+            "<h2>Delete folder</h2>\
+             <p class=\"muted\"><em>{path_safe}</em> contains <strong>{count}</strong> \
+              snippet{s} (including subfolders). What should happen to them?</p>\
+             <div class=\"folder-del-choices\">\
+               <form method=\"post\" action=\"/dashboard/library/folders/delete\" class=\"imp-form\">\
+                 <input type=\"hidden\" name=\"path\" value=\"{path_safe}\" />\
+                 <input type=\"hidden\" name=\"mode\" value=\"move\" />\
+                 <button type=\"submit\" class=\"btn\">Move them to Unfiled</button>\
+               </form>\
+               <form method=\"post\" action=\"/dashboard/library/folders/delete\" class=\"imp-form\">\
+                 <input type=\"hidden\" name=\"path\" value=\"{path_safe}\" />\
+                 <input type=\"hidden\" name=\"mode\" value=\"delete\" />\
+                 <button type=\"submit\" class=\"btn danger\">Delete them too</button>\
+               </form>\
+             </div>\
+             <p class=\"muted small\">Deleted snippets propagate to every signed-in \
+              client as deletions; they stay recoverable from the trash until the \
+              retention purge.</p>",
+            s = if count == 1 { "" } else { "s" },
+        )
+    };
+    modal_fragment(body)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FolderDeleteForm {
+    pub path: String,
+    /// "move" sends contents to Unfiled; "delete" tombstones them.
+    pub mode: String,
+}
+
+/// POST /dashboard/library/folders/delete - perform the deletion the
+/// confirm modal asked about. Contents handling per `mode`; the
+/// folder rows (path + descendants) disappear either way. Redirects
+/// back to the library with a one-shot banner.
+pub async fn library_folder_delete(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Form(body): Form<FolderDeleteForm>,
+) -> Response {
+    let path = body.path.trim().trim_matches('/').to_string();
+    if path.is_empty() || path == FOLDER_ALL || path == FOLDER_UNFILED {
+        return (StatusCode::BAD_REQUEST, "invalid folder path").into_response();
+    }
+    let cascade = match body.mode.as_str() {
+        "move" => false,
+        "delete" => true,
+        _ => return (StatusCode::BAD_REQUEST, "invalid mode").into_response(),
+    };
+
+    let like = format!("{path}/%");
+    let mut tx = match state.pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response();
+        }
+    };
+    let ids: Vec<(String,)> = match sqlx::query_as(
+        "SELECT id FROM library_snippets \
+         WHERE is_deleted = 0 AND (folder_path = ?1 OR folder_path LIKE ?2) \
+         ORDER BY id",
+    )
+    .bind(&path)
+    .bind(&like)
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("select: {e}")).into_response();
+        }
+    };
+    let count = ids.len();
+    // Per-row version bumps off a pre-fetched MAX, same scheme as
+    // folder move: every touched row gets a fresh slot in the global
+    // library-version stream so signed-in clients pick the change up
+    // on their next incremental sync.
+    let base_version: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM library_snippets")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap_or(0);
+    let now = Utc::now().timestamp();
+    for (i, (id,)) in ids.iter().enumerate() {
+        let v = base_version + 1 + i as i64;
+        let res = if cascade {
+            sqlx::query(
+                "UPDATE library_snippets \
+                 SET is_deleted = 1, version = ?1, updated_at = ?2 WHERE id = ?3",
+            )
+        } else {
+            sqlx::query(
+                "UPDATE library_snippets \
+                 SET folder_path = NULL, version = ?1, updated_at = ?2 WHERE id = ?3",
+            )
+        }
+        .bind(v)
+        .bind(now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = res {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("update: {e}")).into_response();
+        }
+    }
+    // The folder rows themselves (and any empty descendants) go away
+    // in both modes - the folder is what the admin asked to delete.
+    let _ = sqlx::query("DELETE FROM library_folders WHERE path = ?1 OR path LIKE ?2")
+        .bind(&path)
+        .bind(&like)
+        .execute(&mut *tx)
+        .await;
+    if let Err(e) = tx.commit().await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("commit: {e}")).into_response();
+    }
+
+    let actor_email = crate::audit::lookup_actor_email(&state.pool, admin.user_id()).await;
+    crate::audit::record(
+        &state.pool,
+        crate::audit::AuditEvent {
+            actor_id: Some(admin.user_id()),
+            actor_email: &actor_email,
+            action: crate::audit::action::LIBRARY_FOLDER_DELETE,
+            target_kind: Some("folder"),
+            // The folder no longer exists; keep the path for the
+            // humanized details rather than as a (dead) target link.
+            target_id: None,
+            details: Some(serde_json::json!({
+                "path": path,
+                "mode": body.mode,
+                "count": count,
+            })),
+        },
+    )
+    .await;
+
+    let outcome = if cascade {
+        format!("&deleted={count}")
+    } else {
+        format!("&moved={count}")
+    };
+    Redirect::to(&format!(
+        "/dashboard/library?folder_deleted={}{}",
+        urlencoding::encode(&path),
+        outcome,
+    ))
+    .into_response()
+}
+
 pub async fn library_delete(
     State(state): State<AppState>,
     admin: DashboardAdmin,
@@ -5468,6 +5747,28 @@ fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
                 escape_html(&from),
                 dest,
                 suffix,
+            )
+        }
+        "library.folder.delete" => {
+            let path = get_str("path").unwrap_or_default();
+            let count = json.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+            let cascade = get_str("mode").as_deref() == Some("delete");
+            let contents = if count == 0 {
+                " (empty)".to_string()
+            } else if cascade {
+                format!(
+                    " and its {count} snippet{s}",
+                    s = if count == 1 { "" } else { "s" }
+                )
+            } else {
+                format!(
+                    "; moved {count} snippet{s} to Unfiled",
+                    s = if count == 1 { "" } else { "s" }
+                )
+            };
+            format!(
+                "Deleted folder <strong>{}</strong>{contents}",
+                escape_html(&path)
             )
         }
         "library.folder.create" => {

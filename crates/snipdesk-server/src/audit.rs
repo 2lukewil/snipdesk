@@ -30,6 +30,7 @@ pub mod action {
     pub const LIBRARY_DELETE: &str = "library.delete";
     pub const LIBRARY_EXPORT: &str = "library.export";
     pub const LIBRARY_IMPORT: &str = "library.import";
+    pub const LIBRARY_FOLDER_DELETE: &str = "library.folder.delete";
     // A drag-drop move from the dashboard goes through library::update
     // under the hood, so it lands as LIBRARY_UPDATE with the new
     // folder_path in details. If we ever want a dedicated

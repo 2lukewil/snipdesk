@@ -317,3 +317,144 @@ async fn import_confirm_inserts_selected_and_audits() {
             .unwrap();
     assert_eq!(audit_count, 1, "import summary audit row missing");
 }
+
+#[tokio::test]
+async fn folder_delete_confirm_counts_recursively() {
+    let (_pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    seed_snippet(&app, &cookie, "Top level", "Billing").await;
+    seed_snippet(&app, &cookie, "Nested", "Billing/Refunds").await;
+    seed_snippet(&app, &cookie, "Elsewhere", "Other").await;
+
+    let (status, _, page) = get_authed(
+        &app,
+        &cookie,
+        "/dashboard/library/folders/delete/confirm?path=Billing",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("<strong>2</strong>"),
+        "count must include subfolders: {page}"
+    );
+    assert!(page.contains("Move them to Unfiled"));
+    assert!(page.contains("Delete them too"));
+}
+
+#[tokio::test]
+async fn folder_delete_move_mode_unfiles_contents() {
+    let (pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    seed_snippet(&app, &cookie, "Top level", "Billing").await;
+    seed_snippet(&app, &cookie, "Nested", "Billing/Refunds").await;
+    seed_snippet(&app, &cookie, "Elsewhere", "Other").await;
+
+    let (status, loc, _) = post_form_authed(
+        &app,
+        &cookie,
+        "/dashboard/library/folders/delete",
+        "path=Billing&mode=move".to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        loc.as_deref(),
+        Some("/dashboard/library?folder_deleted=Billing&moved=2")
+    );
+
+    let unfiled: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_snippets \
+         WHERE is_deleted = 0 AND folder_path IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(unfiled, 2, "both snippets should land in Unfiled");
+    let elsewhere: Option<String> =
+        sqlx::query_scalar("SELECT folder_path FROM library_snippets WHERE title = 'Elsewhere'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        elsewhere.as_deref(),
+        Some("Other"),
+        "other folders untouched"
+    );
+    let folder_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_folders WHERE path = 'Billing' OR path LIKE 'Billing/%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(folder_rows, 0, "folder rows must be gone");
+    let audited: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'library.folder.delete'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(audited, 1);
+}
+
+#[tokio::test]
+async fn folder_delete_cascade_tombstones_with_version_bumps() {
+    let (pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    seed_snippet(&app, &cookie, "Top level", "Billing").await;
+    seed_snippet(&app, &cookie, "Nested", "Billing/Refunds").await;
+
+    let max_before: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM library_snippets")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let (status, loc, _) = post_form_authed(
+        &app,
+        &cookie,
+        "/dashboard/library/folders/delete",
+        "path=Billing&mode=delete".to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        loc.as_deref(),
+        Some("/dashboard/library?folder_deleted=Billing&deleted=2")
+    );
+
+    let live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(live, 0, "both snippets tombstoned");
+    // Version bumps put the tombstones in the sync stream so signed-in
+    // clients see the deletions on their next incremental pull.
+    let bumped: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 1 AND version > ?",
+    )
+    .bind(max_before)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(bumped, 2, "tombstones must carry fresh versions");
+}
+
+#[tokio::test]
+async fn folder_delete_rejects_sentinels() {
+    let (_pool, app) = make_app().await;
+    let cookie = admin_cookie(&app).await;
+    for path in ["__all__", "__unfiled__", ""] {
+        let (status, _, _) = post_form_authed(
+            &app,
+            &cookie,
+            "/dashboard/library/folders/delete",
+            format!("path={path}&mode=move"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "path {path:?} must be rejected"
+        );
+    }
+}

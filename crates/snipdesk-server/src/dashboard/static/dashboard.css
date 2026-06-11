@@ -355,6 +355,12 @@ textarea {
 }
 .banner.error { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); }
 .banner.info  { background: var(--bg-elev); color: var(--fg-dim); border: 1px solid var(--border); }
+/* One-shot result banners: LIBRARY_PAGE_JS adds .banner-fading
+   after 5s, then removes the node once the fade completes. */
+.banner-fading {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
 
 /* --- Library cards --- */
 
@@ -493,6 +499,33 @@ textarea {
 }
 .lib-folder-row[data-folder-href] { cursor: pointer; }
 .lib-folder-row:hover { background: var(--bg); }
+/* Hover-revealed folder delete. Hidden via opacity (not display)
+   so the row width doesn't jump when it appears. */
+.lib-folder-del {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.lib-folder-row:hover .lib-folder-del,
+.lib-folder-del:focus-visible {
+  opacity: 1;
+}
+.lib-folder-del:hover {
+  color: var(--danger);
+}
+/* The two contents-handling choices in the folder-delete modal. */
+.folder-del-choices {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
 .lib-folder-row.active {
   background: var(--bg);
   border-left-color: var(--accent);

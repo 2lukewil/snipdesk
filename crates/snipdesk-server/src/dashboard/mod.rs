@@ -134,6 +134,17 @@ pub fn routes() -> Router<AppState> {
             "/dashboard/library/folders/reorder",
             post(pages::library_folder_reorder),
         )
+        // Folder delete: GET serves the contents-aware confirm modal
+        // fragment, POST performs it (mode=move sends contents to
+        // Unfiled, mode=delete tombstones them too).
+        .route(
+            "/dashboard/library/folders/delete/confirm",
+            get(pages::library_folder_delete_confirm),
+        )
+        .route(
+            "/dashboard/library/folders/delete",
+            post(pages::library_folder_delete),
+        )
         // Per-user detail + stats. Detail uses the same /users/:id
         // path as the JSON PUT/DELETE because GET there is unused;
         // axum routes on (path, method) so the methods coexist.

@@ -110,6 +110,13 @@ pub async fn create(
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<WriteResponse>), ApiError> {
     let owner_id = &auth.0.sub;
+    crate::validate::validate_snippet(
+        &body.payload.title,
+        &body.payload.body,
+        &body.payload.tags,
+        body.payload.folder_path.as_deref(),
+    )
+    .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
     let mut tx = state.pool.begin().await?;
 
@@ -245,6 +252,13 @@ pub async fn update(
     Json(body): Json<UpdateBody>,
 ) -> Result<Json<WriteResponse>, ApiError> {
     let owner_id = &auth.0.sub;
+    crate::validate::validate_snippet(
+        &body.payload.title,
+        &body.payload.body,
+        &body.payload.tags,
+        body.payload.folder_path.as_deref(),
+    )
+    .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
     let mut tx = state.pool.begin().await?;
 

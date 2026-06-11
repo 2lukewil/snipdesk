@@ -11,3 +11,4 @@ pub mod logging;
 pub mod paste;
 pub mod settings;
 pub mod shared_library;
+pub mod validate;

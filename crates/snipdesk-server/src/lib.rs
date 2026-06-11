@@ -16,3 +16,4 @@ pub mod handlers;
 pub mod http;
 pub mod purge;
 pub mod updater;
+pub mod validate;

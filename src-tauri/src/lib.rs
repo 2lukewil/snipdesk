@@ -62,6 +62,12 @@ pub struct AppState {
     /// success before the server went away.
     #[cfg(feature = "teams")]
     pub server_sync_error: Mutex<Option<String>>,
+    /// Problems from app setup the user should hear about - today
+    /// that's global hotkeys that failed to register (usually a chord
+    /// conflict with another app). Events emitted during setup fire
+    /// before the webview loads and are lost, so the frontend pulls
+    /// these once via the `startup_warnings` command after init.
+    pub startup_warnings: Mutex<Vec<String>>,
 }
 
 // capture_foreground_hwnd / restore_foreground now live in snipdesk_core::paste.
@@ -175,6 +181,7 @@ pub fn run() {
                 team_last_error: Mutex::new(None),
                 #[cfg(feature = "teams")]
                 server_sync_error: Mutex::new(None),
+                startup_warnings: Mutex::new(Vec::new()),
             });
             app.manage(settings::SettingsPath(settings_path));
 
@@ -197,6 +204,16 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 if let Err(e) = app.deep_link().register_all() {
                     eprintln!("deep link scheme registration failed: {e}");
+                    // Without the scheme, browser sign-ins can't call
+                    // back into the app - the user would click through
+                    // OIDC and then... nothing. Warn so they know to
+                    // use the paste-token fallback.
+                    record_startup_warning(
+                        app.handle(),
+                        &format!(
+                            "Browser sign-in links couldn't be registered with the OS ({e}). If signing in via the browser does nothing, use the \"paste token\" option instead."
+                        ),
+                    );
                 }
 
                 // Wire the snipdesk:// URL handler. The OAuth landing
@@ -301,7 +318,8 @@ pub fn run() {
             });
 
             let app_handle = app.handle().clone();
-            app.global_shortcut()
+            if let Err(err) = app
+                .global_shortcut()
                 .on_shortcut(shortcut, move |_app, _sc, event| {
                     if hotkeys_are_suspended(&app_handle) {
                         return;
@@ -311,7 +329,23 @@ pub fn run() {
                             toggle_window_with_state(&app_handle, &win);
                         }
                     }
-                })?;
+                })
+            {
+                // NOT fatal. This used to `?` out of setup, which meant a
+                // chord conflict with any other app (another launcher on
+                // Alt+Space, say) prevented SnipDesk from starting at all.
+                // The app is fully usable from the tray; record the
+                // warning so the frontend can tell the user to pick a
+                // different hotkey in Settings.
+                logging::log_error(&format!("global hotkey register failed: {err}"));
+                record_startup_warning(
+                    app.handle(),
+                    &format!(
+                        "The launcher hotkey ({}) couldn't be registered - another app may already use it ({err}). Pick a different hotkey in Settings.",
+                        settings.hotkey
+                    ),
+                );
+            }
 
             // Quick-add hotkey. Empty = disabled; malformed = log + skip
             // (a typo here must not brick launch).
@@ -330,12 +364,26 @@ pub fn run() {
                             })
                     {
                         logging::log_error(&format!("quick-add hotkey register failed: {err}"));
+                        record_startup_warning(
+                            app.handle(),
+                            &format!(
+                                "The quick-add hotkey ({}) couldn't be registered - another app may already use it ({err}). Pick a different hotkey in Settings.",
+                                settings.quick_add_hotkey
+                            ),
+                        );
                     }
                 } else {
                     logging::log_error(&format!(
                         "quick-add hotkey not recognized: {}",
                         settings.quick_add_hotkey
                     ));
+                    record_startup_warning(
+                        app.handle(),
+                        &format!(
+                            "The quick-add hotkey ({}) isn't a valid chord, so quick-add is disabled. Re-set it in Settings.",
+                            settings.quick_add_hotkey
+                        ),
+                    );
                 }
             }
 
@@ -536,6 +584,7 @@ pub fn run() {
             commands::open_logs_folder,
             commands::open_backups_folder,
             commands::get_log_path,
+            commands::startup_warnings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SnipDesk");
@@ -817,6 +866,18 @@ pub fn apply_autostart(handle: &tauri::AppHandle, enabled: bool) -> tauri::Resul
         let _ = autolaunch.disable();
     }
     Ok(())
+}
+
+/// Stash a setup-time problem for the frontend to pull after init
+/// (see `AppState::startup_warnings`). Safe to call before manage()
+/// only in the sense that it then drops the message - all current
+/// call sites run after app.manage(AppState).
+pub fn record_startup_warning(handle: &tauri::AppHandle, msg: &str) {
+    if let Some(state) = handle.try_state::<AppState>() {
+        if let Ok(mut g) = state.startup_warnings.lock() {
+            g.push(msg.to_string());
+        }
+    }
 }
 
 /// True while a Settings hotkey-capture field has focus (see

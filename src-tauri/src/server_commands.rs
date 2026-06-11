@@ -9,7 +9,7 @@
 //! the token never lives on disk in app-data.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 
 use snipdesk_teams::api::{self, ApiError, UserDto};
 use snipdesk_teams::credentials;
@@ -171,7 +171,14 @@ fn server_login_blocking(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> 
 }
 
 #[tauri::command]
-pub fn server_logout(app: AppHandle) -> CmdResult<()> {
+pub async fn server_logout(app: AppHandle) -> CmdResult<()> {
+    // Keychain delete + DB reset: cheap most days, but credential
+    // stores can stall (locked keyring, AV interference), so it runs
+    // off-thread like every other credential touch.
+    run_blocking(move || server_logout_blocking(app)).await
+}
+
+fn server_logout_blocking(app: AppHandle) -> CmdResult<()> {
     let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     if !server_url.is_empty() {
@@ -210,7 +217,14 @@ pub fn brand_defaults() -> BrandDefaults {
 }
 
 #[tauri::command]
-pub fn server_status(state: State<'_, AppState>) -> CmdResult<ServerStatus> {
+pub async fn server_status(app: AppHandle) -> CmdResult<ServerStatus> {
+    // No network here, but credentials::load hits the OS keychain and
+    // this command is polled constantly - keep it off the main thread.
+    run_blocking(move || server_status_blocking(app)).await
+}
+
+fn server_status_blocking(app: AppHandle) -> CmdResult<ServerStatus> {
+    let state = app.state::<AppState>();
     let server_url = current_server_url(&state);
     let signed_in = if server_url.is_empty() {
         false
@@ -306,7 +320,16 @@ fn server_sync_now_blocking(app: AppHandle) -> CmdResult<SyncOutcome> {
     // stored credential ahead of the next call.
     if let Some(new_token) = &outcome.refreshed_token {
         if let Err(e) = credentials::store(&server_url, new_token) {
-            eprintln!("failed to persist refreshed token: {e}");
+            // The server already rotated; a token we can't store means
+            // the NEXT sync runs on a credential the server may no
+            // longer honor - a mysterious sign-out later. Route it
+            // through the failure ledger so the footer glyph turns red
+            // now, while the cause is still legible.
+            record_sync_failure(
+                &app,
+                &state,
+                &format!("couldn't store the refreshed session token: {e}"),
+            );
         }
     }
     let _ = app.emit("snipdesk://server-sync", outcome.clone());
@@ -359,10 +382,19 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
     }
     let app = app.clone();
     std::thread::spawn(move || {
+        // Any bail-out below would otherwise leave the user staring at
+        // "Waiting for sign-in..." forever - the browser said success,
+        // the app said nothing. The signin-failed event gives the
+        // onboarding panel and the Settings sign-in surface a reason
+        // to show.
+        let fail = |msg: String| {
+            eprintln!("deep link: {msg}");
+            let _ = app.emit("snipdesk://signin-failed", msg);
+        };
         let state = app.state::<AppState>();
         let server_url = current_server_url(&state);
         if server_url.is_empty() {
-            eprintln!("deep link: no server URL configured; can't bind incoming token");
+            fail("no server URL is configured, so the sign-in token couldn't be used".to_string());
             return;
         }
         // Validate against the server before persisting. If the user
@@ -372,12 +404,17 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
         let me = match api::me(&server_url, &token) {
             Ok(me) => me,
             Err(e) => {
-                eprintln!("deep link token validation failed: {e}");
+                fail(format!(
+                    "the sign-in token didn't validate: {}",
+                    map_api_err(e)
+                ));
                 return;
             }
         };
         if let Err(e) = credentials::store(&server_url, &token) {
-            eprintln!("deep link: credential store failed: {e}");
+            fail(format!(
+                "couldn't save the sign-in to the credential store: {e}"
+            ));
             return;
         }
         if let Err(e) = save_signed_in_user(&state, &me.user) {
@@ -750,7 +787,14 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     }
                     if let Some(new_token) = &outcome.refreshed_token {
                         if let Err(e) = credentials::store(&server_url, new_token) {
-                            eprintln!("background sync: failed to persist refreshed token: {e}");
+                            // Same ledger as a failed tick: a rotated
+                            // token we couldn't keep is a future sign-out
+                            // and deserves a red glyph today.
+                            record_sync_failure(
+                                &handle,
+                                &state,
+                                &format!("couldn't store the refreshed session token: {e}"),
+                            );
                         }
                     }
                     let _ = handle.emit("snipdesk://server-sync", outcome);

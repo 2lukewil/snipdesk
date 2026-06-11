@@ -4538,8 +4538,11 @@ fn normalize_folder_path(input: &str) -> Result<String, &'static str> {
     if trimmed.is_empty() {
         return Err("path required");
     }
-    if trimmed.contains('\n') || trimmed.contains('\r') || trimmed.contains('\t') {
+    if trimmed.chars().any(char::is_control) {
         return Err("path contains invalid characters");
+    }
+    if trimmed.chars().count() > crate::validate::FOLDER_MAX_CHARS {
+        return Err("path is too long");
     }
     let mut segments: Vec<&str> = Vec::new();
     for seg in trimmed.split('/') {
@@ -4729,8 +4732,13 @@ pub async fn library_folder_move(
         return (StatusCode::BAD_REQUEST, "old path required").into_response();
     }
     // Sanitise the destination. Empty is fine (means root); otherwise
-    // reject paths with double-slash or non-printable junk.
-    if !new.is_empty() && (new.contains("//") || new.contains('\n') || new.contains('\r')) {
+    // reject paths with double-slash, non-printable junk, or absurd
+    // length (same ceiling as every other folder write).
+    if !new.is_empty()
+        && (new.contains("//")
+            || new.chars().any(char::is_control)
+            || new.chars().count() > crate::validate::FOLDER_MAX_CHARS)
+    {
         return (StatusCode::BAD_REQUEST, "invalid new path").into_response();
     }
     // Detect the "rename a folder into itself or its descendant"

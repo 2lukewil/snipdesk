@@ -583,6 +583,20 @@ async function init() {
       await loadServerStatus();
     });
 
+    // A browser sign-in (deep link) reached the app but couldn't
+    // complete - bad token, wrong server, credential store failure.
+    // Without this the user stares at "Waiting for sign-in..."
+    // forever while the browser tab claims success.
+    await listen("snipdesk://signin-failed", async (event) => {
+      const reason = typeof event.payload === "string"
+        ? event.payload
+        : "the sign-in couldn't be completed";
+      const msg = `Sign-in failed: ${reason}`;
+      setStatus(msg, "err");
+      onboarding.showSigninError?.(msg);
+      await loadServerStatus();
+    });
+
     // The background loop emits this when the server returns 401 and
     // it wipes the stored token. Refresh the UI so the user sees the
     // login form again instead of a stale "signed in as" line.
@@ -625,6 +639,24 @@ async function init() {
     if (state.settings?.onboarding_completed) return;
     onboarding.start();
   });
+
+  // Live hotkey problems from settings saves (chord conflicts, bad
+  // chords). The save succeeded; the registration didn't.
+  await listen("snipdesk://hotkey-warning", (event) => {
+    if (typeof event.payload === "string") setStatus(event.payload, "err");
+  });
+
+  // Setup-time problems (hotkey conflicts at boot, deep-link scheme
+  // registration failures) happen before this page existed, so events
+  // were not an option - pull them once instead. Drained on read.
+  try {
+    const warnings = await invoke("startup_warnings");
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      setStatus(warnings.join(" "), "err");
+    }
+  } catch (err) {
+    console.warn("startup_warnings fetch failed", err);
+  }
 
   // Show the running flavor + version in the About tab.
   try {
@@ -969,6 +1001,18 @@ const onboarding = {
         status.textContent =
           "Couldn't open browser. Open Settings -> Server to sign in manually.";
       }
+    }
+  },
+
+  // Called from the snipdesk://signin-failed listener: a browser
+  // sign-in reached the app but couldn't complete. Replace the
+  // eternal "Waiting for sign-in..." with the actual reason so the
+  // user knows to retry (or use the paste-token fallback).
+  showSigninError(msg) {
+    const status = document.getElementById("onboarding-signin-status");
+    if (status) {
+      status.textContent = msg;
+      status.classList.remove("is-success");
     }
   },
 
@@ -4964,11 +5008,17 @@ async function confirmTreeSelection() {
     });
     const imported = result?.imported ?? 0;
     const skipped = result?.skipped_duplicates ?? 0;
+    const invalid = result?.skipped_invalid ?? 0;
     const parts = [`Imported ${imported} snippet${imported === 1 ? "" : "s"}`];
     if (skipped > 0) {
       parts.push(`skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`);
     }
-    setStatus(parts.join(" - "), skipped > 0 && imported === 0 ? "err" : "ok");
+    if (invalid > 0) {
+      parts.push(
+        `rejected ${invalid} entr${invalid === 1 ? "y" : "ies"} (too long or invalid characters)`
+      );
+    }
+    setStatus(parts.join(" - "), imported === 0 && (skipped > 0 || invalid > 0) ? "err" : "ok");
     treeModalEntries = null;
     els.impSurface.classList.add("hidden");
     els.impTree.replaceChildren();

@@ -19,6 +19,18 @@ fn e<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
 
+/// Run blocking work (file I/O, parsing) off the main thread. Sync
+/// `#[tauri::command]` fns execute ON the main thread in Tauri 2, so
+/// reading and parsing a big import file inside one stalls the whole
+/// window. Same pattern as the network commands in server_commands.rs.
+async fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> CmdResult<T> + Send + 'static,
+) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|err| format!("background task failed: {err}"))?
+}
+
 #[tauri::command]
 pub fn list_snippets(
     state: State<'_, AppState>,
@@ -293,6 +305,15 @@ pub fn team_chars_pasted(state: State<'_, AppState>) -> CmdResult<i64> {
         .map_err(e)
 }
 
+/// Setup-time problems the user should hear about (hotkey chords
+/// that failed to register, deep-link scheme registration failures).
+/// Drained on read so the frontend toasts each once per launch.
+#[tauri::command]
+pub fn startup_warnings(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
+    let mut g = state.startup_warnings.lock().map_err(e)?;
+    Ok(std::mem::take(&mut *g))
+}
+
 /// Toggled by the Settings hotkey-capture fields on focus/blur.
 /// While active, every global-shortcut handler no-ops so the chord
 /// being typed can't simultaneously fire the action it's bound to.
@@ -368,12 +389,32 @@ pub fn update_settings(
                             }
                         })
                 {
+                    // The save itself still succeeds (the user may be
+                    // mid-edit on other fields), but a chord that
+                    // didn't register must not look like it did - the
+                    // event below puts the failure on screen.
                     eprintln!("quick-add re-register failed: {err}");
+                    let _ = tauri::Emitter::emit(
+                        &app,
+                        "snipdesk://hotkey-warning",
+                        format!(
+                            "Quick-add hotkey {} couldn't be registered - another app may already use it.",
+                            new_settings.quick_add_hotkey
+                        ),
+                    );
                 }
             } else {
                 eprintln!(
                     "quick-add hotkey not recognized: {}",
                     new_settings.quick_add_hotkey
+                );
+                let _ = tauri::Emitter::emit(
+                    &app,
+                    "snipdesk://hotkey-warning",
+                    format!(
+                        "Quick-add hotkey {} isn't a valid chord, so quick-add is disabled.",
+                        new_settings.quick_add_hotkey
+                    ),
                 );
             }
         }
@@ -414,7 +455,12 @@ pub struct ExportArgs {
 }
 
 #[tauri::command]
-pub fn export_snippets(state: State<'_, AppState>, args: ExportArgs) -> CmdResult<usize> {
+pub async fn export_snippets(app: AppHandle, args: ExportArgs) -> CmdResult<usize> {
+    run_blocking(move || export_snippets_blocking(app, args)).await
+}
+
+fn export_snippets_blocking(app: AppHandle, args: ExportArgs) -> CmdResult<usize> {
+    let state = app.state::<AppState>();
     let mut snippets = {
         let db = state.db.lock().map_err(e)?;
         db.export_all().map_err(e)?
@@ -471,6 +517,20 @@ fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String
     // Notepad often gain one. serde_json rejects it and the CSV
     // header match would silently miss the first column.
     let read = |path: &str| -> Result<String, String> {
+        // Size gate BEFORE the read: read_to_string on a runaway file
+        // (someone points the import dialog at a log or a video) would
+        // otherwise balloon memory before any parsing gets a say. 20 MB
+        // holds tens of thousands of snippets - any legitimate export
+        // fits with room to spare.
+        const MAX_IMPORT_BYTES: u64 = 20 * 1024 * 1024;
+        let size = std::fs::metadata(path).map_err(e)?.len();
+        if size > MAX_IMPORT_BYTES {
+            return Err(format!(
+                "file is too large to import ({} MB; max {} MB)",
+                size / (1024 * 1024),
+                MAX_IMPORT_BYTES / (1024 * 1024)
+            ));
+        }
         let contents = std::fs::read_to_string(path).map_err(e)?;
         Ok(contents
             .strip_prefix('\u{feff}')
@@ -506,10 +566,14 @@ fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String
 }
 
 #[tauri::command]
-pub fn import_snippets(state: State<'_, AppState>, args: ImportArgs) -> CmdResult<ImportResult> {
-    let items = read_snippet_file(&args.path, &args.format)?;
-    let db = state.db.lock().map_err(e)?;
-    db.import(items).map_err(e)
+pub async fn import_snippets(app: AppHandle, args: ImportArgs) -> CmdResult<ImportResult> {
+    run_blocking(move || {
+        let items = read_snippet_file(&args.path, &args.format)?;
+        let state = app.state::<AppState>();
+        let db = state.db.lock().map_err(e)?;
+        db.import(items).map_err(e)
+    })
+    .await
 }
 
 /// One parsed entry for the import-preview modal: the snippet plus
@@ -528,11 +592,19 @@ pub struct ImportPreviewEntry {
 /// folder-tree preview from this and then imports the user's
 /// selection via `import_snippet_items`.
 #[tauri::command]
-pub fn parse_snippet_file(
-    state: State<'_, AppState>,
+pub async fn parse_snippet_file(
+    app: AppHandle,
+    args: ImportArgs,
+) -> CmdResult<Vec<ImportPreviewEntry>> {
+    run_blocking(move || parse_snippet_file_blocking(app, args)).await
+}
+
+fn parse_snippet_file_blocking(
+    app: AppHandle,
     args: ImportArgs,
 ) -> CmdResult<Vec<ImportPreviewEntry>> {
     let items = read_snippet_file(&args.path, &args.format)?;
+    let state = app.state::<AppState>();
     let existing = {
         let db = state.db.lock().map_err(e)?;
         db.title_keys().map_err(e)?
@@ -564,12 +636,16 @@ pub struct ImportItemsArgs {
 /// Import an explicit list (the preview modal's checked subset)
 /// through the same dedupe + insert path as the one-shot import.
 #[tauri::command]
-pub fn import_snippet_items(
-    state: State<'_, AppState>,
+pub async fn import_snippet_items(
+    app: AppHandle,
     args: ImportItemsArgs,
 ) -> CmdResult<ImportResult> {
-    let db = state.db.lock().map_err(e)?;
-    db.import(args.items).map_err(e)
+    run_blocking(move || {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().map_err(e)?;
+        db.import(args.items).map_err(e)
+    })
+    .await
 }
 
 // ---- Local trash ----

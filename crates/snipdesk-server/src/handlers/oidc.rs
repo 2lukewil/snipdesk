@@ -658,11 +658,16 @@ async fn complete_flow(
         }
     }
 
-    let display_name = claims
-        .name()
-        .and_then(|m| m.get(None))
-        .map(|s| s.as_str().to_string())
-        .unwrap_or_else(|| email.split('@').next().unwrap_or("user").to_string());
+    // Sanitize rather than reject: the name is the provider's claim,
+    // not user keyboard input, and a weird claim shouldn't fail the
+    // whole sign-in.
+    let display_name = crate::validate::sanitize_display_name(
+        &claims
+            .name()
+            .and_then(|m| m.get(None))
+            .map(|s| s.as_str().to_string())
+            .unwrap_or_else(|| email.split('@').next().unwrap_or("user").to_string()),
+    );
 
     let subject = claims.subject().as_str().to_string();
 

@@ -63,6 +63,8 @@ pub enum SortOrder {
 pub struct ImportResult {
     pub imported: usize,
     pub skipped_duplicates: usize,
+    /// Rows rejected by the size/character limits in `crate::validate`.
+    pub skipped_invalid: usize,
 }
 
 /// One snapshot in the local trash: the content of a deleted snippet
@@ -402,6 +404,13 @@ impl Db {
     }
 
     pub fn create(&self, input: NewSnippet) -> Result<Snippet> {
+        crate::validate::validate_snippet(
+            &input.title,
+            &input.body,
+            &input.tags,
+            input.folder_path.as_deref(),
+        )
+        .map_err(|m| anyhow::anyhow!(m))?;
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
         let tags = encode_tags(&input.tags);
@@ -419,6 +428,13 @@ impl Db {
     }
 
     pub fn update(&self, id: &str, input: UpdateSnippet) -> Result<Snippet> {
+        crate::validate::validate_snippet(
+            &input.title,
+            &input.body,
+            &input.tags,
+            input.folder_path.as_deref(),
+        )
+        .map_err(|m| anyhow::anyhow!(m))?;
         let now = Utc::now().timestamp();
         let tags = encode_tags(&input.tags);
         let folder = normalize_folder(input.folder_path.as_deref());
@@ -687,6 +703,7 @@ impl Db {
     }
 
     pub fn create_folder(&self, path: &str) -> Result<()> {
+        crate::validate::validate_folder(Some(path)).map_err(|m| anyhow::anyhow!(m))?;
         let path = normalize_path(path);
         if path.is_empty() {
             anyhow::bail!("folder path cannot be empty");
@@ -704,6 +721,7 @@ impl Db {
     }
 
     pub fn rename_folder(&self, old_path: &str, new_path: &str) -> Result<()> {
+        crate::validate::validate_folder(Some(new_path)).map_err(|m| anyhow::anyhow!(m))?;
         let old_path = normalize_path(old_path);
         let new_path = normalize_path(new_path);
         if old_path.is_empty() || new_path.is_empty() {
@@ -973,12 +991,27 @@ impl Db {
         let now = Utc::now().timestamp();
         let mut imported = 0;
         let mut skipped_duplicates = 0;
+        let mut skipped_invalid = 0;
         for item in items {
             let key = item.title.trim().to_lowercase();
             // Empty titles are unsalvageable; treat as a duplicate of
             // "everything else" rather than letting them in.
             if key.is_empty() || existing.contains(&key) {
                 skipped_duplicates += 1;
+                continue;
+            }
+            // Same limits as create/update. One oversized or
+            // control-character row in a file shouldn't sink the
+            // whole import; skip it and report the count.
+            if crate::validate::validate_snippet(
+                &item.title,
+                &item.body,
+                &item.tags,
+                item.folder_path.as_deref(),
+            )
+            .is_err()
+            {
+                skipped_invalid += 1;
                 continue;
             }
             let id = Uuid::new_v4().to_string();
@@ -1006,6 +1039,7 @@ impl Db {
         Ok(ImportResult {
             imported,
             skipped_duplicates,
+            skipped_invalid,
         })
     }
 

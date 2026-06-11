@@ -195,12 +195,8 @@ pub async fn signup(
             format!("password must be at least {MIN_PASSWORD_LEN} characters"),
         ));
     }
-    if display_name.is_empty() {
-        return Err(ApiError::bad_request(
-            "missing_display_name",
-            "display_name is required",
-        ));
-    }
+    crate::validate::validate_display_name(&display_name)
+        .map_err(|m| ApiError::bad_request("invalid_display_name", m))?;
 
     // Always hash the password before any DB write. The previous
     // SELECT-then-INSERT pre-check was a faster failure path for

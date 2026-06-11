@@ -341,3 +341,73 @@ async fn snippet_endpoints_require_auth() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+// The size/character limits (validate.rs) gate the write path: an
+// oversized body, a null byte in the title, or a 400-char folder path
+// must be a clean 400, never a row in the database. The limits mirror
+// the client's; a payload the desktop accepts has to land here too,
+// so only over-limit shapes are exercised.
+#[tokio::test]
+async fn create_rejects_oversized_and_control_character_payloads() {
+    let app = make_app().await;
+    let token = signup(&app, "alice@example.com").await;
+
+    let cases = vec![
+        serde_json::json!({
+            "id": "bad-1",
+            "title": "x".repeat(301),
+            "body": "fine",
+            "tags": [],
+            "folder_path": null,
+        }),
+        serde_json::json!({
+            "id": "bad-2",
+            "title": "fine",
+            "body": "y".repeat(100_001),
+            "tags": [],
+            "folder_path": null,
+        }),
+        serde_json::json!({
+            "id": "bad-3",
+            "title": "null\u{0000}byte",
+            "body": "fine",
+            "tags": [],
+            "folder_path": null,
+        }),
+        serde_json::json!({
+            "id": "bad-4",
+            "title": "fine",
+            "body": "fine",
+            "tags": [],
+            "folder_path": "f".repeat(301),
+        }),
+    ];
+    for case in cases {
+        let id = case["id"].as_str().unwrap().to_string();
+        let (status, body) = request(&app, "POST", "/api/snippets", &token, Some(case)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "case {id}: {body}");
+        assert_eq!(body["error"], "invalid_payload", "case {id}");
+    }
+
+    // Nothing leaked through to storage.
+    let (_, list) = request(&app, "GET", "/api/snippets", &token, None).await;
+    assert_eq!(list["snippets"].as_array().unwrap().len(), 0);
+
+    // Within-limits payloads (incl. multi-byte text and newlines)
+    // still sail through.
+    let (status, _) = request(
+        &app,
+        "POST",
+        "/api/snippets",
+        &token,
+        Some(serde_json::json!({
+            "id": "good-1",
+            "title": "Greeting",
+            "body": "Hello\nthanks for waiting.",
+            "tags": ["jp"],
+            "folder_path": "Replies",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+}

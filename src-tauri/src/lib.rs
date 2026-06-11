@@ -507,6 +507,8 @@ pub fn run() {
             #[cfg(feature = "teams")]
             server_commands::server_status,
             #[cfg(feature = "teams")]
+            server_commands::server_validate_session,
+            #[cfg(feature = "teams")]
             server_commands::brand_defaults,
             #[cfg(feature = "teams")]
             server_commands::server_sync_now,

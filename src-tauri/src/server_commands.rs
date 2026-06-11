@@ -346,6 +346,49 @@ fn spawn_post_signin_sync(app: AppHandle) {
     });
 }
 
+/// Validate any credential stored for the current server URL against
+/// the server, returning the live user or None. Unlike server_status
+/// (purely local by design - it gates first-paint rendering), this
+/// makes one /api/me round-trip, so callers reach for it only at
+/// decision points: the onboarding sign-in panel uses it to tell a
+/// REAL prior session ("already signed in as X on this device" -
+/// keychain entries survive reinstalls) from a stale token, instead
+/// of declaring "signed in" off mere keychain presence. A dead token
+/// is wiped so the rest of the UI agrees; network errors return Err
+/// and wipe nothing (offline must not sign anyone out).
+#[tauri::command]
+pub fn server_validate_session(app: AppHandle) -> CmdResult<Option<UserDto>> {
+    let state = app.state::<AppState>();
+    let server_url = current_server_url(&state);
+    if server_url.is_empty() {
+        return Ok(None);
+    }
+    let token = match credentials::load(&server_url) {
+        Ok(Some(t)) => t,
+        _ => return Ok(None),
+    };
+    match api::me(&server_url, &token) {
+        Ok(me) => {
+            save_signed_in_user(&state, &me.user)?;
+            Ok(Some(me.user))
+        }
+        Err(ApiError::Unauthorized) => {
+            // Token expired or revoked: clear it so server_status and
+            // the sign-in surfaces stop claiming a session that the
+            // server no longer honors.
+            let _ = credentials::delete(&server_url);
+            let _ = clear_signed_in_user(&state);
+            refresh_team_snippet_count(&app, &state);
+            Ok(None)
+        }
+        Err(ApiError::AccountInactive(reason)) => {
+            handle_account_inactive(&app, &state, &server_url, &reason);
+            Ok(None)
+        }
+        Err(e) => Err(map_api_err(e)),
+    }
+}
+
 /// Build the URL the user should open in their browser to start the
 /// OIDC dance. The desktop side opens this with `shell::open` (the
 /// system browser), so the user gets their existing Google session.

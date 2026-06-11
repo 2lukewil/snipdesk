@@ -797,6 +797,21 @@ const onboarding = {
       refreshOidc();
     }
     await loadServerStatus();
+    // Keychain entries survive uninstalls, so a fresh install can
+    // enter this panel with a months-old token already present.
+    // server_status only checks keychain PRESENCE (it's local-only
+    // by design); before telling the user they're signed in off a
+    // possibly-dead token, validate it against the server once. A
+    // dead token gets wiped backend-side; offline validation errors
+    // leave everything as-is.
+    if (state.serverStatus?.signed_in) {
+      try {
+        const user = await invoke("server_validate_session");
+        if (!user) await loadServerStatus();
+      } catch (err) {
+        console.warn("onboarding: session validation failed (offline?)", err);
+      }
+    }
     // Snapshot whether the user is ALREADY signed in when entering
     // this step. renderSigninStatus uses this to distinguish two
     // cases: the user just completed OIDC and we should auto-advance
@@ -805,6 +820,11 @@ const onboarding = {
     // leave the panel visible so they can read it and click
     // Continue themselves (already-true on entry).
     this.signinWasSignedInOnEntry = !!state.serverStatus?.signed_in;
+    // Distinguishes a session inherited from a previous install /
+    // session on this device from a sign-in completed in THIS panel,
+    // so the status copy doesn't claim a fresh sign-in that never
+    // happened.
+    this.signinWasInherited = this.signinWasSignedInOnEntry;
     this.renderSigninStatus();
     this.signinPoll = setInterval(async () => {
       await loadServerStatus();
@@ -826,7 +846,13 @@ const onboarding = {
       const u = state.serverStatus.user;
       const display = u?.display_name || u?.email || "(signed in)";
       if (status) {
-        status.textContent = `Signed in as ${display}`;
+        // Inherited sessions (keychain token from a previous install
+        // or session on this device) say so - claiming a fresh
+        // "Signed in" for a flow the user never completed reads as
+        // a bug.
+        status.textContent = this.signinWasInherited
+          ? `Already signed in as ${display} from a previous session on this device. Sign out from Settings if you need a different account.`
+          : `Signed in as ${display}`;
         status.classList.add("is-success");
       }
       // The provider button's job is done: swap the logo for a green
@@ -858,6 +884,9 @@ const onboarding = {
         }, 800);
       }
     } else {
+      // Signed out (incl. a stale token the validation call just
+      // wiped): any sign-in observed from here on is a fresh one.
+      this.signinWasInherited = false;
       if (status) {
         status.textContent = "Waiting for sign-in...";
         status.classList.remove("is-success");
@@ -890,6 +919,28 @@ const onboarding = {
       console.warn("onboarding: server URL save failed", err);
       if (status) status.textContent = "Couldn't save server URL. Try again.";
       return;
+    }
+    // The keychain may hold a still-valid token for this URL from a
+    // previous install or session (keychain entries survive
+    // uninstalls). Until the URL was typed we couldn't know; check
+    // now, BEFORE opening a browser. A valid session means there's
+    // nothing to sign in to - say so honestly instead of flashing
+    // "Signed in" mid-flow as if the browser dance completed in a
+    // millisecond. A dead token is wiped by the validation call and
+    // the normal flow proceeds.
+    try {
+      const existing = await invoke("server_validate_session");
+      if (existing) {
+        this.signinWasInherited = true;
+        this.signinWasSignedInOnEntry = true; // suppress auto-advance; let them read
+        await loadServerStatus();
+        this.renderSigninStatus();
+        return;
+      }
+    } catch (err) {
+      // Offline / server unreachable: fall through and let the
+      // browser flow surface whatever the real problem is.
+      console.warn("onboarding: pre-flight session validation failed", err);
     }
     try {
       const startUrl = await invoke("server_oidc_start_url", { serverUrl: url });

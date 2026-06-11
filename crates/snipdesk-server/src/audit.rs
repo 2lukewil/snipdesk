@@ -115,6 +115,10 @@ pub async fn lookup_actor_email(pool: &SqlitePool, actor_id: &str) -> String {
 pub struct AuditRow {
     pub id: i64,
     pub at: i64,
+    /// NULL for CLI actions and for actors whose user row was
+    /// deleted (the FK is ON DELETE SET NULL). When present, the
+    /// dashboard links the actor email to the user's detail page.
+    pub actor_id: Option<String>,
     pub actor_email: String,
     pub action: String,
     pub target_kind: Option<String>,
@@ -163,7 +167,7 @@ pub fn hidden_actions_filter_sql(prefix: &str) -> String {
 /// runaway URL like `?limit=999999999` can't OOM the page).
 pub async fn list_recent(pool: &SqlitePool, limit: i64, offset: i64) -> Vec<AuditRow> {
     let sql = format!(
-        "SELECT id, at, actor_email, action, target_kind, target_id, details \
+        "SELECT id, at, actor_id, actor_email, action, target_kind, target_id, details \
          FROM audit_log{filter} \
          ORDER BY at DESC, id DESC \
          LIMIT ?1 OFFSET ?2",

@@ -410,12 +410,15 @@ pub async fn delete(
 
     let mut tx = state.pool.begin().await?;
 
-    let current: Option<(i64,)> =
-        sqlx::query_as("SELECT is_deleted FROM library_snippets WHERE id = ?")
+    // Title + folder ride into the audit row: a delete is exactly the
+    // case where "library snippet <uuid>" tells the operator nothing,
+    // because the row is gone by the time anyone reads the log.
+    let current: Option<(i64, String, Option<String>)> =
+        sqlx::query_as("SELECT is_deleted, title, folder_path FROM library_snippets WHERE id = ?")
             .bind(&id)
             .fetch_optional(&mut *tx)
             .await?;
-    let (is_deleted,) =
+    let (is_deleted, title, folder_path) =
         current.ok_or_else(|| ApiError::not_found("not_found", "library snippet not found"))?;
     if is_deleted != 0 {
         // Idempotent: deleting an already-deleted library snippet is a
@@ -446,7 +449,10 @@ pub async fn delete(
             action: audit_action::LIBRARY_DELETE,
             target_kind: Some("library"),
             target_id: Some(&id),
-            details: None,
+            details: Some(serde_json::json!({
+                "title": title,
+                "folder_path": folder_path.unwrap_or_default(),
+            })),
         },
     )
     .await;

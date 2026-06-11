@@ -261,6 +261,20 @@ async fn first_run_nudge(pool: &sqlx::SqlitePool, bind_addr: &str) {
     if running_in_container() {
         return;
     }
+    // Explicit opt-out for local test instances, CI, and scripted
+    // runs: a throwaway server booting with an empty database
+    // otherwise pops the operator's browser on every start.
+    let suppressed = std::env::var("SNIPDESK_OPEN_BROWSER")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(false);
+    if suppressed {
+        return;
+    }
     open_in_browser(&url);
 }
 

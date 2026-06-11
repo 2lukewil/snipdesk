@@ -432,11 +432,27 @@ fn render_setup_page(state: &AppState, error: Option<&str>) -> Html<String> {
         }
         _ => "",
     };
+    // SSO-configured deployments can create the first admin through
+    // the identity provider instead of a password: the OIDC callback
+    // already promotes the very first account to admin (atomic
+    // zero-users CASE in the INSERT), so the buttons just reuse the
+    // login page's dashboard SSO start routes.
+    let sso = render_dashboard_sso_buttons(state, "/");
+    let sso_block = if sso.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{sso}<p class=\"sub\">Signing in through your identity provider \
+             also works: the first account to sign in becomes the \
+             administrator.</p>",
+        )
+    };
     Html(render(
         SETUP,
         &[
             ("BANNER", banner),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
+            ("SSO_BUTTONS", &sso_block),
         ],
     ))
 }
@@ -5018,7 +5034,17 @@ pub async fn audit_page(
                    <td class=\"audit-details\">{toggle}{details}</td>\
                  </tr>",
                 when = format_relative(r.at),
-                actor = escape_html(&r.actor_email),
+                actor = match r.actor_id.as_deref() {
+                    // Link to the actor's profile when their user row
+                    // still exists; CLI rows and deleted actors stay
+                    // plain text.
+                    Some(aid) if !aid.is_empty() => format!(
+                        "<a href=\"/dashboard/users/{}\">{}</a>",
+                        escape_html(aid),
+                        escape_html(&r.actor_email),
+                    ),
+                    _ => escape_html(&r.actor_email),
+                },
                 action = humanize_audit_action(&r.action),
                 target = target_html,
                 toggle = toggle_btn,
@@ -5255,10 +5281,22 @@ fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
         "user.create" => {
             let email = get_str("email").unwrap_or_default();
             let role = get_str("role").unwrap_or_default();
+            // "via" distinguishes how the account came to exist:
+            // first-run setup, an SSO first sign-in (with provider),
+            // or a plain admin create (no via field).
+            let via = match get_str("via").as_deref() {
+                Some("dashboard_setup") => " via first-run setup".to_string(),
+                Some("oidc") => match get_str("provider") {
+                    Some(p) => format!(" via SSO ({})", escape_html(&p)),
+                    None => " via SSO".to_string(),
+                },
+                _ => String::new(),
+            };
             format!(
-                "Created <strong>{}</strong> as {}",
+                "Created <strong>{}</strong> as {}{}",
                 escape_html(&email),
-                escape_html(&role)
+                escape_html(&role),
+                via,
             )
         }
         "user.update" => {
@@ -5287,10 +5325,21 @@ fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
                     escape_html(&pretty(to))
                 ));
             }
+            if json
+                .get("password_reset")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                parts.push("password reset".to_string());
+            }
             if parts.is_empty() {
                 "<span class=\"muted\">no fields changed</span>".to_string()
             } else {
-                parts.join(", ")
+                let mut joined = parts.join(", ");
+                // Sentence-case the first fragment so single-item
+                // lines ("Password reset") read as a statement.
+                joined = capitalize(&joined);
+                joined
             }
         }
         "user.delete" => {
@@ -5329,7 +5378,74 @@ fn humanize_audit_details(action: &str, details: Option<&str>) -> String {
                 )
             }
         }
-        "library.delete" => "Deleted library snippet".to_string(),
+        "library.delete" => {
+            // Newer rows carry title + folder (captured before the
+            // delete); older rows have no details and never reach
+            // this arm (the no-details early return handles them).
+            let title = get_str("title").unwrap_or_default();
+            let folder = get_str("folder_path").unwrap_or_default();
+            match (title.is_empty(), folder.is_empty()) {
+                (true, _) => "Deleted library snippet".to_string(),
+                (false, true) => format!("Deleted \"<strong>{}</strong>\"", escape_html(&title)),
+                (false, false) => format!(
+                    "Deleted \"<strong>{}</strong>\" from <em>{}</em>",
+                    escape_html(&title),
+                    escape_html(&folder)
+                ),
+            }
+        }
+        "library.export" => {
+            let count = json.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+            let format_name = get_str("format").unwrap_or_else(|| "json".into());
+            let scope = json.get("scope");
+            let scope_text = match scope {
+                Some(s) if s.get("selection").is_some() => " (hand-picked selection)".to_string(),
+                Some(s) => {
+                    let q = s.get("q").and_then(|v| v.as_str()).unwrap_or("");
+                    let folder = s.get("folder").and_then(|v| v.as_str()).unwrap_or("");
+                    let mut bits: Vec<String> = Vec::new();
+                    if !q.is_empty() {
+                        bits.push(format!("search \"{}\"", escape_html(q)));
+                    }
+                    // The folder pseudo-values mirror the library
+                    // page's sidebar specials (FOLDER_ALL /
+                    // FOLDER_UNFILED); translate rather than expose
+                    // the sentinels.
+                    if folder == FOLDER_UNFILED {
+                        bits.push("unfiled snippets".to_string());
+                    } else if !folder.is_empty() && folder != FOLDER_ALL {
+                        bits.push(format!("folder <em>{}</em>", escape_html(folder)));
+                    }
+                    if bits.is_empty() {
+                        " (whole library)".to_string()
+                    } else {
+                        format!(" ({})", bits.join(", "))
+                    }
+                }
+                None => String::new(),
+            };
+            format!(
+                "Exported <strong>{count}</strong> snippet{s} as {fmt}{scope}",
+                s = if count == 1 { "" } else { "s" },
+                fmt = escape_html(&format_name.to_uppercase()),
+                scope = scope_text,
+            )
+        }
+        "library.import" => {
+            let imported = json.get("imported").and_then(|v| v.as_i64()).unwrap_or(0);
+            let skipped = json.get("skipped").and_then(|v| v.as_i64()).unwrap_or(0);
+            let mut out = format!(
+                "Imported <strong>{imported}</strong> snippet{s}",
+                s = if imported == 1 { "" } else { "s" },
+            );
+            if skipped > 0 {
+                out.push_str(&format!(
+                    ", skipped {skipped} duplicate{s}",
+                    s = if skipped == 1 { "" } else { "s" },
+                ));
+            }
+            out
+        }
         "library.folder.move" => {
             let from = get_str("from").unwrap_or_default();
             let to = get_str("to").unwrap_or_default();

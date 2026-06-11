@@ -373,6 +373,26 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px 14px;
+  /* Audit-log links land on #lib-<id>; keep the card clear of the
+     top edge when the browser scrolls the anchor into view. */
+  scroll-margin-top: 80px;
+}
+/* Arriving via an audit-log link (#lib-<id> fragment): flash, then
+   keep a quiet accent outline so the admin can still tell which
+   card the log entry meant after the flash fades. */
+.library-card:target {
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: card-target-flash 2s ease-out;
+}
+@keyframes card-target-flash {
+  0% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent);
+    background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
+  }
+  100% {
+    box-shadow: none;
+    background: var(--bg-elev);
+  }
 }
 .library-card .card-head {
   display: flex;

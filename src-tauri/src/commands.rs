@@ -844,9 +844,9 @@ fn reveal_in_explorer(path: &std::path::Path) -> std::io::Result<()> {
 fn substitute_variables(body: &str, vars: &HashMap<String, String>) -> String {
     // Replace `{name}` with vars["name"] when present, leave intact otherwise.
     //
-    // Must operate on &str slices, not bytes - the previous byte-loop pushed
-    // each UTF-8 byte as a Latin-1 char, turning `-` (E2 80 94) into `â` plus
-    // garbage and producing the em-dash-on-paste mojibake bug.
+    // Must operate on &str slices, never individual bytes: pushing
+    // UTF-8 bytes as chars Latin-1-promotes every non-ASCII byte
+    // (E2 80 94 becomes `â` plus garbage), garbling pasted text.
     let mut out = String::with_capacity(body.len());
     let mut rest = body;
     while let Some(open_rel) = rest.find('{') {

@@ -199,15 +199,14 @@ pub async fn signup(
     crate::validate::validate_display_name(&display_name)
         .map_err(|m| ApiError::bad_request("invalid_display_name", m))?;
 
-    // Always hash the password before any DB write. The previous
-    // SELECT-then-INSERT pre-check was a faster failure path for
-    // already-registered emails but it leaked which emails exist via
-    // a distinct `email_taken` / 409 response (CWE-203). It also
-    // leaked via timing: the duplicate path was much faster than the
-    // ~50ms Argon2 cost on a fresh signup (CWE-208). Hashing up
-    // front and relying on the UNIQUE(email) index to reject
-    // duplicates eliminates both leaks - every signup attempt pays
-    // the same wall-clock cost.
+    // Always hash the password before any DB write. A
+    // SELECT-then-INSERT pre-check would fail faster for
+    // already-registered emails, but that leaks which emails exist
+    // via a distinct `email_taken` / 409 response (CWE-203) and via
+    // timing (CWE-208): the duplicate path skips the ~50ms Argon2
+    // cost a fresh signup pays. Hashing up front and relying on the
+    // UNIQUE(email) index to reject duplicates closes both leaks -
+    // every signup attempt pays the same wall-clock cost.
     let password_hash = hash_password(&body.password)?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
@@ -216,17 +215,17 @@ pub async fn signup(
     // The CASE subquery runs under the same statement-level write
     // lock SQLite acquires for the INSERT itself, so two concurrent
     // signups on a fresh DB cannot both read admin_count=0 and both
-    // land as admin (audit Tier 1 #6). Whichever INSERT lands first
-    // sees count=0 and becomes the admin; the second sees count=1
-    // (the first's committed row) and lands as member.
+    // land as admin. Whichever INSERT lands first sees count=0 and
+    // becomes the admin; the second sees count=1 (the first's
+    // committed row) and lands as member.
     //
-    // RETURNING reads back the role the DB chose so we can issue the
-    // matching JWT without doing a follow-up SELECT.
+    // RETURNING reads back the role the DB chose so the matching JWT
+    // can be issued without a follow-up SELECT.
     //
     // UNIQUE(email) violations become a generic `signup_failed` (400)
-    // for the same enumeration-prevention reasons as audit Tier 1 #3.
-    // Any other DB error bubbles up as a 500 with the cause logged
-    // server-side only.
+    // for the same enumeration-prevention reason as above. Any other
+    // DB error bubbles up as a 500 with the cause logged server-side
+    // only.
     let inserted: Result<(String,), sqlx::Error> = sqlx::query_as(
         "INSERT INTO users (id, email, display_name, role, is_disabled, created_at, last_seen_at, password_hash) \
          VALUES ( \

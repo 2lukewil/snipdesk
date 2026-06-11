@@ -127,11 +127,11 @@ pub struct AuditRow {
     pub details: Option<String>,
 }
 
-/// Actions we hide from the dashboard view (and exclude from its
-/// count). folder.reorder used to be recorded; it carries no
-/// destructive effect and reads as inscrutable JSON in the audit
-/// table, so we filter it everywhere it would surface. Old rows
-/// stay in the table for forensic completeness.
+/// Actions hidden from the dashboard view (and excluded from its
+/// count). folder.reorder carries no destructive effect and reads
+/// as inscrutable JSON in the audit table, so it's filtered
+/// everywhere it would surface; any recorded rows stay in the table
+/// for forensic completeness.
 pub const HIDDEN_ACTIONS: &[&str] = &["library.folder.reorder"];
 
 /// Comma-quoted list for embedding in a SQL `IN (...)` clause. The

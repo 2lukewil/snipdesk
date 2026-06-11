@@ -148,11 +148,11 @@ pub async fn update_user(
     if let Some(role) = &body.role {
         if role == "member" {
             // Demotion: guarded by the WHERE clause so two concurrent
-            // demotions of two different admins cannot both pass.
-            // Previously the check was three statements (SELECT count,
-            // SELECT target role, UPDATE) inside a DEFERRED transaction,
-            // so two callers could both read count=2 and both UPDATE,
-            // leaving zero admins (audit Tier 1 #7).
+            // demotions of two different admins cannot both pass. A
+            // multi-statement check (SELECT count, SELECT target role,
+            // UPDATE) inside a DEFERRED transaction would let two
+            // callers both read count=2 and both UPDATE, leaving zero
+            // admins.
             //
             // The atomic form: UPDATE only fires when either (a) the
             // target isn't currently admin (harmless rewrite of

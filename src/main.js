@@ -558,10 +558,8 @@ async function init() {
     await listen("snipdesk://team-library-updated", async () => {
       // refresh() rebuilds the sidebar AND the snippet list, so the
       // Team Library pseudo-node appears/disappears as the source goes
-      // active/inactive, not just when the user is currently viewing
-      // the team folder. The previous gated version meant a user on
-      // "All snippets" wouldn't see the team node show up when the
-      // server delivered its first library snippet.
+      // active/inactive even while the user is on "All snippets"
+      // rather than the team folder.
       await refresh();
     });
 
@@ -888,9 +886,8 @@ const onboarding = {
     );
     if (state.serverStatus?.signed_in) {
       // serverStatus carries the user under `.user` (UserDto with
-      // display_name + email + role). The previous code reached
-      // for serverStatus.display_name / .email directly, which are
-      // always undefined, and fell through to the literal sentinel.
+      // display_name + email + role); top-level .display_name /
+      // .email don't exist on the status payload.
       const u = state.serverStatus.user;
       const display = u?.display_name || u?.email || "(signed in)";
       if (status) {
@@ -1727,11 +1724,10 @@ async function refresh() {
     renderPreview();
     renderSavings();
     updateFolderDatalist();
-    // The sidebar always renders. It used to auto-hide when there were zero
-    // folders and no team library URL, but that left users with no visible
-    // way to add a folder (the "+" button lives in the sidebar header), so
-    // an empty library looked broken. "All snippets" + "+" stay useful even
-    // with nothing in the tree.
+    // The sidebar always renders, even with zero folders: the "+"
+    // button lives in the sidebar header, so hiding the sidebar would
+    // leave no visible way to create the first folder. "All snippets"
+    // + "+" stay useful with nothing in the tree.
     els.pane.classList.remove("no-sidebar");
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
@@ -3565,9 +3561,9 @@ function enableHotkeyCapture(input, { allowClear = false } = {}) {
     input.value = "";
     input.placeholder = "Press a key combination...";
     // Mute global shortcuts for the duration of the capture so
-    // pressing the currently-bound chord records it instead of
-    // ALSO firing its action (which used to hide the window mid-
-    // capture). Fire-and-forget; worst case the old behavior.
+    // pressing the currently-bound chord records it instead of ALSO
+    // firing its action (e.g. hiding the window mid-capture).
+    // Fire-and-forget; worst case the chord fires normally.
     invoke("set_hotkey_capture", { active: true }).catch(() => {});
   });
 
@@ -3830,10 +3826,7 @@ function formatRelativeTime(unix) {
 // Last error / Sync now button) was removed as part of the v1
 // de-bloat. The underlying status payload + sync command still work
 // for anyone who set team_library_url via settings.json before the
-// removal; we just don't surface them in the app any more.
-//
-// renderTeamStatus / loadTeamStatus / syncTeamLibraryNow used to
-// drive those status fields. They're gone with the UI.
+// removal; the app just no longer surfaces them.
 
 async function loadLogPath() {
   try {
@@ -4189,9 +4182,8 @@ function renderSignInSurface() {
   renderDynamicProviderButtons(otherProviders);
   // The onboarding sign-in panel mirrors the same surface: the
   // branded Google button only when the server reports Google, plus
-  // a button per other provider. Before this, onboarding showed ONLY
-  // the Google button, so a Keycloak-only server greeted new users
-  // with a sign-in that didn't exist.
+  // a button per other provider, so a Keycloak-only server greets
+  // new users with the sign-in that actually exists.
   const obGoogle = document.getElementById("onboarding-signin-oidc");
   if (obGoogle && methods) {
     obGoogle.classList.toggle("hidden", !googleProvider);
@@ -4273,9 +4265,8 @@ function renderServerStatus() {
     if (signedIn) {
       const ls = st.last_sync;
       // A live failure (server unreachable, sync erroring) outranks
-      // whatever the last successful sync said - the old logic only
-      // looked at last_sync and kept a stale green glyph through an
-      // outage.
+      // whatever the last successful sync said; keying off last_sync
+      // alone keeps a stale green glyph through an outage.
       const failing = Boolean(st.last_error);
       const hasErrors = failing || Boolean(ls && ls.errors);
       els.syncIndicator.classList.toggle("err", hasErrors);
@@ -4725,10 +4716,10 @@ async function saveSettings() {
     // Mirror the saved Savings-tab values into the server's
     // per-user override so the admin dashboard's hours-and-money
     // estimate reflects this user's actual numbers. Silent no-op
-    // when not Teams or not signed in. Deliberately NOT awaited:
-    // the local save is the source of truth and already succeeded;
-    // with the server unreachable, awaiting here held the Save
-    // button (and the whole modal) hostage for the network timeout.
+    // when not Teams or not signed in. Not awaited: the local save
+    // is the source of truth and already succeeded, and an awaited
+    // push would block the Save button on the network timeout
+    // whenever the server is unreachable.
     syncProfileToServer(state.settings);
     setStatus("Settings saved", "ok");
     closeSettings();
@@ -5461,8 +5452,8 @@ async function onKeyDown(ev) {
 
   // Chords match ev.code (the physical key) as well as ev.key: with
   // an IME in composition mode (Japanese input especially) ev.key
-  // reports "Process" for every keystroke, which silently killed all
-  // of these. ev.code is layout- and IME-independent.
+  // reports "Process" for every keystroke, so ev.key alone never
+  // matches. ev.code is layout- and IME-independent.
   if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "n" || ev.code === "KeyN")) {
     ev.preventDefault();
     openEditor();

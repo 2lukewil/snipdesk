@@ -181,11 +181,11 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
             cache
         },
     };
-    // Refuse to start without a JWT signing secret. Previously this was
-    // a warning, but the consequence was an incomplete state: password
-    // signup would happily INSERT a new user row and then 500 at the
-    // token-issuance step, leaving the operator with an account that
-    // cannot sign in (audit Tier 1 #5 / CWE-665). Failing fast surfaces
+    // Refuse to start without a JWT signing secret. Downgrading this
+    // to a warning leaves an incomplete state: password signup happily
+    // INSERTs a new user row and then 500s at the token-issuance
+    // step, leaving the operator with an account that cannot sign in
+    // (CWE-665, improper initialization). Failing fast surfaces
     // the misconfiguration to the operator at startup, when it's still
     // their problem to fix, rather than to the first user to sign up,
     // when it becomes a support call.

@@ -953,11 +953,10 @@ async fn upsert_oidc_user(
     //     provider says so via admin_override.
     //   - 'member' otherwise.
     //
-    // Note: we use the atomic INSERT-with-CASE pattern that the
-    // password signup path uses to close the first-admin race
-    // (audit Tier 1 #6). Two concurrent OIDC signups can't both
-    // observe admin_count = 0 because SQLite serialises the entire
-    // INSERT under one write lock.
+    // Note: same atomic INSERT-with-CASE pattern as the password
+    // signup path, closing the first-admin race. Two concurrent OIDC
+    // signups can't both observe admin_count = 0 because SQLite
+    // serialises the entire INSERT under one write lock.
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
     let forced_admin = admin_override.unwrap_or(false);
@@ -995,10 +994,9 @@ async fn upsert_oidc_user(
 
     tx.commit().await?;
 
-    // Audit row for the OIDC-driven user creation (audit Tier 1 #9).
-    // Recorded outside the transaction since `audit::record` is
-    // best-effort and we don't want a flake there to roll back the
-    // user creation.
+    // Audit row for the OIDC-driven user creation. Recorded outside
+    // the transaction since `audit::record` is best-effort and a
+    // flake there must not roll back the user creation.
     audit::record(
         &state.pool,
         AuditEvent {

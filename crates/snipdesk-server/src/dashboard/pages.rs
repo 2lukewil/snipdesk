@@ -56,13 +56,13 @@ fn render(tpl: &str, vars: &[(&str, &str)]) -> String {
     // Strip any unfilled placeholders so they don't visibly leak into
     // the rendered page (typo guard for the developer; user never sees).
     //
-    // Must copy &str slices, never individual bytes: the previous
-    // byte-loop pushed each byte `as char`, which Latin-1-promotes
-    // every non-ASCII UTF-8 byte and re-encodes it - double-encoding
-    // EVERY full dashboard page and garbling any non-ASCII content
-    // ("\u{b7}" rendered as "\u{c2}\u{b7}", curly quotes as "\u{e2}..."
-    // sequences). Same bug class as the substitute_variables and
-    // clipboard fixes on the client; see the regression test below.
+    // Must copy &str slices, never individual bytes: pushing bytes
+    // `as char` Latin-1-promotes every non-ASCII UTF-8 byte and
+    // re-encodes it, double-encoding the whole rendered page and
+    // garbling any non-ASCII content ("\u{b7}" renders as
+    // "\u{c2}\u{b7}", curly quotes as "\u{e2}..." sequences). Same
+    // hazard as substitute_variables on the client; the regression
+    // test below pins it.
     let mut cleaned = String::with_capacity(out.len());
     let mut rest = out.as_str();
     while let Some(start) = rest.find("{{") {
@@ -2166,10 +2166,9 @@ fn filter_library_rows<'a>(rows: &'a [LibraryRow], selected: &str) -> Vec<&'a Li
 ///
 /// Counts are recursive: clicking a parent surfaces every
 /// descendant's snippets (the filter at `filter_library_rows`
-/// already matches `path` OR `path/...`), so the number we show
-/// is the same number the user will see in the card list. The
-/// previous "direct count" was confusing because the visible
-/// total didn't match.
+/// already matches `path` OR `path/...`), so the number shown is
+/// the same number the user sees in the card list; a direct
+/// (non-recursive) count would disagree with the visible total.
 ///
 /// Each folder node carries:
 ///   - `data-folder-path` (full path) so snippet-drop knows where
@@ -2425,14 +2424,14 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // could swallow a click as a drag start. Splitting caret out
     // means the caret's click handler is the ONLY listener for
     // that span's click event.
-    // No inner <a>. Previous revisions nested an
-    // <a class="lib-folder-link"> inside the draggable <div>, and
-    // browsers handle that ambiguity inconsistently - the spec
-    // says the closest draggable ancestor wins, but in Chromium
-    // the inner anchor's implicit drag-as-link behaviour wins for
-    // every row AFTER the first draggable=true element on the
-    // page. That manifested as "only the top-listed folder
-    // drags," with nested folders coincidentally working because
+    // No inner <a>. Nesting an <a class="lib-folder-link"> inside
+    // the draggable <div> is ambiguous, and browsers handle the
+    // ambiguity inconsistently - the spec says the closest
+    // draggable ancestor wins, but in Chromium the inner anchor's
+    // implicit drag-as-link behaviour wins for every row AFTER the
+    // first draggable=true element on the page. That manifests as
+    // "only the top-listed folder drags," with nested folders
+    // coincidentally working because
     // they have a tree-glyph between caret and link that broke
     // the conflict pattern.
     //
@@ -3961,10 +3960,9 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     var mode = loadSortMode();
     if (sel) sel.value = mode;
     // Re-shuffle in BOTH modes. Alphabetical sorts by path; manual
-    // sorts by (sort_order, path). The previous implementation
-    // returned early in alpha mode, so switching manual -> alpha
-    // left the DOM in manual order until the next sidebar fetch -
-    // hence the "switching sort mode requires a refresh" bug.
+    // sorts by (sort_order, path). Returning early in alpha mode
+    // would leave the DOM in manual order until the next sidebar
+    // fetch, making a mode switch look like it needs a refresh.
     var sidebar = document.getElementById("library-sidebar");
     if (!sidebar) return;
     var all = Array.from(sidebar.querySelectorAll(
@@ -4025,16 +4023,13 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
 
   // ---- Folder reorder via in-row drop indicators ----
   //
-  // Previous revisions injected separate "insert zone" elements
-  // between sibling folder rows on dragstart. Chromium aborts a
-  // drag when the dragstart handler mutates the surrounding DOM,
-  // which is exactly what showInsertZones did - that's why only
-  // the very first draggable row's drag survived, and why nested
-  // folders with single-sibling groups (siblings.length < 2 in
-  // the old guard) coincidentally worked: no zones got inserted,
-  // no DOM mutation, drag survived.
+  // Constraint that shapes this design: Chromium aborts a drag
+  // when the dragstart handler mutates the surrounding DOM, so
+  // injecting "insert zone" elements between sibling rows on
+  // dragstart kills every drag except coincidental cases where no
+  // zones get inserted.
   //
-  // The new mechanism does ZERO DOM mutation during dragstart.
+  // This mechanism therefore does ZERO DOM mutation during dragstart.
   // dragover on a folder row computes the cursor's Y position
   // relative to the row and adds one of three classes:
   //   - drop-above (top 30% of the row)  -> insert dragged BEFORE this row
@@ -4573,10 +4568,9 @@ pub async fn library_folder_create(
     // sort_order = 0 by intent: with all folders tied at 0, the
     // (sort_order, path) tiebreak in JS collapses to alphabetical,
     // so Manual mode looks identical to Alphabetical until the
-    // admin actively drags something. The previous max+1 approach
-    // landed new folders in creation order under Manual, which
-    // reads as "Manual mode is broken" - it wasn't, just
-    // unhelpful as a starting state.
+    // admin actively drags something. Seeding max+1 instead would
+    // land new folders in creation order under Manual, which reads
+    // as broken even though it's merely an unhelpful start state.
     let now = Utc::now().timestamp();
     let res = sqlx::query(
         "INSERT OR IGNORE INTO library_folders (path, sort_order, created_at) \

@@ -44,9 +44,8 @@ pub struct AppState {
     /// Set while a Settings hotkey-capture field has focus. Global
     /// shortcuts stay registered with the OS but their handlers
     /// no-op, so typing a chord into the capture field can't also
-    /// trigger the action it's currently bound to (the old behavior
-    /// hid the window mid-capture when the user pressed the active
-    /// hotkey).
+    /// trigger the action it's currently bound to (pressing the
+    /// active hotkey mid-capture would otherwise hide the window).
     pub hotkeys_suspended: AtomicBool,
     /// Team-library sync status - three atomics rather than a Mutex<struct>
     /// because the frontend polls these on every status tick.
@@ -334,12 +333,11 @@ pub fn run() {
                     }
                 })
             {
-                // NOT fatal. This used to `?` out of setup, which meant a
-                // chord conflict with any other app (another launcher on
-                // Alt+Space, say) prevented SnipDesk from starting at all.
-                // The app is fully usable from the tray; record the
-                // warning so the frontend can tell the user to pick a
-                // different hotkey in Settings.
+                // Not fatal: a chord conflict with another app (a second
+                // launcher on Alt+Space, say) must not prevent SnipDesk
+                // from starting - the app stays fully usable from the
+                // tray. Record the warning so the frontend can tell the
+                // user to pick a different hotkey in Settings.
                 logging::log_error(&format!("global hotkey register failed: {err}"));
                 record_startup_warning(
                     app.handle(),

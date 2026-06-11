@@ -268,9 +268,9 @@ fn record_sync_success(state: &AppState) {
 
 /// Run blocking work (network, keychain) off the main thread. Sync
 /// `#[tauri::command]` fns execute ON the main thread in Tauri 2, so
-/// a hanging request inside one froze the whole window - the
-/// "client lags when the server is down" bug. Every network-touching
-/// command goes through here now.
+/// a hanging request inside one freezes the whole window for the
+/// duration (the client visibly lags whenever the server is down).
+/// Every network-touching command goes through here.
 async fn run_blocking<T: Send + 'static>(
     f: impl FnOnce() -> CmdResult<T> + Send + 'static,
 ) -> CmdResult<T> {
@@ -806,12 +806,12 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     handle_account_inactive(&handle, &state, &server_url, &msg);
                 }
                 Err(ApiError::Unauthorized) => {
-                    // Earlier we auto-deleted the credential here. That
-                    // was too aggressive - a transient 401 (or any
-                    // misclassification on the server side) would wipe
-                    // the user's session and confuse them. With no
-                    // refresh-token flow yet (v1.1), we just log and
-                    // let the user re-sign-in manually if it persists.
+                    // A transient 401 (or a server-side misclassification)
+                    // must not wipe the user's session - auto-deleting the
+                    // credential here signs people out for no visible
+                    // reason. With no refresh-token flow yet (v1.1), log
+                    // it and let the user re-sign-in manually if the 401
+                    // persists.
                     eprintln!("background sync got 401; leaving credential in place");
                     let _ = handle.emit("snipdesk://server-auth-warning", ());
                 }

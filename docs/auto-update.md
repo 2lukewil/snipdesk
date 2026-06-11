@@ -265,6 +265,15 @@ this automatically; if it landed as a draft or pre-release, the
 `releases/latest/download/` URL won't redirect to it). Also confirm
 the manifest URL in `tauri.conf.json` matches the repo path.
 
+**Update check fails with "could not fetch a valid release JSON"
+right after a server release.** The `releases/latest/download/` URL
+follows GitHub's repo-wide Latest badge, which must always sit on a
+client release (the one carrying the manifest files). The server
+workflow sets `make_latest: false` for exactly this reason; if a
+server release ever ends up holding the badge (manual release,
+older workflow), move it back with
+`gh release edit v<client-version> --latest`.
+
 **Update toast doesn't appear.** Verify `auto_check_updates` is on
 in Settings -> General. The updater's `check()` returns `null` when
 the manifest version equals or is older than the running binary's,

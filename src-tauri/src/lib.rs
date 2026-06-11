@@ -474,6 +474,7 @@ pub fn run() {
             commands::use_snippet,
             commands::get_settings,
             commands::set_hotkey_capture,
+            commands::team_chars_pasted,
             commands::update_settings,
             commands::export_snippets,
             commands::import_snippets,

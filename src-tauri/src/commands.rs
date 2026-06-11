@@ -281,6 +281,18 @@ pub fn get_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
     Ok(s.clone())
 }
 
+/// Lifetime rendered-character total for shared-library pastes. The
+/// savings footer adds this to the per-snippet personal computation
+/// so team-snippet usage counts toward time/money saved (library
+/// rows are replaced wholesale each sync, so they can't carry their
+/// own usage_count).
+#[tauri::command]
+pub fn team_chars_pasted(state: State<'_, AppState>) -> CmdResult<i64> {
+    let db = state.db.lock().map_err(e)?;
+    db.usage_total_chars(snipdesk_core::db::TelemetryKind::Library)
+        .map_err(e)
+}
+
 /// Toggled by the Settings hotkey-capture fields on focus/blur.
 /// While active, every global-shortcut handler no-ops so the chord
 /// being typed can't simultaneously fire the action it's bound to.
@@ -421,7 +433,13 @@ pub fn export_snippets(state: State<'_, AppState>, args: ExportArgs) -> CmdResul
             // folder_path column added alongside the original three;
             // the parser is header-driven on both this client and the
             // dashboard, so older 3-column files keep importing.
-            let mut out = String::from("title,body,tags,folder_path\n");
+            //
+            // Leading BOM: Excel decodes a BOM-less CSV as ANSI and
+            // garbles every non-ASCII character in customer-facing
+            // text. The BOM costs three bytes and makes Excel, Sheets
+            // imports, and every text editor agree it's UTF-8. Our
+            // own importers strip it back out.
+            let mut out = String::from("\u{feff}title,body,tags,folder_path\n");
             for s in &snippets {
                 out.push_str(&format!(
                     "{},{},{},{}\n",
@@ -448,9 +466,20 @@ pub struct ImportArgs {
 /// Read + parse a snippet file into NewSnippet entries. Shared by
 /// the one-shot import and the preview flow.
 fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String> {
+    // Strip a leading UTF-8 BOM either way: our own CSV exports carry
+    // one (for Excel's benefit), and files re-saved by Excel or
+    // Notepad often gain one. serde_json rejects it and the CSV
+    // header match would silently miss the first column.
+    let read = |path: &str| -> Result<String, String> {
+        let contents = std::fs::read_to_string(path).map_err(e)?;
+        Ok(contents
+            .strip_prefix('\u{feff}')
+            .map(str::to_owned)
+            .unwrap_or(contents))
+    };
     match format {
         "json" => {
-            let contents = std::fs::read_to_string(path).map_err(e)?;
+            let contents = read(path)?;
             // Accept NewSnippet[] or full Snippet[] (the export_snippets shape).
             match serde_json::from_str::<Vec<NewSnippet>>(&contents) {
                 Ok(v) => Ok(v),
@@ -469,7 +498,7 @@ fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String
             }
         }
         "csv" => {
-            let contents = std::fs::read_to_string(path).map_err(e)?;
+            let contents = read(path)?;
             parse_csv(&contents).map_err(e)
         }
         other => Err(format!("unsupported format: {other}")),

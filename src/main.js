@@ -258,6 +258,12 @@ const state = {
   // Unfiltered list - used only by the savings estimator so its readout doesn't
   // change with the search box.
   allSnippets: [],
+  // Lifetime rendered-character total for shared-library pastes,
+  // loaded from the local DB at startup and bumped in-memory on each
+  // team paste. Personal snippets carry usage_count instead; team
+  // rows are replaced wholesale every sync, so the durable counter
+  // lives in its own table (usage_totals).
+  teamCharsPasted: 0,
   tags: [],
   folders: [], // [{ path, has_snippets }]
   expandedFolders: new Set(),
@@ -500,6 +506,13 @@ async function init() {
   // purely local (settings + keychain + db) - no network wait here.
   if (TEAMS_BUILD) {
     await loadServerStatus();
+    // Durable team-paste character total for the savings footer;
+    // bumped in-memory on each paste afterward.
+    try {
+      state.teamCharsPasted = (await invoke("team_chars_pasted")) || 0;
+    } catch (err) {
+      console.warn("team_chars_pasted load failed", err);
+    }
   }
 
   await refresh();
@@ -2481,6 +2494,12 @@ async function executeUse(snippet, variables, copyOnly) {
       "ok"
     );
     bumpLocalUsage(snippet.id);
+    // Team pastes have no usage_count to bump; credit the savings
+    // basis directly (the durable counter was already bumped in
+    // Rust by use_snippet's telemetry write).
+    if (typeof snippet.id === "string" && snippet.id.startsWith("team:")) {
+      state.teamCharsPasted += (result.rendered || "").length;
+    }
     renderSavings();
   } catch (err) {
     setStatus(`Error: ${err}`, "err");
@@ -5299,7 +5318,7 @@ function setStatus(msg, kind = "") {
 
 // ---------- Savings estimate ----------
 function computeSavings(snippets, wpm, hourlyWage) {
-  let totalChars = 0;
+  let totalChars = Number(state.teamCharsPasted) || 0;
   for (const s of snippets) {
     const uses = Number(s.usage_count) || 0;
     if (uses <= 0) continue;

@@ -55,19 +55,27 @@ fn render(tpl: &str, vars: &[(&str, &str)]) -> String {
     }
     // Strip any unfilled placeholders so they don't visibly leak into
     // the rendered page (typo guard for the developer; user never sees).
+    //
+    // Must copy &str slices, never individual bytes: the previous
+    // byte-loop pushed each byte `as char`, which Latin-1-promotes
+    // every non-ASCII UTF-8 byte and re-encodes it - double-encoding
+    // EVERY full dashboard page and garbling any non-ASCII content
+    // ("\u{b7}" rendered as "\u{c2}\u{b7}", curly quotes as "\u{e2}..."
+    // sequences). Same bug class as the substitute_variables and
+    // clipboard fixes on the client; see the regression test below.
     let mut cleaned = String::with_capacity(out.len());
-    let bytes = out.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"{{") {
-            if let Some(end) = out[i..].find("}}") {
-                i += end + 2;
-                continue;
+    let mut rest = out.as_str();
+    while let Some(start) = rest.find("{{") {
+        match rest[start..].find("}}") {
+            Some(end_rel) => {
+                cleaned.push_str(&rest[..start]);
+                rest = &rest[start + end_rel + 2..];
             }
+            // Unterminated "{{" - keep the remainder verbatim.
+            None => break,
         }
-        cleaned.push(bytes[i] as char);
-        i += 1;
     }
+    cleaned.push_str(rest);
     cleaned
 }
 
@@ -1305,13 +1313,16 @@ async fn aud_rate_live(state: &AppState, code: &str) -> f64 {
 /// (paste totals, library size, etc.).
 fn format_thousands(n: i64) -> String {
     let s = n.abs().to_string();
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in bytes.iter().enumerate() {
-        if i != 0 && (bytes.len() - i) % 3 == 0 {
+    let len = s.len();
+    let mut out = String::with_capacity(len + len / 3);
+    // chars(), not bytes: the input is ASCII digits today, but
+    // byte-as-char loops are this codebase's recurring mojibake bug
+    // (see render() above) - don't leave the pattern lying around.
+    for (i, c) in s.chars().enumerate() {
+        if i != 0 && (len - i) % 3 == 0 {
             out.push(',');
         }
-        out.push(*c as char);
+        out.push(c);
     }
     if n < 0 {
         format!("-{out}")
@@ -2419,7 +2430,10 @@ fn csv_field(s: &str) -> String {
 fn build_library_export(filtered: &[&LibraryRow], format: &str) -> (String, String, String) {
     let date = Utc::now().format("%Y%m%d");
     if format == "csv" {
-        let mut out = String::from("title,body,tags,folder_path\n");
+        // Leading BOM so Excel decodes the download as UTF-8 instead
+        // of ANSI (which garbles every non-ASCII character). Mirrors
+        // the desktop client's CSV export; both importers strip it.
+        let mut out = String::from("\u{feff}title,body,tags,folder_path\n");
         for r in filtered {
             out.push_str(&format!(
                 "{},{},{},{}\n",
@@ -2563,6 +2577,11 @@ struct ImportFileEntry {
 /// (title + body required, tags + folder_path optional), tags split
 /// on ';' or ','.
 fn parse_import_file(content: &str) -> Result<Vec<ImportFileEntry>, String> {
+    // Strip a leading UTF-8 BOM: our own CSV exports carry one (for
+    // Excel), and files re-saved by Excel or Notepad often gain one.
+    // serde_json rejects it and the CSV header match would miss the
+    // first column.
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
     let trimmed = content.trim_start();
     if trimmed.starts_with('[') || trimmed.starts_with('{') {
         return serde_json::from_str::<Vec<ImportFileEntry>>(content)
@@ -5518,6 +5537,37 @@ fn render_library_update_diff(details: &serde_json::Value) -> Option<String> {
         return None;
     }
     Some(sections)
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+
+    /// Regression: the placeholder-stripping pass in render() must
+    /// never touch non-ASCII bytes. The old byte-loop double-encoded
+    /// every full dashboard page ("\u{b7}" arrived in browsers as
+    /// "\u{c2}\u{b7}").
+    #[test]
+    fn render_preserves_utf8_content() {
+        let tpl = "<p>{{CONTENT}}</p><span>{{MISSING}}</span>";
+        let body =
+            "caf\u{e9} cr\u{e8}me \u{b7} \u{2019}quote\u{2019} \u{2014} 100\u{a5} \u{4e2d}\u{6587}";
+        let out = render(tpl, &[("CONTENT", body)]);
+        assert_eq!(out, format!("<p>{body}</p><span></span>"));
+    }
+
+    #[test]
+    fn render_strips_unfilled_and_keeps_unterminated() {
+        assert_eq!(render("a{{GONE}}b", &[]), "ab");
+        assert_eq!(render("a{{dangling", &[]), "a{{dangling");
+    }
+
+    #[test]
+    fn thousands_separator() {
+        assert_eq!(format_thousands(1234567), "1,234,567");
+        assert_eq!(format_thousands(-1000), "-1,000");
+        assert_eq!(format_thousands(999), "999");
+    }
 }
 
 #[cfg(test)]

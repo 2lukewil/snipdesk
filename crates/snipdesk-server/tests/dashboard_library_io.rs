@@ -166,7 +166,14 @@ async fn export_csv_carries_folder_column() {
 
     let (status, _, body) = get_authed(&app, &cookie, "/dashboard/library/export?format=csv").await;
     assert_eq!(status, StatusCode::OK);
-    let header_line = body.lines().next().unwrap_or("");
+    // CSV downloads lead with a UTF-8 BOM so Excel doesn't decode
+    // them as ANSI; the header follows immediately after.
+    assert!(body.starts_with('\u{feff}'), "csv export must carry a BOM");
+    let header_line = body
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('\u{feff}');
     assert_eq!(header_line, "title,body,tags,folder_path");
     assert!(body.contains("Refund intro"));
     assert!(body.contains("Billing"));

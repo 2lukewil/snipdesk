@@ -229,6 +229,18 @@ impl Db {
                 PRIMARY KEY (kind, snippet_id)
             );
 
+            -- Lifetime paste-character totals per telemetry kind.
+            -- Unlike pending_telemetry (which zeroes after each server
+            -- flush), these only grow. The savings footer reads the
+            -- 'library' row so shared-snippet pastes count toward the
+            -- time/money-saved estimate: library snippets are
+            -- read-only rows replaced wholesale on every sync, so a
+            -- per-snippet usage_count can't live on them.
+            CREATE TABLE IF NOT EXISTS usage_totals (
+                kind  TEXT PRIMARY KEY,
+                chars INTEGER NOT NULL DEFAULT 0
+            );
+
             -- Local trash: a content snapshot of every deleted snippet,
             -- so deletion is recoverable on-device regardless of
             -- sign-in state. Independent of pending_deletes (which only
@@ -532,7 +544,29 @@ impl Db {
                last_used = MAX(last_used, excluded.last_used)",
             params![id_for_server, kind_str, chars, now],
         )?;
+        // Lifetime total, never decremented: the savings footer reads
+        // this for library pastes (see the usage_totals schema note).
+        self.conn.execute(
+            "INSERT INTO usage_totals (kind, chars) VALUES (?1, ?2) \
+             ON CONFLICT(kind) DO UPDATE SET chars = chars + excluded.chars",
+            params![kind_str, chars],
+        )?;
         Ok(())
+    }
+
+    /// Lifetime rendered-character total for one telemetry kind.
+    /// Library is the one the savings footer needs; personal savings
+    /// still come from per-snippet usage_count.
+    pub fn usage_total_chars(&self, kind: TelemetryKind) -> Result<i64> {
+        let n: i64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(SUM(chars), 0) FROM usage_totals WHERE kind = ?1",
+                params![kind.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(n)
     }
 
     /// Read a snapshot of the pending telemetry. Doesn't delete - the
@@ -1514,5 +1548,34 @@ mod tests {
         let snap = db.snapshot_telemetry().unwrap();
         db.commit_telemetry_flush(&snap).unwrap();
         assert!(db.snapshot_telemetry().unwrap().is_empty());
+    }
+
+    // The lifetime usage_totals counter only grows: a server flush
+    // zeroes pending_telemetry but must not touch the totals the
+    // savings footer reads for library pastes.
+    #[test]
+    fn usage_totals_survive_telemetry_flush() {
+        let db = fresh_db();
+        db.record_telemetry("lib-1", TelemetryKind::Library, 100)
+            .unwrap();
+        db.record_telemetry("lib-2", TelemetryKind::Library, 50)
+            .unwrap();
+        db.record_telemetry("snip-1", TelemetryKind::Personal, 9)
+            .unwrap();
+        assert_eq!(db.usage_total_chars(TelemetryKind::Library).unwrap(), 150);
+        assert_eq!(db.usage_total_chars(TelemetryKind::Personal).unwrap(), 9);
+
+        let snap = db.snapshot_telemetry().unwrap();
+        db.commit_telemetry_flush(&snap).unwrap();
+        assert!(db.snapshot_telemetry().unwrap().is_empty());
+        assert_eq!(
+            db.usage_total_chars(TelemetryKind::Library).unwrap(),
+            150,
+            "flush must not reset the lifetime total"
+        );
+
+        db.record_telemetry("lib-1", TelemetryKind::Library, 25)
+            .unwrap();
+        assert_eq!(db.usage_total_chars(TelemetryKind::Library).unwrap(), 175);
     }
 }

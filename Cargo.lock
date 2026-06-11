@@ -5434,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "snipdesk"
-version = "0.1.9"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -5475,7 +5475,7 @@ dependencies = [
 
 [[package]]
 name = "snipdesk-server"
-version = "0.1.8"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",

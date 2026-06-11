@@ -399,13 +399,27 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   height: 1px;
   background: var(--border);
 }
-.server-oidc-btn {
-  width: 100%;
+/* Provider buttons share one row: each takes an equal slice with a
+   gap between, wrapping to a new line if a long operator label
+   doesn't fit. Applies to both surfaces - the Settings sign-in panel
+   (#server-providers holds the static Google button plus dynamic
+   ones) and onboarding (.oidc-button-row wraps the Google button and
+   the #onboarding-providers host, which is display:contents so its
+   buttons join the same row). */
+#server-providers,
+.oidc-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
-/* Onboarding's dynamic provider buttons stack under the Google
-   button; breathing room between them and whatever sits above. */
+#onboarding-providers {
+  display: contents;
+}
+.server-oidc-btn,
+.oidc-button-row .btn-google,
 #onboarding-providers .server-oidc-btn {
-  margin-top: 8px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* Official "Sign in with Google" button. Follows the Google Identity

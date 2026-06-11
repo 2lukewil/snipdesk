@@ -1787,11 +1787,11 @@ body.compact .search-bar {
 .onboarding-result strong { font-size: 18px; }
 
 /* Footer-row in Settings General for the "Replay onboarding"
-   button - sits at the bottom under the regular toggles. */
+   button - sits at the bottom under the regular toggles. No divider
+   above it: the border + its padding were exactly what pushed the
+   General tab past the default window height into a scrollbar. */
 .footer-row {
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  margin-top: 2px;
   display: flex;
   align-items: center;
   gap: 12px;

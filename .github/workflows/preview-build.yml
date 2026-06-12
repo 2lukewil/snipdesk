@@ -1,0 +1,108 @@
+name: Cross-platform preview build
+
+# Manually-triggered macOS + Linux builds of the Teams flavor,
+# uploaded as workflow artifacts (NOT a release). This exists to
+# produce installable test binaries for platform validation while
+# Windows remains the only released platform; release.yml stays
+# NSIS-only until macOS/Linux pass real-machine testing.
+#
+# Differences from release.yml on purpose:
+#   - No version gate: builds whatever the ref contains.
+#   - Calls vite + tauri directly instead of build-teams.mjs, whose
+#     post-build step renames the NSIS installer and exits nonzero
+#     when no NSIS bundle exists (true on every non-Windows host).
+#   - No manifest generation or publishing; artifacts only.
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build Teams (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is an Apple-silicon (arm64) runner - the
+          # right target for M-series MacBooks. Intel Macs would
+          # need a separate macos-13 entry.
+          - os: macos-latest
+            platform: macos-arm64
+            bundle_path: |
+              target/release/bundle/dmg/*.dmg
+              target/release/bundle/macos/*.app.tar.gz
+              target/release/bundle/macos/*.app.tar.gz.sig
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            bundle_path: |
+              target/release/bundle/deb/*.deb
+              target/release/bundle/appimage/*.AppImage
+              target/release/bundle/appimage/*.AppImage.sig
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Setup Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
+      # Tauri v2 prerequisites for Ubuntu 22.04, plus libxdo for
+      # enigo (the synthetic-keystroke path auto-paste uses off
+      # Windows).
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl wget file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Build Teams frontend
+        env:
+          SNIPDESK_TEAMS_BUILD: '1'
+        run: npx vite build --mode teams
+
+      - name: Build Teams bundle (signed updater artifacts)
+        env:
+          SNIPDESK_TEAMS_BUILD: '1'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --features teams --config src-tauri/tauri.teams.conf.json
+
+      - name: List produced bundles
+        run: find target/release/bundle -type f | sort
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: snipdesk-teams-${{ matrix.platform }}
+          path: ${{ matrix.bundle_path }}
+          if-no-files-found: error
+          retention-days: 14

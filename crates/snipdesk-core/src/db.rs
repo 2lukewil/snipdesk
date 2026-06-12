@@ -1000,9 +1000,8 @@ impl Db {
                 skipped_duplicates += 1;
                 continue;
             }
-            // Same limits as create/update. One oversized or
-            // control-character row in a file shouldn't sink the
-            // whole import; skip it and report the count.
+            // Same limits as create/update; skip bad rows instead of
+            // failing the whole import.
             if crate::validate::validate_snippet(
                 &item.title,
                 &item.body,

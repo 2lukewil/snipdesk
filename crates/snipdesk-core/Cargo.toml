@@ -17,18 +17,14 @@ once_cell = { workspace = true }
 dirs = { workspace = true }
 rusqlite = { workspace = true }
 
-# Windows uses native SendInput / WM_PASTE in paste.rs; enigo is only
-# linked for the non-Windows fallback. arboard backs the non-Windows
-# clipboard save/restore in the quick-add selection capture.
+# Windows uses native SendInput / WM_PASTE in paste.rs; enigo covers
+# the non-Windows keystroke paths, arboard the clipboard save/restore.
 [target.'cfg(not(windows))'.dependencies]
 enigo = "0.2"
 arboard = "3"
 
-# Focus capture/restore on macOS: the frontmost-app pid plays the
-# role the foreground HWND plays on Windows.
 [target.'cfg(target_os = "macos")'.dependencies]
-# "libc" gates every pid_t-typed API (processIdentifier, the
-# by-pid lookup) - without it those methods don't exist.
+# "libc" gates the pid_t-typed APIs (processIdentifier etc).
 objc2-app-kit = { version = "0.2", features = [
     "NSWorkspace",
     "NSRunningApplication",

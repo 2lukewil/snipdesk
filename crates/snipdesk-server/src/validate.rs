@@ -1,11 +1,8 @@
-//! Size and character limits for user-supplied content.
-//!
-//! Mirror of `crates/snipdesk-core/src/validate.rs` - the server
-//! crate deliberately doesn't depend on snipdesk-core (it would drag
-//! rusqlite and the desktop paste stack into the Docker image), so
-//! the rules live twice. Keep the constants and semantics in
-//! lockstep: a snippet the client accepts must sync without a 400,
-//! and vice versa.
+//! Size and character limits for user-supplied content. Mirror of
+//! crates/snipdesk-core/src/validate.rs (the server crate doesn't
+//! depend on snipdesk-core, which would drag rusqlite and the
+//! desktop paste stack into the image); keep the constants in
+//! lockstep.
 
 pub const TITLE_MAX_CHARS: usize = 300;
 pub const BODY_MAX_CHARS: usize = 100_000;
@@ -14,15 +11,11 @@ pub const MAX_TAGS: usize = 50;
 pub const FOLDER_MAX_CHARS: usize = 300;
 pub const DISPLAY_NAME_MAX_CHARS: usize = 100;
 
-/// Control characters with no business in stored text. Newlines,
-/// carriage returns, and tabs are legitimate in multi-line bodies;
-/// everything else control-class is rejected everywhere.
+// Bodies allow \n \r \t; one-line fields reject all control chars.
 fn forbidden_in_body(c: char) -> bool {
     c.is_control() && !matches!(c, '\n' | '\r' | '\t')
 }
 
-/// One-line fields (titles, tags, folder paths, names) additionally
-/// reject newlines and tabs.
 fn forbidden_in_line(c: char) -> bool {
     c.is_control()
 }
@@ -88,8 +81,6 @@ pub fn validate_folder(folder_path: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// The whole-snippet check used by every payload-accepting endpoint
-/// (personal-snippet sync, library API, dashboard forms and import).
 pub fn validate_snippet(
     title: &str,
     body: &str,
@@ -103,8 +94,6 @@ pub fn validate_snippet(
     Ok(())
 }
 
-/// Signup path: reject rather than mangle - the user typed the name
-/// and can fix it.
 pub fn validate_display_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
         return Err("display_name is required".to_string());
@@ -121,9 +110,8 @@ pub fn validate_display_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// OIDC path: the name comes from the identity provider, not the
-/// user's keyboard, so failing the whole sign-in over a weird claim
-/// would be hostile. Strip control characters and clamp instead.
+/// For provider-supplied names (OIDC claims): strip and clamp
+/// instead of rejecting, so a weird claim can't fail the sign-in.
 pub fn sanitize_display_name(name: &str) -> String {
     let cleaned: String = name
         .chars()

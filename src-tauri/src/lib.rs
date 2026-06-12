@@ -61,11 +61,10 @@ pub struct AppState {
     /// success before the server went away.
     #[cfg(feature = "teams")]
     pub server_sync_error: Mutex<Option<String>>,
-    /// Problems from app setup the user should hear about - today
-    /// that's global hotkeys that failed to register (usually a chord
-    /// conflict with another app). Events emitted during setup fire
-    /// before the webview loads and are lost, so the frontend pulls
-    /// these once via the `startup_warnings` command after init.
+    /// Setup-time problems (failed hotkey registration, deep-link
+    /// scheme failures). Events emitted during setup fire before the
+    /// webview loads, so the frontend pulls these via the
+    /// `startup_warnings` command instead.
     pub startup_warnings: Mutex<Vec<String>>,
 }
 
@@ -187,11 +186,8 @@ pub fn run() {
             });
             app.manage(settings::SettingsPath(settings_path));
 
-            // Wayland sessions can't register X11-style global
-            // shortcut grabs and reject synthetic input, so the two
-            // hotkey-driven flows degrade. Say so once at startup
-            // instead of letting the hotkey look broken; the tray
-            // icon and clipboard-copy mode work everywhere.
+            // Wayland can't register X11-style shortcut grabs and
+            // rejects synthetic input; warn once at startup.
             #[cfg(all(unix, not(target_os = "macos")))]
             if std::env::var("WAYLAND_DISPLAY").is_ok()
                 && std::env::var("XDG_SESSION_TYPE")
@@ -226,9 +222,8 @@ pub fn run() {
                 if let Err(e) = app.deep_link().register_all() {
                     eprintln!("deep link scheme registration failed: {e}");
                     // Without the scheme, browser sign-ins can't call
-                    // back into the app - the user would click through
-                    // OIDC and then... nothing. Warn so they know to
-                    // use the paste-token fallback.
+                    // back into the app; point at the paste-token
+                    // fallback.
                     record_startup_warning(
                         app.handle(),
                         &format!(
@@ -352,11 +347,8 @@ pub fn run() {
                     }
                 })
             {
-                // Not fatal: a chord conflict with another app (a second
-                // launcher on Alt+Space, say) must not prevent SnipDesk
-                // from starting - the app stays fully usable from the
-                // tray. Record the warning so the frontend can tell the
-                // user to pick a different hotkey in Settings.
+                // Not fatal: a chord conflict with another app must not
+                // prevent launch; the app stays usable from the tray.
                 logging::log_error(&format!("global hotkey register failed: {err}"));
                 record_startup_warning(
                     app.handle(),
@@ -838,11 +830,9 @@ pub fn run_one_team_sync(handle: &tauri::AppHandle) {
 pub fn trigger_quick_add_from_selection(handle: &tauri::AppHandle) {
     let handle_clone = handle.clone();
     thread::spawn(move || {
-        // Off the shortcut thread pool - blocking it drops subsequent
-        // presses. Capture runs BEFORE our window shows, while the
-        // selection's app is still foreground. All platforms share
-        // this path: Windows via SendInput + clipboard sequence
-        // number, macOS/Linux via enigo + clipboard polling.
+        // Off the shortcut thread pool (blocking it drops subsequent
+        // presses). Capture must run before our window shows, while
+        // the selection's app is still foreground.
         let captured = paste::capture_selection();
         match captured {
             Ok(Some(text)) if !text.trim().is_empty() => {
@@ -860,10 +850,8 @@ pub fn trigger_quick_add_from_selection(handle: &tauri::AppHandle) {
                 }
             }
             Err(err) => {
-                // Platform blockers (macOS Accessibility not granted,
-                // Wayland) arrive here with a user-readable reason;
-                // surface it in the window we're about to show instead
-                // of pretending the capture just came back empty.
+                // Platform blockers (macOS Accessibility, Wayland)
+                // carry a user-readable reason; show it.
                 logging::log_error(&format!("quick-add capture failed: {err}"));
                 if let Some(win) = handle_clone.get_webview_window("main") {
                     show_and_focus(&handle_clone, &win);
@@ -888,9 +876,8 @@ pub fn apply_autostart(handle: &tauri::AppHandle, enabled: bool) -> tauri::Resul
 }
 
 /// Stash a setup-time problem for the frontend to pull after init
-/// (see `AppState::startup_warnings`). Safe to call before manage()
-/// only in the sense that it then drops the message - all current
-/// call sites run after app.manage(AppState).
+/// (see `AppState::startup_warnings`). Drops the message if called
+/// before app.manage(AppState).
 pub fn record_startup_warning(handle: &tauri::AppHandle, msg: &str) {
     if let Some(state) = handle.try_state::<AppState>() {
         if let Ok(mut g) = state.startup_warnings.lock() {

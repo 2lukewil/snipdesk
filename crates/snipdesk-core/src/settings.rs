@@ -223,24 +223,14 @@ fn default_server_url() -> String {
     baked.trim().trim_end_matches('/').to_string()
 }
 
-/// RUNTIME-managed server URL - the no-rebuild counterpart to the
-/// baked default above. Two sources, highest priority first:
-///
-///   1. The `SNIPDESK_SERVER_URL` environment variable (set
-///      machine-wide via GPO / Intune / a wrapper script).
-///   2. A machine-level config file an administrator deploys next
-///      to nothing else the app owns - per-user app data stays
-///      untouched. Windows: %ProgramData%\snipdesk\config.json;
-///      macOS: /Library/Application Support/snipdesk/config.json;
-///      Linux: /etc/snipdesk/config.json.
-///      Shape: { "server_url": "https://snippets.example.com" }
-///
-/// When present, the value is authoritative exactly like a baked
-/// brand URL: startup re-adopts it over whatever settings.json
-/// persisted (so editing the file re-points every install on next
-/// launch, no rebuild), and the UI hides the URL inputs. Absent or
-/// unreadable means "not managed" - fall through to the baked
-/// default / the user's own setting.
+/// Runtime-managed server URL, the no-rebuild counterpart to the
+/// baked default above. Priority: the SNIPDESK_SERVER_URL env var,
+/// then the machine config file (%ProgramData%\snipdesk\config.json
+/// on Windows, /etc/snipdesk/config.json on Linux, /Library/
+/// Application Support/snipdesk/config.json on macOS; shape
+/// { "server_url": "..." }). When present it's authoritative like a
+/// baked URL: startup re-adopts it over settings.json and the UI
+/// hides the URL inputs. Absent/unreadable = not managed.
 pub fn managed_server_url() -> Option<String> {
     let normalize = |s: &str| {
         let t = s.trim().trim_end_matches('/').to_string();

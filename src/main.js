@@ -581,10 +581,9 @@ async function init() {
       await loadServerStatus();
     });
 
-    // A browser sign-in (deep link) reached the app but couldn't
-    // complete - bad token, wrong server, credential store failure.
-    // Without this the user stares at "Waiting for sign-in..."
-    // forever while the browser tab claims success.
+    // A deep-link sign-in reached the app but couldn't complete (bad
+    // token, wrong server, credential store failure); without this
+    // the onboarding panel waits forever.
     await listen("snipdesk://signin-failed", async (event) => {
       const reason = typeof event.payload === "string"
         ? event.payload
@@ -638,15 +637,13 @@ async function init() {
     onboarding.start();
   });
 
-  // Live hotkey problems from settings saves (chord conflicts, bad
-  // chords). The save succeeded; the registration didn't.
+  // Hotkey problems from settings saves (chord conflicts, bad chords).
   await listen("snipdesk://hotkey-warning", (event) => {
     if (typeof event.payload === "string") setStatus(event.payload, "err");
   });
 
-  // Setup-time problems (hotkey conflicts at boot, deep-link scheme
-  // registration failures) happen before this page existed, so events
-  // were not an option - pull them once instead. Drained on read.
+  // Setup-time problems fire before this page exists, so they're
+  // pulled once instead of listened for. Drained on read.
   try {
     const warnings = await invoke("startup_warnings");
     if (Array.isArray(warnings) && warnings.length > 0) {
@@ -900,15 +897,14 @@ const onboarding = {
           : `Signed in as ${display}`;
         status.classList.add("is-success");
       }
-      // The provider button's job is done: swap the logo for a green
-      // check (CSS keys off .is-signed-in) and retire the button.
+      // Swap the logo for a green check (CSS keys off .is-signed-in)
+      // and retire all provider buttons.
       if (oidcBtn) {
         oidcBtn.classList.add("is-signed-in");
         oidcBtn.disabled = true;
         const label = oidcBtn.querySelector(".btn-google-label");
         if (label) label.textContent = "Signed in";
       }
-      // Dynamic provider buttons retire alongside the Google one.
       document
         .querySelectorAll("#onboarding-providers button")
         .forEach((b) => (b.disabled = true));
@@ -954,9 +950,8 @@ const onboarding = {
 
   async startOidc(provider) {
     if (!TEAMS_BUILD) return;
-    // No explicit provider = the static Google button. Resolve its
-    // methods entry (for the per-provider start_url) when we have
-    // one; otherwise the backend falls back to the legacy Google
+    // No explicit provider = the static Google button. Without a
+    // methods entry the backend falls back to the legacy Google
     // start route.
     if (!provider) {
       provider =
@@ -1019,10 +1014,8 @@ const onboarding = {
     }
   },
 
-  // Called from the snipdesk://signin-failed listener: a browser
-  // sign-in reached the app but couldn't complete. Replace the
-  // eternal "Waiting for sign-in..." with the actual reason so the
-  // user knows to retry (or use the paste-token fallback).
+  // Replaces "Waiting for sign-in..." with the failure reason from
+  // the snipdesk://signin-failed listener.
   showSigninError(msg) {
     const status = document.getElementById("onboarding-signin-status");
     if (status) {
@@ -2613,9 +2606,8 @@ async function executeUse(snippet, variables, copyOnly) {
       },
     });
     if (result.paste_error) {
-      // Auto-paste was requested but the platform blocked it (macOS
-      // Accessibility not granted, Wayland session). The snippet is
-      // on the clipboard; the message says so and names the fix.
+      // Platform blocked auto-paste (macOS Accessibility, Wayland);
+      // the snippet is on the clipboard and the message says so.
       setStatus(result.paste_error, "err");
     } else {
       setStatus(
@@ -3865,10 +3857,8 @@ function formatSyncTimestamp(unixSecs) {
   return d.toLocaleString();
 }
 
-/// Tooltip for the red sync glyph. The raw error from the backend is
-/// engineer-speak ("network error: <ureq detail>"); translate the
-/// known shapes into something a support agent can act on, and keep
-/// the raw detail on a second line for bug reports.
+// Tooltip for the red sync glyph: translate known error shapes into
+// plain language, keep the raw detail on a second line.
 function syncFailureTooltip(rawError) {
   const raw = String(rawError || "");
   let friendly;
@@ -4187,10 +4177,8 @@ function renderSignInSurface() {
   // and any future IdP the server adds). Rendered inside the same
   // container as the Google button, after it.
   renderDynamicProviderButtons(otherProviders);
-  // The onboarding sign-in panel mirrors the same surface: the
-  // branded Google button only when the server reports Google, plus
-  // a button per other provider, so a Keycloak-only server greets
-  // new users with the sign-in that actually exists.
+  // Onboarding mirrors the same surface: Google button only when the
+  // server reports Google, plus a button per other provider.
   const obGoogle = document.getElementById("onboarding-signin-oidc");
   if (obGoogle && methods) {
     obGoogle.classList.toggle("hidden", !googleProvider);
@@ -4230,20 +4218,16 @@ function renderDynamicProviderButtons(providers) {
   }
 }
 
-/// "Sign in with Keycloak", "Sign in with Okta", ... - name the
-/// provider rather than the meaningless-next-to-other-buttons
-/// "Sign in with SSO". Only reached when the server sent an empty
-/// display_name (current servers always send one).
+// Only reached when the server sent an empty display_name (current
+// servers always send one).
 function providerFallbackLabel(p) {
   const id = (p?.id || "").trim();
   if (!id) return "Sign in with SSO";
   return `Sign in with ${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 }
 
-/// Onboarding mirror of renderDynamicProviderButtons: one button per
-/// non-Google provider on the sign-in panel, wired to the onboarding
-/// OIDC flow (which persists the URL and pre-validates inherited
-/// sessions before opening the browser). Idempotent re-render.
+// Onboarding mirror of renderDynamicProviderButtons, wired to the
+// onboarding OIDC flow. Idempotent re-render.
 function renderOnboardingProviderButtons(providers) {
   const host = document.getElementById("onboarding-providers");
   if (!host) return;
@@ -4720,13 +4704,10 @@ async function saveSettings() {
     applyTheme(state.settings.theme);
     applyAccentColor(state.settings.accent_color);
     applyCompact(state.settings.compact);
-    // Mirror the saved Savings-tab values into the server's
-    // per-user override so the admin dashboard's hours-and-money
-    // estimate reflects this user's actual numbers. Silent no-op
-    // when not Teams or not signed in. Not awaited: the local save
-    // is the source of truth and already succeeded, and an awaited
-    // push would block the Save button on the network timeout
-    // whenever the server is unreachable.
+    // Mirror Savings-tab values to the server's per-user override.
+    // No-op when not Teams or signed out. Not awaited: the local
+    // save already succeeded, and awaiting would block the Save
+    // button on the network timeout when the server is unreachable.
     syncProfileToServer(state.settings);
     setStatus("Settings saved", "ok");
     closeSettings();
@@ -5457,10 +5438,8 @@ async function onKeyDown(ev) {
     return;
   }
 
-  // Chords match ev.code (the physical key) as well as ev.key: with
-  // an IME in composition mode (Japanese input especially) ev.key
-  // reports "Process" for every keystroke, so ev.key alone never
-  // matches. ev.code is layout- and IME-independent.
+  // Chords also match ev.code: with an IME in composition mode,
+  // ev.key reports "Process" and never matches.
   if ((ev.ctrlKey || ev.metaKey) && (ev.key.toLowerCase() === "n" || ev.code === "KeyN")) {
     ev.preventDefault();
     openEditor();

@@ -19,10 +19,9 @@ fn e<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
 
-/// Run blocking work (file I/O, parsing) off the main thread. Sync
-/// `#[tauri::command]` fns execute ON the main thread in Tauri 2, so
-/// reading and parsing a big import file inside one stalls the whole
-/// window. Same pattern as the network commands in server_commands.rs.
+/// Run blocking work off the main thread. Sync `#[tauri::command]`
+/// fns execute ON the main thread in Tauri 2; a slow file parse
+/// inside one stalls the window. Same pattern as server_commands.rs.
 async fn run_blocking<T: Send + 'static>(
     f: impl FnOnce() -> CmdResult<T> + Send + 'static,
 ) -> CmdResult<T> {
@@ -180,8 +179,7 @@ pub struct UseSnippetResult {
     pub rendered: String,
     pub pasted: bool,
     /// Why auto-paste fell back to clipboard-copy (macOS Accessibility
-    /// not granted, Wayland session). None on success or in plain
-    /// clipboard mode; the frontend shows it as the paste status.
+    /// not granted, Wayland). None on success or in clipboard mode.
     pub paste_error: Option<String>,
 }
 
@@ -268,12 +266,9 @@ pub fn use_snippet(
     let mode = args
         .paste_mode
         .unwrap_or_else(|| settings.paste_mode.clone());
-    // Platform gate BEFORE attempting auto-paste: on macOS without the
-    // Accessibility permission (the check also triggers the system
-    // approval dialog) and on Wayland, the synthetic keystroke would
-    // be silently swallowed. Falling back to clipboard-copy with the
-    // reason surfaced beats a paste that invisibly does nothing - the
-    // snippet is already on the clipboard either way.
+    // macOS without Accessibility / Wayland: the keystroke would be
+    // silently swallowed, so fall back to clipboard-copy and report
+    // why. The check also triggers the macOS approval dialog.
     let paste_error = if mode == "auto_paste" {
         paste::auto_paste_blocker(true)
     } else {
@@ -324,9 +319,8 @@ pub fn team_chars_pasted(state: State<'_, AppState>) -> CmdResult<i64> {
         .map_err(e)
 }
 
-/// Setup-time problems the user should hear about (hotkey chords
-/// that failed to register, deep-link scheme registration failures).
-/// Drained on read so the frontend toasts each once per launch.
+/// Setup-time problems (failed hotkey registration, deep-link scheme
+/// failures). Drained on read; the frontend shows each once.
 #[tauri::command]
 pub fn startup_warnings(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
     let mut g = state.startup_warnings.lock().map_err(e)?;
@@ -408,10 +402,8 @@ pub fn update_settings(
                             }
                         })
                 {
-                    // The save itself still succeeds (the user may be
-                    // mid-edit on other fields), but a chord that
-                    // didn't register must not look like it did - the
-                    // event below puts the failure on screen.
+                    // Don't fail the save; surface the registration
+                    // failure on screen instead.
                     eprintln!("quick-add re-register failed: {err}");
                     let _ = tauri::Emitter::emit(
                         &app,
@@ -536,11 +528,8 @@ fn read_snippet_file(path: &str, format: &str) -> Result<Vec<NewSnippet>, String
     // Notepad often gain one. serde_json rejects it and the CSV
     // header match would silently miss the first column.
     let read = |path: &str| -> Result<String, String> {
-        // Size gate BEFORE the read: read_to_string on a runaway file
-        // (someone points the import dialog at a log or a video) would
-        // otherwise balloon memory before any parsing gets a say. 20 MB
-        // holds tens of thousands of snippets - any legitimate export
-        // fits with room to spare.
+        // Size gate before read_to_string can balloon memory on a
+        // runaway file. 20 MB holds tens of thousands of snippets.
         const MAX_IMPORT_BYTES: u64 = 20 * 1024 * 1024;
         let size = std::fs::metadata(path).map_err(e)?.len();
         if size > MAX_IMPORT_BYTES {

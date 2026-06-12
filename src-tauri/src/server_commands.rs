@@ -172,9 +172,7 @@ fn server_login_blocking(app: AppHandle, args: LoginArgs) -> CmdResult<UserDto> 
 
 #[tauri::command]
 pub async fn server_logout(app: AppHandle) -> CmdResult<()> {
-    // Keychain delete + DB reset: cheap most days, but credential
-    // stores can stall (locked keyring, AV interference), so it runs
-    // off-thread like every other credential touch.
+    // Off-thread: credential stores can stall (locked keyring, AV).
     run_blocking(move || server_logout_blocking(app)).await
 }
 
@@ -196,13 +194,9 @@ fn server_logout_blocking(app: AppHandle) -> CmdResult<()> {
 }
 
 /// Locked deployment defaults. `server_url` resolves runtime-managed
-/// sources first (the SNIPDESK_SERVER_URL env var, then the machine
-/// config.json an admin can edit without a rebuild - see
-/// `settings::managed_server_url`), falling back to the build-time
-/// value baked by `scripts/brand.mjs` / SNIPDESK_DEFAULT_SERVER_URL.
-/// The frontend collapses the "Server URL" inputs whenever it's
-/// non-empty; `""` means an unmanaged build where the user types the
-/// URL themselves.
+/// sources first (see `settings::managed_server_url`), then the
+/// baked build-time value. Non-empty collapses the "Server URL"
+/// inputs in the frontend; `""` = unmanaged build.
 #[derive(Debug, Clone, Serialize)]
 pub struct BrandDefaults {
     pub server_url: String,
@@ -220,8 +214,8 @@ pub fn brand_defaults() -> BrandDefaults {
 
 #[tauri::command]
 pub async fn server_status(app: AppHandle) -> CmdResult<ServerStatus> {
-    // No network here, but credentials::load hits the OS keychain and
-    // this command is polled constantly - keep it off the main thread.
+    // No network, but credentials::load hits the OS keychain and this
+    // is polled constantly.
     run_blocking(move || server_status_blocking(app)).await
 }
 
@@ -322,11 +316,8 @@ fn server_sync_now_blocking(app: AppHandle) -> CmdResult<SyncOutcome> {
     // stored credential ahead of the next call.
     if let Some(new_token) = &outcome.refreshed_token {
         if let Err(e) = credentials::store(&server_url, new_token) {
-            // The server already rotated; a token we can't store means
-            // the NEXT sync runs on a credential the server may no
-            // longer honor - a mysterious sign-out later. Route it
-            // through the failure ledger so the footer glyph turns red
-            // now, while the cause is still legible.
+            // The server already rotated; an unstored token means the
+            // next sync runs on a credential the server may reject.
             record_sync_failure(
                 &app,
                 &state,
@@ -384,11 +375,9 @@ pub fn handle_oidc_deep_link(app: &AppHandle, url: &url::Url) -> Result<(), Stri
     }
     let app = app.clone();
     std::thread::spawn(move || {
-        // Any bail-out below would otherwise leave the user staring at
-        // "Waiting for sign-in..." forever - the browser said success,
-        // the app said nothing. The signin-failed event gives the
-        // onboarding panel and the Settings sign-in surface a reason
-        // to show.
+        // Every bail-out emits signin-failed; otherwise the onboarding
+        // panel sits on "Waiting for sign-in..." after the browser
+        // already reported success.
         let fail = |msg: String| {
             eprintln!("deep link: {msg}");
             let _ = app.emit("snipdesk://signin-failed", msg);
@@ -789,9 +778,8 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     }
                     if let Some(new_token) = &outcome.refreshed_token {
                         if let Err(e) = credentials::store(&server_url, new_token) {
-                            // Same ledger as a failed tick: a rotated
-                            // token we couldn't keep is a future sign-out
-                            // and deserves a red glyph today.
+                            // Same ledger as a failed tick: an unstored
+                            // rotated token is a future sign-out.
                             record_sync_failure(
                                 &handle,
                                 &state,
@@ -806,12 +794,9 @@ pub fn start_server_sync_thread(handle: AppHandle) {
                     handle_account_inactive(&handle, &state, &server_url, &msg);
                 }
                 Err(ApiError::Unauthorized) => {
-                    // A transient 401 (or a server-side misclassification)
-                    // must not wipe the user's session - auto-deleting the
-                    // credential here signs people out for no visible
-                    // reason. With no refresh-token flow yet (v1.1), log
-                    // it and let the user re-sign-in manually if the 401
-                    // persists.
+                    // Don't wipe the credential on a possibly-transient
+                    // 401; no refresh-token flow yet (v1.1), so a
+                    // persistent 401 means a manual re-sign-in.
                     eprintln!("background sync got 401; leaving credential in place");
                     let _ = handle.emit("snipdesk://server-auth-warning", ());
                 }

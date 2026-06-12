@@ -1,42 +1,20 @@
-//! Size and character limits for user-supplied snippet data.
-//!
-//! Every write path funnels through these checks: local create/edit,
-//! file import, and (mirrored on the server side) the sync and
-//! dashboard endpoints. The limits are generous - nobody pastes a
-//! 100,000-character canned reply - but they put a hard ceiling on
-//! what a buggy import file or a misbehaving client can store, and
-//! they keep control characters out of text that ends up pasted to
-//! real customers.
-//!
-//! The server enforces the same rules in
-//! `crates/snipdesk-server/src/validate.rs`. Keep the constants and
-//! semantics in lockstep: a snippet the client accepts must sync
-//! without a 400, and vice versa.
+//! Size and character limits for snippet data, enforced on every
+//! write path. Mirrored in crates/snipdesk-server/src/validate.rs;
+//! keep the constants in lockstep so a snippet one side accepts
+//! can't 400 on the other.
 
-/// Snippet titles are one-line labels; 300 chars is several times the
-/// longest reasonable one.
 pub const TITLE_MAX_CHARS: usize = 300;
-/// Snippet bodies are pasted text. 100k characters is roughly a
-/// 40-page document - far beyond any canned reply, far below
-/// anything that could hurt the DB, the sync payload, or paste.
 pub const BODY_MAX_CHARS: usize = 100_000;
-/// Per-tag length.
 pub const TAG_MAX_CHARS: usize = 60;
-/// Tags per snippet.
 pub const MAX_TAGS: usize = 50;
-/// Full folder path ("Billing/Refunds/Late"), separators included.
+/// Full path, separators included.
 pub const FOLDER_MAX_CHARS: usize = 300;
 
-/// True when `c` is a control character that has no business in
-/// stored text. Newlines, carriage returns, and tabs are legitimate
-/// in multi-line bodies; everything else control-class (null bytes,
-/// backspace, escape, ...) is rejected everywhere.
+// Bodies allow \n \r \t; one-line fields reject all control chars.
 fn forbidden_in_body(c: char) -> bool {
     c.is_control() && !matches!(c, '\n' | '\r' | '\t')
 }
 
-/// One-line fields (titles, tags, folder paths) additionally reject
-/// newlines and tabs.
 fn forbidden_in_line(c: char) -> bool {
     c.is_control()
 }
@@ -102,7 +80,6 @@ pub fn validate_folder(folder_path: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// The whole-snippet check used by create/update/import.
 pub fn validate_snippet(
     title: &str,
     body: &str,

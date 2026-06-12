@@ -234,10 +234,8 @@
               </svg>
               <span class="btn-google-label">Sign in with Google</span>
             </button>
-            <!-- Non-Google providers (Keycloak etc.) render here as a
-                 button each, mirroring the Settings sign-in surface.
-                 display:contents in CSS, so the buttons sit in the
-                 same flex row as the Google button. -->
+            <!-- Non-Google provider buttons; display:contents, so
+                 they share the Google button's flex row. -->
             <div id="onboarding-providers"></div>
             </div>
             <details class="onboarding-paste-fallback">

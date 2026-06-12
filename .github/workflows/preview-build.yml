@@ -1,17 +1,10 @@
 name: Cross-platform preview build
 
 # Manually-triggered macOS + Linux builds of the Teams flavor,
-# uploaded as workflow artifacts (NOT a release). This exists to
-# produce installable test binaries for platform validation while
-# Windows remains the only released platform; release.yml stays
-# NSIS-only until macOS/Linux pass real-machine testing.
-#
-# Differences from release.yml on purpose:
-#   - No version gate: builds whatever the ref contains.
-#   - Calls vite + tauri directly instead of build-teams.mjs, whose
-#     post-build step renames the NSIS installer and exits nonzero
-#     when no NSIS bundle exists (true on every non-Windows host).
-#   - No manifest generation or publishing; artifacts only.
+# uploaded as artifacts (not a release) for platform testing.
+# release.yml stays NSIS-only until these pass real-machine testing.
+# Calls vite + tauri directly: build-teams.mjs exits nonzero when no
+# NSIS bundle exists, which is the case on every non-Windows host.
 on:
   workflow_dispatch:
 
@@ -27,9 +20,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macos-latest is an Apple-silicon (arm64) runner - the
-          # right target for M-series MacBooks. Intel Macs would
-          # need a separate macos-13 entry.
+          # macos-latest = Apple silicon; Intel Macs would need a
+          # separate macos-13 entry.
           - os: macos-latest
             platform: macos-arm64
             bundle_path: |

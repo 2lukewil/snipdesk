@@ -399,13 +399,9 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   height: 1px;
   background: var(--border);
 }
-/* Provider buttons share one row: each takes an equal slice with a
-   gap between, wrapping to a new line if a long operator label
-   doesn't fit. Applies to both surfaces - the Settings sign-in panel
-   (#server-providers holds the static Google button plus dynamic
-   ones) and onboarding (.oidc-button-row wraps the Google button and
-   the #onboarding-providers host, which is display:contents so its
-   buttons join the same row). */
+/* Provider buttons share one row at equal width, wrapping when a
+   long operator label doesn't fit. #onboarding-providers is
+   display:contents so its buttons join the Google button's row. */
 #server-providers,
 .oidc-button-row {
   display: flex;

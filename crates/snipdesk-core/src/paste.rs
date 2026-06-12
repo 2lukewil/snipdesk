@@ -2,12 +2,8 @@ use std::thread;
 use std::time::Duration;
 
 /// Capture the paste target before the launcher steals focus.
-///
-/// Windows: the foreground HWND (GetForegroundWindow returns ours
-/// once the launcher is up, so this must run first). macOS: the
-/// frontmost application's pid, which plays the same role for the
-/// activate-before-paste step. Other platforms: 0 = no target; the
-/// window manager's own focus return is the only mechanism.
+/// Windows: foreground HWND. macOS: frontmost app pid. Elsewhere:
+/// 0 = no target, the WM's own focus return has to do.
 pub fn capture_foreground_hwnd() -> isize {
     #[cfg(windows)]
     unsafe {
@@ -47,10 +43,9 @@ pub fn restore_foreground(hwnd: isize) -> bool {
     }
 }
 
-/// macOS: re-activate the captured target app by pid before sending
-/// Cmd+V. Hiding the launcher window does NOT reliably hand focus
-/// back (the app can stay active with zero windows), so without this
-/// the synthetic paste lands nowhere.
+/// macOS: re-activate the target app by pid before Cmd+V. Hiding
+/// our window doesn't reliably hand focus back (an app can stay
+/// active with zero windows).
 #[cfg(target_os = "macos")]
 pub fn restore_foreground(pid: isize) -> bool {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -72,12 +67,9 @@ pub fn restore_foreground(_hwnd: isize) -> bool {
     false
 }
 
-/// macOS Accessibility gate. Synthetic keystrokes (both the Cmd+V
-/// auto-paste and the Cmd+C selection capture) are silently dropped
-/// by the OS until the user approves the app under System Settings >
-/// Privacy & Security > Accessibility. `prompt` = true additionally
-/// asks the OS to show its standard approval dialog (it appears at
-/// most once; later calls are a plain check).
+/// macOS drops synthetic keystrokes until the app is approved under
+/// Accessibility. `prompt` also triggers the system approval dialog
+/// (shown at most once).
 #[cfg(target_os = "macos")]
 pub fn macos_accessibility_trusted(prompt: bool) -> bool {
     use std::ffi::c_void;
@@ -126,14 +118,10 @@ pub fn macos_accessibility_trusted(prompt: bool) -> bool {
     }
 }
 
-/// Why auto-paste can't work right now, or None when it can. The
-/// caller falls back to clipboard-copy and shows the reason, which
-/// beats a synthetic keystroke the OS silently swallows.
-///
-/// macOS: requires the Accessibility permission (prompted when
-/// `prompt_for_permission`). Wayland: the compositor rejects
-/// synthetic input from regular clients by design, and enigo's
-/// backend is X11; clipboard-copy is the supported mode there.
+/// Why auto-paste can't work right now, or None when it can.
+/// Callers fall back to clipboard-copy and show the reason.
+/// macOS: needs the Accessibility permission. Wayland: compositors
+/// reject synthetic input and enigo's backend is X11.
 pub fn auto_paste_blocker(prompt_for_permission: bool) -> Option<String> {
     #[cfg(windows)]
     {
@@ -267,10 +255,8 @@ pub fn write_clipboard_unicode(_text: &str) -> Result<(), String> {
 /// flow, Windows' own post-hide focus restoration is stale and both
 /// WM_PASTE and Ctrl+V race into nothing.
 pub fn trigger_paste(delay_ms: u64, target_hwnd: isize) {
-    // macOS: NSRunningApplication activation is an AppKit call, so it
-    // runs here on the calling (main) thread; only the delay + Cmd+V
-    // moves to the worker. Activating first also gives the target the
-    // whole delay window to come frontmost.
+    // macOS: AppKit activation stays on the calling (main) thread;
+    // only the delay + Cmd+V moves to the worker.
     #[cfg(target_os = "macos")]
     let _ = restore_foreground(target_hwnd);
 
@@ -584,17 +570,12 @@ fn send_ctrl_c_windows() {
     }
 }
 
-/// Non-Windows selection capture: synthesize the platform copy chord
-/// (Cmd+C / Ctrl+C) into the foreground app, poll the clipboard for
-/// new text, restore the prior contents. Same contract as the
-/// Windows version; same prerequisites as auto-paste (Accessibility
-/// on macOS, an X11 session on Linux), so the same blocker check
-/// gates it with a user-readable reason.
-///
-/// Change detection is text comparison rather than a sequence number
-/// (arboard exposes none), so a selection identical to the existing
-/// clipboard contents reads as "nothing copied" - a harmless edge:
-/// the text the user wanted is already on the clipboard.
+/// Non-Windows: synthesize the platform copy chord, poll the
+/// clipboard for new text, restore the prior contents. Gated by the
+/// same blocker as auto-paste (Accessibility / X11). Change
+/// detection is text comparison (arboard has no sequence number), so
+/// a selection identical to the current clipboard reads as "nothing
+/// copied".
 #[cfg(not(windows))]
 pub fn capture_selection() -> Result<Option<String>, String> {
     if let Some(reason) = auto_paste_blocker(true) {
@@ -636,9 +617,8 @@ fn send_paste_fallback() {
     send_copy_chord('v');
 }
 
-/// Synthesize <platform modifier>+<key> with stray launcher-hotkey
-/// modifiers flushed first (same rationale as the Windows SendInput
-/// paths: a still-held Shift/Alt turns paste into Paste Special).
+/// Cmd/Ctrl + key with stray launcher-hotkey modifiers flushed
+/// first, mirroring the Windows SendInput paths.
 #[cfg(not(windows))]
 fn send_copy_chord(key_char: char) {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
@@ -663,8 +643,6 @@ fn send_copy_chord(key_char: char) {
     let mod_key = Key::Control;
 
     let _ = enigo.key(mod_key, Direction::Press);
-    // enigo 0.2's layout-aware "type this char" variant is
-    // Key::Unicode (the 0.1 API called it Key::Layout).
     let _ = enigo.key(Key::Unicode(key_char), Direction::Click);
     let _ = enigo.key(mod_key, Direction::Release);
 }

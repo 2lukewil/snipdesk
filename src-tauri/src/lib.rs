@@ -187,6 +187,25 @@ pub fn run() {
             });
             app.manage(settings::SettingsPath(settings_path));
 
+            // Wayland sessions can't register X11-style global
+            // shortcut grabs and reject synthetic input, so the two
+            // hotkey-driven flows degrade. Say so once at startup
+            // instead of letting the hotkey look broken; the tray
+            // icon and clipboard-copy mode work everywhere.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if std::env::var("WAYLAND_DISPLAY").is_ok()
+                && std::env::var("XDG_SESSION_TYPE")
+                    .map(|v| v != "x11")
+                    .unwrap_or(true)
+            {
+                record_startup_warning(
+                    app.handle(),
+                    "This looks like a Wayland session: global hotkeys and auto-paste \
+                     are limited there. Open SnipDesk from the tray icon and use \
+                     clipboard-copy mode (Ctrl+V to paste).",
+                );
+            }
+
             // Teams-only - the free build has no network-touching threads.
             #[cfg(feature = "teams")]
             {
@@ -817,44 +836,43 @@ pub fn run_one_team_sync(handle: &tauri::AppHandle) {
 /// Capture OS selection, open editor with prefill. Non-Windows: stub -
 /// the save-clipboard / Ctrl+C / poll / restore dance is Win32-only.
 pub fn trigger_quick_add_from_selection(handle: &tauri::AppHandle) {
-    #[cfg(windows)]
-    {
-        let handle_clone = handle.clone();
-        thread::spawn(move || {
-            // Off the shortcut thread pool - blocking it drops subsequent presses.
-            let captured = paste::capture_selection_windows();
-            match captured {
-                Ok(Some(text)) if !text.trim().is_empty() => {
-                    if let Some(win) = handle_clone.get_webview_window("main") {
-                        show_and_focus(&handle_clone, &win);
-                        let _ = win.emit("snipdesk://quick-add", text);
-                    }
-                }
-                Ok(_) => {
-                    // Empty selection - open editor with no prefill rather
-                    // than swallow the hotkey silently.
-                    if let Some(win) = handle_clone.get_webview_window("main") {
-                        show_and_focus(&handle_clone, &win);
-                        let _ = win.emit("snipdesk://open-editor", ());
-                    }
-                }
-                Err(err) => {
-                    logging::log_error(&format!("quick-add capture failed: {err}"));
-                    if let Some(win) = handle_clone.get_webview_window("main") {
-                        show_and_focus(&handle_clone, &win);
-                        let _ = win.emit("snipdesk://open-editor", ());
-                    }
+    let handle_clone = handle.clone();
+    thread::spawn(move || {
+        // Off the shortcut thread pool - blocking it drops subsequent
+        // presses. Capture runs BEFORE our window shows, while the
+        // selection's app is still foreground. All platforms share
+        // this path: Windows via SendInput + clipboard sequence
+        // number, macOS/Linux via enigo + clipboard polling.
+        let captured = paste::capture_selection();
+        match captured {
+            Ok(Some(text)) if !text.trim().is_empty() => {
+                if let Some(win) = handle_clone.get_webview_window("main") {
+                    show_and_focus(&handle_clone, &win);
+                    let _ = win.emit("snipdesk://quick-add", text);
                 }
             }
-        });
-    }
-    #[cfg(not(windows))]
-    {
-        if let Some(win) = handle.get_webview_window("main") {
-            show_and_focus(handle, &win);
-            let _ = win.emit("snipdesk://open-editor", ());
+            Ok(_) => {
+                // Empty selection - open editor with no prefill rather
+                // than swallow the hotkey silently.
+                if let Some(win) = handle_clone.get_webview_window("main") {
+                    show_and_focus(&handle_clone, &win);
+                    let _ = win.emit("snipdesk://open-editor", ());
+                }
+            }
+            Err(err) => {
+                // Platform blockers (macOS Accessibility not granted,
+                // Wayland) arrive here with a user-readable reason;
+                // surface it in the window we're about to show instead
+                // of pretending the capture just came back empty.
+                logging::log_error(&format!("quick-add capture failed: {err}"));
+                if let Some(win) = handle_clone.get_webview_window("main") {
+                    show_and_focus(&handle_clone, &win);
+                    let _ = win.emit("snipdesk://open-editor", ());
+                    let _ = win.emit("snipdesk://hotkey-warning", err);
+                }
+            }
         }
-    }
+    });
 }
 
 /// Sync the OS login item to `enabled`.

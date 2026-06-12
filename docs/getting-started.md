@@ -29,6 +29,32 @@ If you don't see the tray icon, look in the overflow area (the small
 arrow next to the clock on Windows). You can right-click the icon to
 open the main window, change the hotkey, or quit.
 
+### Platform notes
+
+Windows is the most battle-tested platform; macOS and Linux work
+with the caveats below.
+
+**macOS**
+- The `.dmg` isn't notarized with Apple yet, so the first launch
+  needs a right-click on the app then **Open** (or approve it under
+  System Settings > Privacy & Security) to get past Gatekeeper.
+- Auto-paste and quick-add-from-selection synthesize keystrokes,
+  which macOS blocks until you approve SnipDesk under **System
+  Settings > Privacy & Security > Accessibility**. The first
+  auto-paste attempt triggers the approval dialog and falls back to
+  copying the snippet to the clipboard, with a message saying so.
+  Clipboard-copy mode needs no permissions at all.
+- Use Cmd-based chords for the hotkeys if Option-based ones collide
+  with special-character input.
+
+**Linux**
+- X11 sessions: everything works, including auto-paste.
+- Wayland sessions (the default on recent GNOME/KDE): global
+  hotkeys and synthetic keystrokes are restricted by the
+  compositor, so open SnipDesk from the tray icon and use
+  clipboard-copy mode (the app detects Wayland and says so at
+  startup). Snippets, sync, and search are unaffected.
+
 ## The first run
 
 Press `Alt+Space` anywhere. The launcher window appears, focused on

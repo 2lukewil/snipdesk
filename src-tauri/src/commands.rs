@@ -179,6 +179,10 @@ pub struct UseSnippetArgs {
 pub struct UseSnippetResult {
     pub rendered: String,
     pub pasted: bool,
+    /// Why auto-paste fell back to clipboard-copy (macOS Accessibility
+    /// not granted, Wayland session). None on success or in plain
+    /// clipboard mode; the frontend shows it as the paste status.
+    pub paste_error: Option<String>,
 }
 
 #[tauri::command]
@@ -264,7 +268,18 @@ pub fn use_snippet(
     let mode = args
         .paste_mode
         .unwrap_or_else(|| settings.paste_mode.clone());
-    let pasted = if mode == "auto_paste" {
+    // Platform gate BEFORE attempting auto-paste: on macOS without the
+    // Accessibility permission (the check also triggers the system
+    // approval dialog) and on Wayland, the synthetic keystroke would
+    // be silently swallowed. Falling back to clipboard-copy with the
+    // reason surfaced beats a paste that invisibly does nothing - the
+    // snippet is already on the clipboard either way.
+    let paste_error = if mode == "auto_paste" {
+        paste::auto_paste_blocker(true)
+    } else {
+        None
+    };
+    let pasted = if mode == "auto_paste" && paste_error.is_none() {
         // Hide first so focus starts returning; the paste worker re-asserts
         // focus before typing rather than racing Windows' restore - required
         // for the variable-prompt path where we've held focus long enough
@@ -284,7 +299,11 @@ pub fn use_snippet(
         false
     };
 
-    Ok(UseSnippetResult { rendered, pasted })
+    Ok(UseSnippetResult {
+        rendered,
+        pasted,
+        paste_error,
+    })
 }
 
 #[tauri::command]

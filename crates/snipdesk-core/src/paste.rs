@@ -1,15 +1,30 @@
 use std::thread;
 use std::time::Duration;
 
-/// Capture HWND before the launcher steals focus; otherwise GetForegroundWindow
-/// returns ours. 0 = no target on non-Windows.
+/// Capture the paste target before the launcher steals focus.
+///
+/// Windows: the foreground HWND (GetForegroundWindow returns ours
+/// once the launcher is up, so this must run first). macOS: the
+/// frontmost application's pid, which plays the same role for the
+/// activate-before-paste step. Other platforms: 0 = no target; the
+/// window manager's own focus return is the only mechanism.
 pub fn capture_foreground_hwnd() -> isize {
     #[cfg(windows)]
     unsafe {
         use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
         GetForegroundWindow() as isize
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWorkspace;
+        unsafe {
+            NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .map(|app| app.processIdentifier() as isize)
+                .unwrap_or(0)
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         0
     }
@@ -32,14 +47,135 @@ pub fn restore_foreground(hwnd: isize) -> bool {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS: re-activate the captured target app by pid before sending
+/// Cmd+V. Hiding the launcher window does NOT reliably hand focus
+/// back (the app can stay active with zero windows), so without this
+/// the synthetic paste lands nowhere.
+#[cfg(target_os = "macos")]
+pub fn restore_foreground(pid: isize) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    if pid <= 0 {
+        return false;
+    }
+    unsafe {
+        match NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32) {
+            Some(app) => app.activateWithOptions(
+                NSApplicationActivationOptions::NSApplicationActivateIgnoringOtherApps,
+            ),
+            None => false,
+        }
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn restore_foreground(_hwnd: isize) -> bool {
     false
 }
 
+/// macOS Accessibility gate. Synthetic keystrokes (both the Cmd+V
+/// auto-paste and the Cmd+C selection capture) are silently dropped
+/// by the OS until the user approves the app under System Settings >
+/// Privacy & Security > Accessibility. `prompt` = true additionally
+/// asks the OS to show its standard approval dialog (it appears at
+/// most once; later calls are a plain check).
+#[cfg(target_os = "macos")]
+pub fn macos_accessibility_trusted(prompt: bool) -> bool {
+    use std::ffi::c_void;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: c_void;
+        static kCFTypeDictionaryValueCallBacks: c_void;
+        static kCFBooleanTrue: *const c_void;
+        fn CFDictionaryCreate(
+            allocator: *const c_void,
+            keys: *const *const c_void,
+            values: *const *const c_void,
+            num_values: isize,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+    }
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        static kAXTrustedCheckOptionPrompt: *const c_void;
+        fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+    }
+
+    unsafe {
+        if !prompt {
+            return AXIsProcessTrusted();
+        }
+        let keys = [kAXTrustedCheckOptionPrompt];
+        let values = [kCFBooleanTrue];
+        let options = CFDictionaryCreate(
+            std::ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks as *const c_void,
+            &kCFTypeDictionaryValueCallBacks as *const c_void,
+        );
+        let trusted = AXIsProcessTrustedWithOptions(options);
+        if !options.is_null() {
+            CFRelease(options);
+        }
+        trusted
+    }
+}
+
+/// Why auto-paste can't work right now, or None when it can. The
+/// caller falls back to clipboard-copy and shows the reason, which
+/// beats a synthetic keystroke the OS silently swallows.
+///
+/// macOS: requires the Accessibility permission (prompted when
+/// `prompt_for_permission`). Wayland: the compositor rejects
+/// synthetic input from regular clients by design, and enigo's
+/// backend is X11; clipboard-copy is the supported mode there.
+pub fn auto_paste_blocker(prompt_for_permission: bool) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let _ = prompt_for_permission;
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if macos_accessibility_trusted(prompt_for_permission) {
+            None
+        } else {
+            Some(
+                "Auto-paste needs the Accessibility permission: approve SnipDesk under \
+                 System Settings > Privacy & Security > Accessibility, then try again. \
+                 This snippet was copied to the clipboard instead."
+                    .to_string(),
+            )
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        let _ = prompt_for_permission;
+        let wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            && std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v != "x11")
+                .unwrap_or(true);
+        if wayland {
+            Some(
+                "Auto-paste isn't available on Wayland sessions; this snippet was \
+                 copied to the clipboard instead. Press Ctrl+V to paste it."
+                    .to_string(),
+            )
+        } else {
+            None
+        }
+    }
+}
+
 /// Write CF_UNICODETEXT directly. arboard (via tauri-plugin-clipboard-manager)
-/// sets CF_TEXT with UTF-8 bytes, which produces classic `â€"` / `â€™` mojibake
-/// for em dashes and curly quotes when the target reads CF_UNICODETEXT first.
+/// sets CF_TEXT with UTF-8 bytes, which targets reading CF_UNICODETEXT first
+/// decode as Windows-1252 - the classic mojibake for em dashes and curly
+/// quotes.
 #[cfg(windows)]
 pub fn write_clipboard_unicode(text: &str) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{HANDLE, HWND};
@@ -113,7 +249,7 @@ pub fn write_clipboard_unicode(_text: &str) -> Result<(), String> {
 /// Paste the clipboard into `target_hwnd`. Caller must have written the
 /// snippet to the clipboard first (use_snippet step 3).
 ///
-/// Strategy on Windows: WM_PASTE first (same path as right-click → Paste),
+/// Strategy on Windows: WM_PASTE first (same path as right-click -> Paste),
 /// SendInput Ctrl+V as fallback.
 ///
 /// Why WM_PASTE: synthetic Ctrl+V leaks the modifier into apps that bind
@@ -131,16 +267,27 @@ pub fn write_clipboard_unicode(_text: &str) -> Result<(), String> {
 /// flow, Windows' own post-hide focus restoration is stale and both
 /// WM_PASTE and Ctrl+V race into nothing.
 pub fn trigger_paste(delay_ms: u64, target_hwnd: isize) {
+    // macOS: NSRunningApplication activation is an AppKit call, so it
+    // runs here on the calling (main) thread; only the delay + Cmd+V
+    // moves to the worker. Activating first also gives the target the
+    // whole delay window to come frontmost.
+    #[cfg(target_os = "macos")]
+    let _ = restore_foreground(target_hwnd);
+
     thread::spawn(move || {
         if delay_ms > 0 {
             thread::sleep(Duration::from_millis(delay_ms));
         }
 
-        let restored = restore_foreground(target_hwnd);
-        if restored {
-            // Empirical settle time on Win10/11 between SetForegroundWindow
-            // succeeding and the target being ready for input.
-            thread::sleep(Duration::from_millis(40));
+        #[cfg(not(target_os = "macos"))]
+        {
+            let restored = restore_foreground(target_hwnd);
+            if restored {
+                // Empirical settle time on Win10/11 between
+                // SetForegroundWindow succeeding and the target being
+                // ready for input.
+                thread::sleep(Duration::from_millis(40));
+            }
         }
 
         #[cfg(windows)]
@@ -151,7 +298,7 @@ pub fn trigger_paste(delay_ms: u64, target_hwnd: isize) {
     });
 }
 
-/// Chromium → SendInput. Otherwise WM_PASTE, then SendInput as fallback.
+/// Chromium -> SendInput. Otherwise WM_PASTE, then SendInput as fallback.
 #[cfg(windows)]
 fn dispatch_paste_windows(target_hwnd: isize) {
     if target_hwnd != 0 && is_chromium_window(target_hwnd) {
@@ -292,9 +439,9 @@ fn send_ctrl_v_windows() {
 ///
 /// Detection: snapshot GetClipboardSequenceNumber before Ctrl+C, poll for
 /// a bump (up to ~400ms). No bump = empty selection / non-text control /
-/// Chromium hasn't flushed → Ok(None).
+/// Chromium hasn't flushed -> Ok(None).
 #[cfg(windows)]
-pub fn capture_selection_windows() -> Result<Option<String>, String> {
+pub fn capture_selection() -> Result<Option<String>, String> {
     use windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
     unsafe {
@@ -437,14 +584,63 @@ fn send_ctrl_c_windows() {
     }
 }
 
+/// Non-Windows selection capture: synthesize the platform copy chord
+/// (Cmd+C / Ctrl+C) into the foreground app, poll the clipboard for
+/// new text, restore the prior contents. Same contract as the
+/// Windows version; same prerequisites as auto-paste (Accessibility
+/// on macOS, an X11 session on Linux), so the same blocker check
+/// gates it with a user-readable reason.
+///
+/// Change detection is text comparison rather than a sequence number
+/// (arboard exposes none), so a selection identical to the existing
+/// clipboard contents reads as "nothing copied" - a harmless edge:
+/// the text the user wanted is already on the clipboard.
 #[cfg(not(windows))]
-pub fn capture_selection_windows() -> Result<Option<String>, String> {
-    Err("capture_selection_windows is Windows-only".into())
+pub fn capture_selection() -> Result<Option<String>, String> {
+    if let Some(reason) = auto_paste_blocker(true) {
+        return Err(reason);
+    }
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    let previous = clipboard.get_text().ok();
+
+    send_copy_chord('c');
+
+    // 10ms * 40 = ~400ms, matching the Windows poll budget.
+    let mut selection: Option<String> = None;
+    for _ in 0..40 {
+        thread::sleep(Duration::from_millis(10));
+        if let Ok(now) = clipboard.get_text() {
+            if Some(&now) != previous.as_ref() && !now.is_empty() {
+                selection = Some(now);
+                break;
+            }
+        }
+    }
+
+    if selection.is_some() {
+        if let Some(prev) = previous {
+            if let Err(err) = clipboard.set_text(prev) {
+                crate::logging::log_error(&format!(
+                    "capture_selection: clipboard restore failed: {err}"
+                ));
+            }
+        }
+    }
+
+    Ok(selection)
 }
 
 /// macOS Cmd+V / Linux Ctrl+V via enigo.
 #[cfg(not(windows))]
 fn send_paste_fallback() {
+    send_copy_chord('v');
+}
+
+/// Synthesize <platform modifier>+<key> with stray launcher-hotkey
+/// modifiers flushed first (same rationale as the Windows SendInput
+/// paths: a still-held Shift/Alt turns paste into Paste Special).
+#[cfg(not(windows))]
+fn send_copy_chord(key_char: char) {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
     let mut enigo = match Enigo::new(&Settings::default()) {
@@ -469,6 +665,6 @@ fn send_paste_fallback() {
     let _ = enigo.key(mod_key, Direction::Press);
     // enigo 0.2's layout-aware "type this char" variant is
     // Key::Unicode (the 0.1 API called it Key::Layout).
-    let _ = enigo.key(Key::Unicode('v'), Direction::Click);
+    let _ = enigo.key(Key::Unicode(key_char), Direction::Click);
     let _ = enigo.key(mod_key, Direction::Release);
 }

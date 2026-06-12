@@ -2612,12 +2612,19 @@ async function executeUse(snippet, variables, copyOnly) {
         paste_mode: copyOnly ? "clipboard" : null,
       },
     });
-    setStatus(
-      result.pasted
-        ? `Pasted "${snippet.title}"`
-        : `Copied "${snippet.title}" to clipboard`,
-      "ok"
-    );
+    if (result.paste_error) {
+      // Auto-paste was requested but the platform blocked it (macOS
+      // Accessibility not granted, Wayland session). The snippet is
+      // on the clipboard; the message says so and names the fix.
+      setStatus(result.paste_error, "err");
+    } else {
+      setStatus(
+        result.pasted
+          ? `Pasted "${snippet.title}"`
+          : `Copied "${snippet.title}" to clipboard`,
+        "ok"
+      );
+    }
     bumpLocalUsage(snippet.id);
     // Team pastes have no usage_count to bump; credit the savings
     // basis directly (the durable counter was already bumped in

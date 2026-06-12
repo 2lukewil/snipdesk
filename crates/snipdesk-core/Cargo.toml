@@ -27,9 +27,12 @@ arboard = "3"
 # Focus capture/restore on macOS: the frontmost-app pid plays the
 # role the foreground HWND plays on Windows.
 [target.'cfg(target_os = "macos")'.dependencies]
+# "libc" gates every pid_t-typed API (processIdentifier, the
+# by-pid lookup) - without it those methods don't exist.
 objc2-app-kit = { version = "0.2", features = [
     "NSWorkspace",
     "NSRunningApplication",
+    "libc",
 ] }
 
 [target.'cfg(windows)'.dependencies]

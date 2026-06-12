@@ -467,6 +467,8 @@ fn send_paste_fallback() {
     let mod_key = Key::Control;
 
     let _ = enigo.key(mod_key, Direction::Press);
-    let _ = enigo.key(Key::Layout('v'), Direction::Click);
+    // enigo 0.2's layout-aware "type this char" variant is
+    // Key::Unicode (the 0.1 API called it Key::Layout).
+    let _ = enigo.key(Key::Unicode('v'), Direction::Click);
     let _ = enigo.key(mod_key, Direction::Release);
 }

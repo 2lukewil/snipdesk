@@ -46,6 +46,10 @@ pub struct AppState {
     /// whitelabel-aware server lists every brand it serves so the
     /// allowlist accepts each one.
     pub oidc_allowed_schemes: Vec<String>,
+    /// Full redirect URLs accepted in `?redirect=` (exact match). The
+    /// browser extension's `https://<id>.chromiumapp.org/` lives here;
+    /// keeps the https redirect from being an open redirector.
+    pub oidc_allowed_redirect_urls: Vec<String>,
     /// Dashboard session cookie gets the `Secure` attribute when this
     /// is `true`. Forwarded from `secure_cookies` in the TOML config.
     pub secure_cookies: bool,

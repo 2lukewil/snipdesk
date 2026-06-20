@@ -393,6 +393,14 @@ pub struct OidcConfig {
     /// service multiple branded clients off one binary.
     #[serde(default = "default_oidc_deep_link_schemes")]
     pub allowed_deep_link_schemes: Vec<String>,
+
+    /// Full redirect URLs (not bare schemes) the OIDC start endpoint
+    /// will accept in `?redirect=`. The browser extension signs in
+    /// via Chrome's launchWebAuthFlow, whose redirect is
+    /// `https://<extension-id>.chromiumapp.org/`; that exact URL goes
+    /// here. Exact-match only, so it can't become an open redirector.
+    #[serde(default)]
+    pub allowed_redirect_urls: Vec<String>,
 }
 
 impl Default for OidcConfig {
@@ -401,6 +409,7 @@ impl Default for OidcConfig {
             google: None,
             keycloak: None,
             allowed_deep_link_schemes: default_oidc_deep_link_schemes(),
+            allowed_redirect_urls: Vec::new(),
         }
     }
 }
@@ -652,6 +661,9 @@ impl Config {
         }
         if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
             self.oidc.allowed_deep_link_schemes = list;
+        }
+        if let Some(list) = env_csv("SNIPDESK_OIDC_EXTENSION_REDIRECTS") {
+            self.oidc.allowed_redirect_urls = list;
         }
         if let Some(v) = env_string("SNIPDESK_UPDATER_ENABLED") {
             match parse_env_bool(&v) {

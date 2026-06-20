@@ -35,7 +35,10 @@ async function refresh() {
     statusEl.classList.remove("ok");
     signedIn.classList.add("hidden");
     signedOut.classList.remove("hidden");
-    if (serverUrl) $("server-url").value = serverUrl;
+    if (serverUrl) {
+      $("server-url").value = serverUrl;
+      loadMethods(serverUrl);
+    }
   }
 }
 
@@ -47,6 +50,37 @@ async function loadCounts() {
   const library = all.filter((s) => s.source === "library").length;
   $("counts").textContent = `${personal} personal, ${library} library`;
 }
+
+// Fetch the server's configured sign-in methods and render: password
+// fields when enabled, a button per OIDC provider. Called when the
+// server URL is set.
+async function loadMethods(serverUrl) {
+  const providers = $("providers");
+  providers.replaceChildren();
+  if (!serverUrl) return;
+  const res = await send(MSG.AUTH_METHODS, { serverUrl });
+  if (!res.ok) return; // unreachable server; leave password form as-is
+  const methods = res.data || {};
+  $("password-section").classList.toggle("hidden", !(methods.password?.enabled));
+  for (const p of methods.providers || []) {
+    const btn = document.createElement("button");
+    btn.textContent = p.display_name || `Sign in with ${p.id}`;
+    btn.addEventListener("click", async () => {
+      clearError();
+      btn.disabled = true;
+      const r = await send(MSG.AUTH_SSO, { serverUrl, startUrl: p.start_url });
+      btn.disabled = false;
+      if (!r.ok) {
+        showError(r.error || "Sign-in failed.");
+        return;
+      }
+      refresh();
+    });
+    providers.appendChild(btn);
+  }
+}
+
+$("server-url").addEventListener("blur", () => loadMethods($("server-url").value.trim()));
 
 $("btn-login").addEventListener("click", async () => {
   clearError();

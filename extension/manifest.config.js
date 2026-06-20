@@ -10,6 +10,12 @@ export default defineManifest({
   manifest_version: 3,
   name: "SnipDesk",
   version: pkg.version,
+  // Pins the extension ID (pmbbmppiinigigajakmffkchlibmdebo) so the
+  // launchWebAuthFlow redirect URL is stable and the server can
+  // allowlist it. Public key only; the matching private key is never
+  // committed. A Web Store listing reassigns its own key/ID, at which
+  // point the server's allowed redirect is updated to match.
+  key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvVhd+szMi+GZo/XL2WxlMbse2kq5v3z48lFAdwfhRyRryCKu5rqQ3Cfwitr6+kUTv5FmPx994Hr5QoOPPljRkfZ4cxPJkblncD/d511+SmQwb4xaH0qfxk9HutgSBl0DMoQXRYUTxD0KXeToUdHy1lVSOHucFUBIqSRA4F0oGefm63MmI00H+4Fot7klOxjiEH+cwfslCVZDaK9yEJBoAgrlJ7jpLwnAH9MnM2dM9OoDTIjtm3hOfCBO4Z7Ytx4lQh3DjbzYdf+HygyKoru0TZ6jhMjvpEgIWhFEb9QMvGoguloIjMl+ZHLI+62ebL/kMmNq0vyTdHBFRGQ8EMwe5wIDAQAB",
   description:
     "Snippet launcher and team library for the browser. Search, fill variables, insert.",
   icons: {

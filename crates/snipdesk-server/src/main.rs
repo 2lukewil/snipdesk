@@ -160,6 +160,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         oidc_google: cfg.oidc.google.clone(),
         oidc_keycloak: cfg.oidc.keycloak.clone(),
         oidc_allowed_schemes: cfg.oidc.allowed_deep_link_schemes.clone(),
+        oidc_allowed_redirect_urls: cfg.oidc.allowed_redirect_urls.clone(),
         secure_cookies: cfg.secure_cookies,
         password_enabled: cfg.password_enabled,
         stats: cfg.stats.clone(),

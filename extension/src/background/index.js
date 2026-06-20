@@ -31,6 +31,18 @@ chrome.commands.onCommand.addListener((command) => {
 
 // ---- auth helpers ----
 
+const trimUrl = (u) => (u || "").trim().replace(/\/+$/, "");
+
+function launchWebAuthFlow(url) {
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else if (!redirectUrl) reject(new Error("sign-in was cancelled"));
+      else resolve(redirectUrl);
+    });
+  });
+}
+
 async function authError(e) {
   if (e instanceof api.ApiError && (e.kind === "unauthorized" || e.kind === "inactive")) {
     await store.clearSession();
@@ -140,6 +152,28 @@ const handlers = {
   // Validate a pasted token via /api/me before trusting it.
   [MSG.AUTH_PASTE_TOKEN]: async ({ serverUrl, token }) => {
     try {
+      const meRes = await api.me(serverUrl, token);
+      await store.setToken(token);
+      await store.setUser(meRes.user);
+      await store.setSettings({ server_url: serverUrl });
+      await syncNow();
+      return { ok: true, data: { user: meRes.user } };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  },
+
+  // One-click SSO: open the server's OIDC start in launchWebAuthFlow
+  // with our chromiumapp.org redirect; the server 302s back to it
+  // with the token in the query, which we validate via /api/me.
+  [MSG.AUTH_SSO]: async ({ serverUrl, startUrl }) => {
+    try {
+      const redirectUri = chrome.identity.getRedirectURL();
+      const authUrl =
+        `${trimUrl(serverUrl)}${startUrl}?redirect=${encodeURIComponent(redirectUri)}`;
+      const finalUrl = await launchWebAuthFlow(authUrl);
+      const token = new URL(finalUrl).searchParams.get("token");
+      if (!token) return { ok: false, error: "no token returned from sign-in" };
       const meRes = await api.me(serverUrl, token);
       await store.setToken(token);
       await store.setUser(meRes.user);

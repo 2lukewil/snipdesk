@@ -320,19 +320,29 @@ pub struct StartQuery {
     pub redirect: Option<String>,
 }
 
-/// Pick the URL the callback page should attempt to deep-link the
-/// browser into. Accepts the client-supplied `?redirect=<scheme>://auth`
-/// when its scheme is in the allowlist; otherwise falls back to the
-/// first configured scheme. Empty allowlist (shouldn't happen, but
-/// the config default keeps it populated) falls back to "snipdesk".
-fn resolve_client_redirect(requested: Option<&str>, allowed: &[String]) -> String {
-    let default_scheme = allowed.first().map(String::as_str).unwrap_or("snipdesk");
+/// Pick the URL the callback should send the browser to after issuing
+/// a JWT. Accepts the client-supplied `?redirect=`: a full URL that
+/// exactly matches `allowed_urls` (the browser extension's
+/// chromiumapp.org redirect) or a `<scheme>://auth` whose scheme is
+/// in `allowed_schemes` (desktop deep link). Anything else falls back
+/// to the first configured scheme, so this can't become an open
+/// redirector.
+fn resolve_client_redirect(
+    requested: Option<&str>,
+    allowed_schemes: &[String],
+    allowed_urls: &[String],
+) -> String {
+    let default_scheme = allowed_schemes
+        .first()
+        .map(String::as_str)
+        .unwrap_or("snipdesk");
     if let Some(s) = requested {
-        // Pull the scheme out of "<scheme>://...": the allowlist
-        // compares scheme strings, not the full URL.
+        if allowed_urls.iter().any(|u| u == s) {
+            return s.to_string();
+        }
         if let Some(idx) = s.find("://") {
             let scheme = &s[..idx];
-            if !scheme.is_empty() && allowed.iter().any(|a| a == scheme) {
+            if !scheme.is_empty() && allowed_schemes.iter().any(|a| a == scheme) {
                 return s.to_string();
             }
         }
@@ -450,7 +460,11 @@ pub fn provider_from_id(s: &str) -> Option<ProviderHandle> {
 /// per-provider start handler agree on the resolution rule.
 fn desktop_flow_from_query(state: &AppState, requested: Option<&str>) -> FlowOrigin {
     FlowOrigin::Desktop {
-        client_redirect: resolve_client_redirect(requested, &state.oidc_allowed_schemes),
+        client_redirect: resolve_client_redirect(
+            requested,
+            &state.oidc_allowed_schemes,
+            &state.oidc_allowed_redirect_urls,
+        ),
     }
 }
 
@@ -707,11 +721,26 @@ async fn complete_flow(
     // would, and 302 the browser to the dashboard the user was
     // trying to reach.
     match pending.flow {
-        FlowOrigin::Desktop { client_redirect } => Ok(render_callback_success(
-            &client_redirect,
-            &snipdesk_token,
-            &email,
-        )),
+        FlowOrigin::Desktop { client_redirect } => {
+            // A http(s) redirect is the browser extension's
+            // launchWebAuthFlow URL: 302 straight to it with the token
+            // so Chrome's auth flow captures it. Custom-scheme deep
+            // links (desktop) still get the HTML page that fires the
+            // scheme and offers a copy fallback.
+            if client_redirect.starts_with("http://") || client_redirect.starts_with("https://") {
+                let dest = format!(
+                    "{client_redirect}?token={}",
+                    urlencoding::encode(&snipdesk_token)
+                );
+                Ok(Redirect::to(&dest).into_response())
+            } else {
+                Ok(render_callback_success(
+                    &client_redirect,
+                    &snipdesk_token,
+                    &email,
+                ))
+            }
+        }
         FlowOrigin::Dashboard { redirect_to } => {
             // The cookie's Secure attribute follows the operator's
             // config (mirrors the password-login path's behaviour).
@@ -1224,25 +1253,25 @@ mod tests {
 
     #[test]
     fn redirect_with_listed_scheme_passes_through() {
-        let r = resolve_client_redirect(Some("snipdesk://auth"), &allow(&["snipdesk"]));
+        let r = resolve_client_redirect(Some("snipdesk://auth"), &allow(&["snipdesk"]), &[]);
         assert_eq!(r, "snipdesk://auth");
     }
 
     #[test]
     fn redirect_with_whitelabel_scheme_passes_when_listed() {
-        let r = resolve_client_redirect(Some("acme://auth"), &allow(&["snipdesk", "acme"]));
+        let r = resolve_client_redirect(Some("acme://auth"), &allow(&["snipdesk", "acme"]), &[]);
         assert_eq!(r, "acme://auth");
     }
 
     #[test]
     fn unknown_scheme_falls_back_to_first_listed() {
-        let r = resolve_client_redirect(Some("evil://attack"), &allow(&["snipdesk", "acme"]));
+        let r = resolve_client_redirect(Some("evil://attack"), &allow(&["snipdesk", "acme"]), &[]);
         assert_eq!(r, "snipdesk://auth");
     }
 
     #[test]
     fn missing_redirect_falls_back_to_first_listed() {
-        let r = resolve_client_redirect(None, &allow(&["acme", "snipdesk"]));
+        let r = resolve_client_redirect(None, &allow(&["acme", "snipdesk"]), &[]);
         assert_eq!(r, "acme://auth");
     }
 
@@ -1251,7 +1280,30 @@ mod tests {
         // Shouldn't reach this path with the config default in place,
         // but guard against it so an operator misconfig can't produce
         // a "://auth" string with no scheme.
-        let r = resolve_client_redirect(Some("anything://x"), &[]);
+        let r = resolve_client_redirect(Some("anything://x"), &[], &[]);
+        assert_eq!(r, "snipdesk://auth");
+    }
+
+    #[test]
+    fn allowlisted_full_url_passes_through() {
+        let urls = allow(&["https://abc.chromiumapp.org/"]);
+        let r = resolve_client_redirect(
+            Some("https://abc.chromiumapp.org/"),
+            &allow(&["snipdesk"]),
+            &urls,
+        );
+        assert_eq!(r, "https://abc.chromiumapp.org/");
+    }
+
+    #[test]
+    fn unlisted_full_url_falls_back_no_open_redirect() {
+        // An https redirect that isn't in the URL allowlist must not
+        // pass through, or the callback would be an open redirector.
+        let r = resolve_client_redirect(
+            Some("https://evil.example.com/"),
+            &allow(&["snipdesk"]),
+            &allow(&["https://abc.chromiumapp.org/"]),
+        );
         assert_eq!(r, "snipdesk://auth");
     }
 

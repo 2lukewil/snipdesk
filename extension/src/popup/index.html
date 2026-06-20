@@ -15,13 +15,16 @@
         <label>Server URL
           <input id="server-url" type="text" placeholder="https://snippets.example.com" autocomplete="off" spellcheck="false" />
         </label>
-        <label>Email
-          <input id="email" type="email" autocomplete="username" />
-        </label>
-        <label>Password
-          <input id="password" type="password" autocomplete="current-password" />
-        </label>
-        <button id="btn-login" class="primary">Sign in</button>
+        <div id="password-section">
+          <label>Email
+            <input id="email" type="email" autocomplete="username" />
+          </label>
+          <label>Password
+            <input id="password" type="password" autocomplete="current-password" />
+          </label>
+          <button id="btn-login" class="primary">Sign in</button>
+        </div>
+        <div id="providers"></div>
         <details>
           <summary>Sign in with SSO / paste token</summary>
           <p class="hint">Open your server's sign-in page, copy the token shown on success, and paste it here.</p>

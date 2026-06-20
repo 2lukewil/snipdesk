@@ -32,6 +32,7 @@ async fn make_app() -> axum::Router {
         oidc_google: None,
         oidc_keycloak: None,
         oidc_allowed_schemes: vec!["snipdesk".to_string()],
+        oidc_allowed_redirect_urls: Vec::new(),
         secure_cookies: false,
         password_enabled: true,
         stats: snipdesk_server::config::StatsConfig::default(),

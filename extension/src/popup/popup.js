@@ -1,13 +1,108 @@
-const statusEl = document.getElementById("status");
+import { MSG, send } from "../shared/messages.js";
 
-chrome.runtime.sendMessage({ type: "ping" }, (res) => {
-  if (chrome.runtime.lastError || !res?.ok) {
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const errorEl = $("error");
+const signedOut = $("signed-out");
+const signedIn = $("signed-in");
+
+function showError(msg) {
+  errorEl.textContent = msg;
+  errorEl.classList.remove("hidden");
+}
+function clearError() {
+  errorEl.textContent = "";
+  errorEl.classList.add("hidden");
+}
+
+async function refresh() {
+  const res = await send(MSG.AUTH_STATUS);
+  if (!res.ok) {
     statusEl.textContent = "Background worker not responding.";
     return;
   }
-  statusEl.innerHTML = '<span class="ok">Ready.</span> Press the launcher shortcut on any page.';
+  const { signedIn: isIn, user, serverUrl } = res.data;
+  if (isIn) {
+    statusEl.textContent = "Signed in";
+    statusEl.classList.add("ok");
+    signedOut.classList.add("hidden");
+    signedIn.classList.remove("hidden");
+    $("who-name").textContent = user?.display_name || "";
+    $("who-email").textContent = user?.email || "";
+    loadCounts();
+  } else {
+    statusEl.textContent = "Not signed in";
+    statusEl.classList.remove("ok");
+    signedIn.classList.add("hidden");
+    signedOut.classList.remove("hidden");
+    if (serverUrl) $("server-url").value = serverUrl;
+  }
+}
+
+async function loadCounts() {
+  const res = await send(MSG.SNIPPETS_GET);
+  if (!res.ok) return;
+  const all = res.data || [];
+  const personal = all.filter((s) => s.source === "personal").length;
+  const library = all.filter((s) => s.source === "library").length;
+  $("counts").textContent = `${personal} personal, ${library} library`;
+}
+
+$("btn-login").addEventListener("click", async () => {
+  clearError();
+  const serverUrl = $("server-url").value.trim();
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  if (!serverUrl || !email || !password) {
+    showError("Server URL, email, and password are required.");
+    return;
+  }
+  $("btn-login").disabled = true;
+  $("btn-login").textContent = "Signing in...";
+  const res = await send(MSG.AUTH_LOGIN, { serverUrl, email, password });
+  $("btn-login").disabled = false;
+  $("btn-login").textContent = "Sign in";
+  if (!res.ok) {
+    showError(res.error || "Sign-in failed.");
+    return;
+  }
+  refresh();
 });
 
-document.getElementById("open-manager").addEventListener("click", () => {
-  chrome.runtime.openOptionsPage();
+$("btn-token").addEventListener("click", async () => {
+  clearError();
+  const serverUrl = $("server-url").value.trim();
+  const token = $("token").value.trim();
+  if (!serverUrl || !token) {
+    showError("Server URL and token are required.");
+    return;
+  }
+  const res = await send(MSG.AUTH_PASTE_TOKEN, { serverUrl, token });
+  if (!res.ok) {
+    showError(res.error || "Token rejected.");
+    return;
+  }
+  refresh();
 });
+
+$("btn-sync").addEventListener("click", async () => {
+  $("btn-sync").disabled = true;
+  $("btn-sync").textContent = "Syncing...";
+  const res = await send(MSG.SYNC_NOW);
+  $("btn-sync").disabled = false;
+  $("btn-sync").textContent = "Sync now";
+  if (res.signedOut) {
+    refresh();
+    return;
+  }
+  loadCounts();
+});
+
+$("btn-logout").addEventListener("click", async () => {
+  await send(MSG.AUTH_LOGOUT);
+  refresh();
+});
+
+$("open-manager").addEventListener("click", () => chrome.runtime.openOptionsPage());
+
+refresh();

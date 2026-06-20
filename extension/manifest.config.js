@@ -45,6 +45,6 @@ export default defineManifest({
       description: "Open the SnipDesk launcher",
     },
   },
-  permissions: ["storage", "unlimitedStorage", "identity", "scripting"],
+  permissions: ["storage", "unlimitedStorage", "identity", "scripting", "alarms"],
   host_permissions: ["<all_urls>"],
 });

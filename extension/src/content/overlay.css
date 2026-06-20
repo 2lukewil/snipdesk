@@ -1,0 +1,98 @@
+/* Styles for the launcher, injected into the content script's shadow
+   root so the host page's CSS can't reach in and ours can't leak out.
+   All sizes are absolute (no rem) since the page's root font-size is
+   unknown. */
+:host { all: initial; }
+* { box-sizing: border-box; }
+
+.sd-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.sd-panel {
+  margin-top: 11vh;
+  width: min(620px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #1e1f22;
+  color: #e6e6e6;
+  border: 1px solid #3a3b3f;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.sd-search {
+  border: 0;
+  border-bottom: 1px solid #333;
+  background: transparent;
+  color: #e6e6e6;
+  padding: 14px 16px;
+  font-size: 15px;
+  outline: none;
+}
+.sd-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.sd-row {
+  padding: 9px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #262729;
+}
+.sd-row[aria-selected="true"] { background: #2f3340; }
+.sd-row .t { font-weight: 500; }
+.sd-row .t mark { background: transparent; color: #8ab4ff; }
+.sd-row .meta { font-size: 12px; color: #9a9a9a; margin-top: 2px; }
+.sd-cloud { color: #6ea8fe; }
+
+.sd-preview {
+  border-top: 1px solid #333;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #c8c8c8;
+  max-height: 26vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sd-preview var { font-style: normal; color: #ffcf5c; }
+
+.sd-empty { padding: 20px 16px; color: #9a9a9a; }
+.sd-hint { padding: 8px 16px; font-size: 12px; color: #7a7a7a; border-top: 1px solid #262729; }
+kbd { background: #2b2d31; border: 1px solid #444; border-radius: 4px; padding: 0 5px; font-size: 11px; }
+
+/* Variable prompt */
+.sd-vars { padding: 14px 16px; overflow-y: auto; }
+.sd-vars h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.sd-field { margin-bottom: 12px; }
+.sd-field label { display: block; font-size: 12px; color: #b8b8b8; margin-bottom: 4px; }
+.sd-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: #2b2d31;
+  color: #e6e6e6;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+.sd-field input:focus { border-color: #5b8cff; }
+.sd-actions { display: flex; gap: 8px; margin-top: 4px; }
+.sd-actions button {
+  padding: 8px 14px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2b2d31;
+  color: #e6e6e6;
+  cursor: pointer;
+  font-size: 13px;
+}
+.sd-actions .primary { background: #3b5bdb; border-color: #3b5bdb; }
+.hidden { display: none !important; }

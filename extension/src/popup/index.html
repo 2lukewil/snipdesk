@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SnipDesk</title>
+    <style>
+      body { width: 280px; margin: 0; font: 14px/1.4 -apple-system, Segoe UI, Roboto, sans-serif; background: #1e1f22; color: #e6e6e6; }
+      header { padding: 12px 14px; border-bottom: 1px solid #333; font-weight: 600; }
+      main { padding: 14px; }
+      .status { color: #b8b8b8; font-size: 13px; }
+      .ok { color: #4caf50; }
+      button { margin-top: 12px; width: 100%; padding: 8px; border: 1px solid #444; border-radius: 6px; background: #2b2d31; color: #e6e6e6; cursor: pointer; }
+      button:hover { border-color: #5b8cff; }
+    </style>
+  </head>
+  <body>
+    <header>SnipDesk</header>
+    <main>
+      <div class="status" id="status">Checking...</div>
+      <button id="open-manager">Open manager</button>
+    </main>
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

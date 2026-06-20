@@ -4,6 +4,14 @@ Fast snippet launcher for support agents. Hit a global hotkey, type a few charac
 
 Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. Ships in two editions: **Lite** (free, offline, snippets live on the device) and **Teams** (server-backed sync across devices, shared team library, single sign-on, admin dashboard).
 
+## Components
+
+The repo holds one server and two independent clients that talk to it over HTTP. Each is self-contained; the clients share no code with each other.
+
+- **Server** (`crates/snipdesk-server`) - self-hosted backend: API, team library, SSO, admin dashboard.
+- **Desktop client** (`src/` + `src-tauri/`) - the Tauri app above; pastes into any window.
+- **Browser client** (`extension/`) - a Chrome (MV3) extension that inserts snippets into web fields. Runs on any OS with no install friction. See [`extension/README.md`](extension/README.md).
+
 > ## Documentation
 >
 > Full, searchable docs live at **<https://2lukewil.github.io/snipdesk/>** (source: [`docs/`](docs/)).
@@ -40,6 +48,7 @@ snipdesk/
 ├── src-tauri/                # Tauri shell: entry point, IPC commands, tray, hotkey, bundling
 │   ├── tauri.conf.json       # Base (Lite) config
 │   └── tauri.teams.conf.json # Teams overrides (deep-link scheme, identifier, updater)
+├── extension/                # Browser client: Chrome MV3 extension (self-contained, own build)
 ├── scripts/                  # Build & release helpers
 ├── docs/                     # Markdown source for the docs site (vitepress)
 └── Cargo.toml                # Workspace root

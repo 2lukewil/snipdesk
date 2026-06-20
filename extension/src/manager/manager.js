@@ -10,9 +10,14 @@ const el = (tag, cls, text) => {
   return n;
 };
 
+const ALL = "__all__";
+const UNFILED = "__unfiled__";
+
 let settings = {};
 let snippets = [];
 let selectedId = null;
+let selectedFolder = ALL;
+const expanded = new Set();
 
 async function init() {
   const status = (await send(MSG.AUTH_STATUS)).data || {};
@@ -33,7 +38,7 @@ async function init() {
 
 async function loadSnippets() {
   snippets = (await send(MSG.SNIPPETS_GET)).data || [];
-  renderFolderFilter();
+  renderTree();
   renderList();
   renderSavings();
 }
@@ -49,26 +54,113 @@ function showTab(name) {
   if (name === "trash") loadTrash();
 }
 
-// ---- snippet list ----
-function renderFolderFilter() {
-  const sel = $("folder-filter");
-  const current = sel.value;
-  const folders = [...new Set(snippets.map((s) => s.folder_path).filter(Boolean))].sort();
-  sel.replaceChildren(el("option", null, "All folders"));
-  sel.firstChild.value = "";
-  for (const f of folders) {
-    const o = el("option", null, f);
-    o.value = f;
-    sel.appendChild(o);
+// ---- folder tree ----
+function buildTree() {
+  const root = { children: new Map() };
+  for (const s of snippets) {
+    if (!s.folder_path) continue;
+    let node = root;
+    let path = "";
+    for (const part of s.folder_path.split("/").filter(Boolean)) {
+      path = path ? `${path}/${part}` : part;
+      if (!node.children.has(part)) {
+        node.children.set(part, { name: part, path, children: new Map(), count: 0 });
+      }
+      node = node.children.get(part);
+      node.count += 1; // snippets in this folder or any descendant
+    }
   }
-  sel.value = folders.includes(current) ? current : "";
+  return root;
+}
+
+function renderTree() {
+  const tree = $("tree");
+  tree.replaceChildren();
+  const unfiledCount = snippets.filter((s) => !s.folder_path).length;
+
+  tree.appendChild(folderNode("All snippets", ALL, snippets.length, 0, false, null));
+  tree.appendChild(folderNode("Unfiled", UNFILED, unfiledCount, 0, false, null));
+
+  const root = buildTree();
+  const walk = (node, depth) => {
+    for (const child of [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      const hasKids = child.children.size > 0;
+      tree.appendChild(
+        folderNode(child.name, child.path, child.count, depth, hasKids, child.path),
+      );
+      if (hasKids && expanded.has(child.path)) walk(child, depth + 1);
+    }
+  };
+  walk(root, 1);
+}
+
+function folderNode(label, key, count, depth, hasKids, dropPath) {
+  const node = el("div", "tree-node");
+  node.classList.toggle("active", selectedFolder === key);
+  node.style.paddingLeft = `${8 + depth * 14}px`;
+
+  const caret = el("span", "tree-caret" + (hasKids ? "" : " leaf"), hasKids ? (expanded.has(key) ? "v" : ">") : "");
+  if (hasKids) {
+    caret.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (expanded.has(key)) expanded.delete(key);
+      else expanded.add(key);
+      renderTree();
+    });
+  }
+  node.appendChild(caret);
+  node.appendChild(el("span", "tree-label", label));
+  if (count) node.appendChild(el("span", "tree-count", String(count)));
+
+  node.addEventListener("click", () => {
+    selectedFolder = key;
+    renderTree();
+    renderList();
+  });
+
+  // Drop a snippet onto All/Unfiled/a folder to refile it.
+  if (key !== ALL || true) {
+    node.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      node.classList.add("drop-target");
+    });
+    node.addEventListener("dragleave", () => node.classList.remove("drop-target"));
+    node.addEventListener("drop", (e) => {
+      e.preventDefault();
+      node.classList.remove("drop-target");
+      const id = e.dataTransfer.getData("text/snippet-id");
+      const target = key === ALL || key === UNFILED ? null : dropPath;
+      if (id) moveSnippetToFolder(id, target);
+    });
+  }
+  return node;
+}
+
+async function moveSnippetToFolder(id, folderPath) {
+  const s = snippets.find((x) => x.id === id);
+  if (!s || s.source !== "personal") return;
+  if ((s.folder_path || null) === (folderPath || null)) return;
+  const payload = {
+    title: s.title,
+    body: s.body,
+    tags: s.tags || [],
+    folder_path: folderPath || null,
+  };
+  const res = await send(MSG.SNIPPET_UPDATE, { id, expectedVersion: s.version, payload });
+  if (res.ok) await loadSnippets();
+}
+
+// ---- snippet list ----
+function inFolder(s) {
+  if (selectedFolder === ALL) return true;
+  if (selectedFolder === UNFILED) return !s.folder_path;
+  const fp = s.folder_path || "";
+  return fp === selectedFolder || fp.startsWith(selectedFolder + "/");
 }
 
 function visibleSnippets() {
   const q = $("search").value;
-  const folder = $("folder-filter").value;
-  let list = filterSnippets(snippets, q);
-  if (folder) list = list.filter((s) => s.folder_path === folder);
+  let list = filterSnippets(snippets, q).filter(inFolder);
   if (!q.trim()) list = sortSnippets(list, settings.sort_by_usage !== false);
   return list;
 }
@@ -78,12 +170,21 @@ function renderList() {
   list.replaceChildren();
   const items = visibleSnippets();
   if (items.length === 0) {
-    list.appendChild(el("div", "row muted", "No snippets."));
+    list.appendChild(el("div", "empty", "No snippets."));
     return;
   }
   for (const s of items) {
     const row = el("div", "row");
     row.classList.toggle("active", s.id === selectedId);
+    if (s.source === "personal") {
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/snippet-id", s.id);
+        e.dataTransfer.effectAllowed = "move";
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => row.classList.remove("dragging"));
+    }
     const t = el("div", "t");
     t.appendChild(document.createTextNode(s.title || "(untitled)"));
     if (s.source === "library") t.appendChild(el("span", "badge", "team"));
@@ -201,7 +302,7 @@ async function remove(snippet) {
   if (res.ok) {
     selectedId = null;
     await loadSnippets();
-    $("editor").replaceChildren(el("p", "muted", "Select a snippet, or create a new one."));
+    $("editor").replaceChildren(el("p", "placeholder", "Select a snippet, or create a new one."));
   }
 }
 
@@ -301,7 +402,6 @@ function wire() {
     btn.addEventListener("click", () => showTab(btn.dataset.tab));
   }
   $("search").addEventListener("input", renderList);
-  $("folder-filter").addEventListener("change", renderList);
   $("btn-new").addEventListener("click", () => openEditor(null));
   $("btn-dashboard").addEventListener("click", () => {
     const base = (settings.server_url || "").replace(/\/+$/, "");

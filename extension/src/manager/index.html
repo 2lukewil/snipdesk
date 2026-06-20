@@ -29,14 +29,14 @@
       <section id="tab-snippets" class="tab hidden">
         <div class="toolbar">
           <input id="search" type="search" placeholder="Search snippets..." autocomplete="off" />
-          <select id="folder-filter"><option value="">All folders</option></select>
           <button id="btn-new" class="primary">New snippet</button>
           <button id="btn-dashboard" class="ghost" title="Team library is managed in the dashboard">Team library...</button>
         </div>
-        <div class="two-pane">
-          <div id="list" class="list"></div>
+        <div class="three-pane">
+          <div id="tree" class="pane tree"></div>
+          <div id="list" class="pane list"></div>
           <div id="editor" class="editor">
-            <p class="muted">Select a snippet, or create a new one.</p>
+            <p class="placeholder">Select a snippet, or create a new one.</p>
           </div>
         </div>
       </section>

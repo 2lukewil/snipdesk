@@ -303,6 +303,10 @@ function wire() {
   $("search").addEventListener("input", renderList);
   $("folder-filter").addEventListener("change", renderList);
   $("btn-new").addEventListener("click", () => openEditor(null));
+  $("btn-dashboard").addEventListener("click", () => {
+    const base = (settings.server_url || "").replace(/\/+$/, "");
+    if (base) chrome.tabs.create({ url: `${base}/dashboard/library` });
+  });
   $("btn-save-settings").addEventListener("click", saveSettings);
   $("btn-logout").addEventListener("click", async () => {
     await send(MSG.AUTH_LOGOUT);

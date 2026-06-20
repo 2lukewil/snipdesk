@@ -4,18 +4,63 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SnipDesk Manager</title>
-    <style>
-      body { margin: 0; font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; background: #1a1b1e; color: #e6e6e6; }
-      header { padding: 16px 24px; border-bottom: 1px solid #333; font-size: 18px; font-weight: 600; }
-      main { padding: 24px; max-width: 900px; }
-      .muted { color: #9a9a9a; }
-    </style>
+    <link rel="stylesheet" href="./manager.css" />
   </head>
   <body>
-    <header>SnipDesk Manager</header>
+    <header>
+      <span class="brand">SnipDesk</span>
+      <nav id="tabs" class="hidden">
+        <button data-tab="snippets" class="active">Snippets</button>
+        <button data-tab="settings">Settings</button>
+        <button data-tab="trash">Trash</button>
+      </nav>
+      <span class="spacer"></span>
+      <span id="savings" class="savings"></span>
+      <span id="identity" class="identity"></span>
+      <button id="btn-logout" class="ghost hidden">Sign out</button>
+    </header>
+
     <main>
-      <p class="muted">Manager scaffold. Sign-in, library browse, and snippet editing land here in a later phase.</p>
+      <div id="signed-out" class="notice hidden">
+        Sign in from the SnipDesk toolbar icon, then reload this page.
+      </div>
+
+      <!-- Snippets tab -->
+      <section id="tab-snippets" class="tab hidden">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search snippets..." autocomplete="off" />
+          <select id="folder-filter"><option value="">All folders</option></select>
+          <button id="btn-new" class="primary">New snippet</button>
+        </div>
+        <div class="two-pane">
+          <div id="list" class="list"></div>
+          <div id="editor" class="editor">
+            <p class="muted">Select a snippet, or create a new one.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings tab -->
+      <section id="tab-settings" class="tab hidden">
+        <h2>Savings estimate</h2>
+        <label class="check"><input type="checkbox" id="set-show-savings" /> Show time/money saved</label>
+        <label>Typing speed (WPM)<input type="number" id="set-wpm" min="1" max="500" /></label>
+        <label>Hourly wage (0 to hide money)<input type="number" id="set-wage" min="0" step="0.01" /></label>
+        <label>Currency symbol<input type="text" id="set-currency" maxlength="8" /></label>
+        <h2>Display</h2>
+        <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
+        <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
+        <div class="actions"><button id="btn-save-settings" class="primary">Save settings</button></div>
+        <div id="settings-status" class="status"></div>
+      </section>
+
+      <!-- Trash tab -->
+      <section id="tab-trash" class="tab hidden">
+        <p class="muted">Deleted snippets can be restored here.</p>
+        <div id="trash-list" class="list"></div>
+      </section>
     </main>
+
     <script type="module" src="./manager.js"></script>
   </body>
 </html>

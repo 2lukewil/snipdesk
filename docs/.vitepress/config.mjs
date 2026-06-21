@@ -56,6 +56,7 @@ export default defineConfig({
       {
         text: "Development",
         items: [
+          { text: "Browser extension", link: "/extension" },
           { text: "Build from source", link: "/build" },
           { text: "Releases & Auto-update", link: "/auto-update" },
           { text: "Whitelabel brand bundles", link: "/whitelabel" },
@@ -85,6 +86,11 @@ export default defineConfig({
             { text: "Production deployment", link: "/deploy" },
             { text: "Server architecture", link: "/server-design" },
           ],
+        },
+        {
+          text: "Browser extension",
+          collapsed: false,
+          items: [{ text: "Install & deploy", link: "/extension" }],
         },
         {
           text: "Building & releasing",

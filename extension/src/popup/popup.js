@@ -29,6 +29,7 @@ async function refresh() {
     signedIn.classList.remove("hidden");
     $("who-name").textContent = user?.display_name || "";
     $("who-email").textContent = user?.email || "";
+    renderSyncStatus(res.data.lastSync, res.data.pending);
     loadCounts();
   } else {
     statusEl.textContent = "Not signed in";
@@ -42,6 +43,31 @@ async function refresh() {
   }
 }
 
+function relTime(ms) {
+  const diff = (Date.now() - ms) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+  return `${Math.round(diff / 86400)}d ago`;
+}
+
+function renderSyncStatus(last, pending) {
+  const el = $("sync-status");
+  const queued = pending ? ` ${pending} change${pending > 1 ? "s" : ""} pending.` : "";
+  if (!last) {
+    el.textContent = ("Not synced yet." + queued).trim();
+    el.classList.toggle("err", !!pending);
+    return;
+  }
+  if (last.ok) {
+    el.textContent = `Last synced ${relTime(last.at)}.${queued}`;
+    el.classList.toggle("err", !!pending);
+  } else {
+    el.textContent = `Last sync failed ${relTime(last.at)}.${queued}`;
+    el.classList.add("err");
+  }
+}
+
 async function loadCounts() {
   const res = await send(MSG.SNIPPETS_GET);
   if (!res.ok) return;
@@ -49,6 +75,30 @@ async function loadCounts() {
   const personal = all.filter((s) => s.source === "personal").length;
   const library = all.filter((s) => s.source === "library").length;
   $("counts").textContent = `${personal} personal, ${library} library`;
+  const sres = await send(MSG.SETTINGS_GET);
+  renderSavings(all, sres.ok ? sres.data : {});
+}
+
+function fmtDuration(sec) {
+  if (sec < 60) return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  if (sec < 86400) return `${(sec / 3600).toFixed(1)}h`;
+  return `${(sec / 86400).toFixed(1)}d`;
+}
+
+function renderSavings(all, settings) {
+  const el = $("popup-savings");
+  if (!settings.show_savings_estimate) {
+    el.textContent = "";
+    return;
+  }
+  const wpm = settings.typing_speed_wpm || 40;
+  const totalChars = all.reduce((sum, s) => sum + (s.uses || 0) * (s.body || "").length, 0);
+  const seconds = ((totalChars / 5) / wpm) * 60;
+  let text = `Saved ~${fmtDuration(seconds)}`;
+  const wage = settings.hourly_wage || 0;
+  if (wage > 0) text += ` / ${settings.wage_currency || "$"}${((seconds / 3600) * wage).toFixed(2)}`;
+  el.textContent = text;
 }
 
 // Fetch the server's configured sign-in methods and render: password
@@ -125,11 +175,9 @@ $("btn-sync").addEventListener("click", async () => {
   const res = await send(MSG.SYNC_NOW);
   $("btn-sync").disabled = false;
   $("btn-sync").textContent = "Sync now";
-  if (res.signedOut) {
-    refresh();
-    return;
-  }
-  loadCounts();
+  if (!res.ok && !res.signedOut) showError(res.error || "Sync failed.");
+  // Re-read status so the last-synced time and pending count update.
+  refresh();
 });
 
 $("btn-logout").addEventListener("click", async () => {
@@ -137,6 +185,18 @@ $("btn-logout").addEventListener("click", async () => {
   refresh();
 });
 
+$("btn-launch").addEventListener("click", async () => {
+  await send(MSG.LAUNCH_HERE);
+  window.close(); // let the in-page overlay take focus
+});
+
 $("open-manager").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
+async function applyTheme() {
+  const res = await send(MSG.SETTINGS_GET);
+  const theme = res.ok ? res.data?.theme : "dark";
+  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+}
+
+applyTheme();
 refresh();

@@ -4,6 +4,7 @@
 export const MSG = {
   PING: "ping",
   TOGGLE_LAUNCHER: "toggle-launcher",
+  LAUNCH_HERE: "launch-here",
 
   AUTH_STATUS: "auth-status",
   AUTH_METHODS: "auth-methods",

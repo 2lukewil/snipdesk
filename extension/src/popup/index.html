@@ -36,8 +36,13 @@
 
       <!-- Signed-in: identity + sync + counts + sign out -->
       <section id="signed-in" class="hidden">
-        <div class="who"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
+        <div class="who">
+          <div class="who-id"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
+          <div id="popup-savings" class="savings"></div>
+        </div>
         <div id="counts" class="muted">No snippets synced yet.</div>
+        <div id="sync-status" class="muted"></div>
+        <button id="btn-launch" class="primary">Launch here</button>
         <button id="btn-sync">Sync now</button>
         <button id="open-manager">Open manager</button>
         <button id="btn-logout" class="ghost">Sign out</button>

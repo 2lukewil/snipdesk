@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   sort_by_usage: true,
   show_usage_count: true,
   theme: "dark",
+  compact: false,
 };
 
 const get = (keys) =>
@@ -71,11 +72,51 @@ export async function setVarHistory(history) {
   await set({ var_history: history });
 }
 
+// Empty personal folders created in the manager. The server has no
+// personal-folders table, so an empty folder only lives here until a
+// snippet is filed into it (after which folder_path carries it).
+export async function getPendingFolders() {
+  return (await get("pending_folders")).pending_folders ?? [];
+}
+export async function setPendingFolders(list) {
+  await set({ pending_folders: list });
+}
+
+// Manual folder ordering: path -> sort index within its sibling group.
+// Folders without an entry fall back to alphabetical. Local-only, same
+// as pending folders.
+export async function getFolderOrder() {
+  return (await get("folder_order")).folder_order ?? {};
+}
+export async function setFolderOrder(map) {
+  await set({ folder_order: map });
+}
+
 export async function getSavings() {
   return (await get("savings")).savings ?? { team_chars: 0 };
 }
 export async function setSavings(savings) {
   await set({ savings });
+}
+
+// Last sync outcome, surfaced in the popup. { at, ok, error }.
+export async function getSyncStatus() {
+  return (await get("sync_status")).sync_status ?? null;
+}
+export async function setSyncStatus(status) {
+  await set({ sync_status: status });
+}
+
+// Text captured via the page context menu, picked up by the manager to
+// prefill a new snippet. One-shot: the manager clears it on read.
+export async function setPendingNewSnippet(text) {
+  await set({ pending_new_snippet: text });
+}
+export async function getPendingNewSnippet() {
+  return (await get("pending_new_snippet")).pending_new_snippet ?? null;
+}
+export async function clearPendingNewSnippet() {
+  await remove("pending_new_snippet");
 }
 
 export async function clearSession() {

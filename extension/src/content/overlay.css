@@ -14,6 +14,15 @@
   --accent: #4c9aff;
   --radius: 8px;
 }
+:host([data-theme="light"]) {
+  --bg-2: #ffffff;
+  --bg-3: #eef0f3;
+  --bg-hover: #e2e6eb;
+  --border: #d1d5db;
+  --text: #1a1c20;
+  --text-dim: #5a6270;
+  --accent: #2c6fd8;
+}
 * { box-sizing: border-box; }
 
 .sd-backdrop {
@@ -27,7 +36,7 @@
 }
 .sd-panel {
   margin-top: 11vh;
-  width: min(620px, 92vw);
+  width: min(820px, 94vw);
   max-height: 70vh;
   display: flex;
   flex-direction: column;
@@ -47,10 +56,17 @@
   font-size: 15px;
   outline: none;
 }
-.sd-list {
-  overflow-y: auto;
+/* List on the left, live preview of the selected snippet on the right. */
+.sd-body {
+  display: flex;
   flex: 1;
   min-height: 0;
+}
+.sd-list {
+  overflow-y: auto;
+  flex: 0 0 46%;
+  min-height: 0;
+  border-right: 1px solid var(--border);
 }
 .sd-row {
   padding: 9px 16px;
@@ -63,14 +79,19 @@
 .sd-row .meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
 
 .sd-preview {
-  border-top: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
   padding: 12px 16px;
   font-size: 13px;
   color: var(--text-dim);
-  max-height: 26vh;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.sd-preview:empty::before {
+  content: "Select a snippet to preview.";
+  color: var(--text-dim);
+  opacity: 0.6;
 }
 .sd-preview var { font-style: normal; color: #ffcf5c; }
 

@@ -3,11 +3,11 @@ import { filterSnippets, sortSnippets } from "../shared/search.js";
 import { extractVarNames, substitute, splitForPreview } from "../shared/variables.js";
 import overlayCss from "./overlay.css?inline";
 
-// Insertion target captured BEFORE the overlay steals focus. For
-// inputs/textareas we also snapshot the selection offsets; for
-// contenteditable we clone the live Range (focus moves to the overlay
-// search box, so the page selection would otherwise be lost).
+// Insertion target. `savedTarget` continuously tracks the last editable
+// the user touched (so it survives the overlay stealing focus, or being
+// opened from the toolbar); `target` is the one we insert into.
 let target = null;
+let savedTarget = null;
 
 let host = null; // overlay host element
 let root = null; // its shadow root
@@ -17,23 +17,56 @@ let selected = 0;
 let mode = "list"; // "list" | "vars"
 let pending = null; // snippet awaiting variable fill
 let settingsCache = {};
+let lastTextQuery = ""; // text part of the query, for highlighting
 
-function applyFilter(query) {
-  filtered = query.trim()
-    ? filterSnippets(snippets, query) // already rank-ordered
-    : sortSnippets(snippets, settingsCache.sort_by_usage !== false);
-  selected = 0;
+// A query may carry #tag tokens (AND-combined) alongside free text.
+function parseQuery(raw) {
+  const tags = [];
+  const text = [];
+  for (const term of raw.trim().split(/\s+/).filter(Boolean)) {
+    if (term.startsWith("#") && term.length > 1) tags.push(term.slice(1).toLowerCase());
+    else text.push(term);
+  }
+  return { text: text.join(" "), tags };
 }
 
-function captureTarget() {
-  const el = document.activeElement;
+function applyFilter(rawQuery) {
+  const { text, tags } = parseQuery(rawQuery);
+  let list = text
+    ? filterSnippets(snippets, text) // already rank-ordered
+    : sortSnippets(snippets, settingsCache.sort_by_usage !== false);
+  if (tags.length) {
+    // Prefix match so a partial #tag narrows as you type.
+    list = list.filter((s) => {
+      const have = (s.tags || []).map((t) => t.toLowerCase());
+      return tags.every((t) => have.some((h) => h.startsWith(t)));
+    });
+  }
+  filtered = list;
+  selected = 0;
+  lastTextQuery = text;
+}
+
+function computeTarget() {
+  let el = document.activeElement;
+  if (!el || el.id === "snipdesk-overlay-host") return null; // ignore our own overlay
+  // Rich editors often host the editable inside a same-origin iframe;
+  // descend into it. Cross-origin frames are unreachable and skipped.
+  try {
+    while (el && el.tagName === "IFRAME" && el.contentDocument) {
+      el = el.contentDocument.activeElement;
+    }
+  } catch {
+    /* cross-origin iframe: can't reach in */
+  }
   if (!el) return null;
   const tag = el.tagName?.toLowerCase();
   if (tag === "input" || tag === "textarea") {
     return { el, kind: "input", start: el.selectionStart, end: el.selectionEnd };
   }
   if (el.isContentEditable) {
-    const sel = window.getSelection();
+    const win = el.ownerDocument.defaultView || window;
+    const sel = win.getSelection();
     let range = null;
     if (sel && sel.rangeCount && el.contains(sel.anchorNode)) {
       range = sel.getRangeAt(0).cloneRange();
@@ -42,6 +75,18 @@ function captureTarget() {
   }
   return null;
 }
+
+// Keep the last editable target fresh as the user types/selects, so by
+// the time the launcher opens (which moves focus to its own search box)
+// we still know exactly where to insert and what was selected.
+function trackSelection() {
+  const t = computeTarget();
+  if (t) savedTarget = t;
+}
+document.addEventListener("selectionchange", trackSelection, true);
+document.addEventListener("focusin", trackSelection, true);
+document.addEventListener("mouseup", trackSelection, true);
+document.addEventListener("keyup", trackSelection, true);
 
 function insertIntoTarget(text) {
   if (!target) return false;
@@ -57,23 +102,31 @@ function insertIntoTarget(text) {
     el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     return true;
   }
-  // contenteditable
-  const sel = window.getSelection();
-  if (target.range) {
-    sel.removeAllRanges();
-    sel.addRange(target.range);
+  // contenteditable (possibly inside a same-origin iframe)
+  const doc = el.ownerDocument;
+  const win = doc.defaultView || window;
+  el.focus({ preventScroll: true });
+  const sel = win.getSelection();
+  sel.removeAllRanges();
+  if (target.range) sel.addRange(target.range);
+  // No captured caret (e.g. selection was lost): drop one at the end.
+  if (!sel.rangeCount) {
+    const r = doc.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    sel.addRange(r);
   }
   let ok = false;
   try {
-    ok = document.execCommand("insertText", false, text);
+    ok = doc.execCommand("insertText", false, text);
   } catch {
     ok = false;
   }
   if (!ok && sel.rangeCount) {
-    // Fallback for editors where execCommand is disabled.
+    // Editors where execCommand is disabled: splice via the Range.
     const r = sel.getRangeAt(0);
     r.deleteContents();
-    const node = document.createTextNode(text);
+    const node = doc.createTextNode(text);
     r.insertNode(node);
     r.setStartAfter(node);
     r.collapse(true);
@@ -83,6 +136,23 @@ function insertIntoTarget(text) {
     ok = true;
   }
   return ok;
+}
+
+// Inline autocomplete: when the typed text is a prefix of the top
+// result's title, fill the rest and select it so the next keystroke
+// overwrites it, or Tab/Right accepts. Skipped on delete and on #tag
+// queries.
+function maybeAutocomplete(e, input) {
+  if (e.inputType && e.inputType.startsWith("delete")) return;
+  const val = input.value;
+  if (!val || val.includes("#")) return;
+  const top = filtered[0];
+  if (!top?.title) return;
+  const title = top.title;
+  if (title.length > val.length && title.toLowerCase().startsWith(val.toLowerCase())) {
+    input.value = val + title.slice(val.length);
+    input.setSelectionRange(val.length, input.value.length);
+  }
 }
 
 function close() {
@@ -134,7 +204,7 @@ function renderList(query) {
     const row = el("div", "sd-row");
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", String(i === selected));
-    row.appendChild(titleNode(s.title || "(untitled)", query));
+    row.appendChild(titleNode(s.title || "(untitled)", lastTextQuery));
     const metaBits = [];
     if (s.source === "library") metaBits.push("team");
     if (s.folder_path) metaBits.push(s.folder_path);
@@ -175,12 +245,28 @@ function setSelected(i) {
   renderPreview();
 }
 
+// Best-effort usage telemetry: bumps the local count (drives savings)
+// and folds into the server totals. Fire-and-forget.
+function reportUse(s, text) {
+  const isLib = s.source === "library";
+  const delta = { id: s.id, delta: 1, last_used: Math.floor(Date.now() / 1000) };
+  send(MSG.USAGE_REPORT, {
+    body: {
+      chars_pasted_delta: (text || "").length,
+      snippets_pasted_delta: 1,
+      personal: isLib ? [] : [delta],
+      library: isLib ? [delta] : [],
+    },
+  });
+}
+
 async function choose() {
   const s = filtered[selected];
   if (!s) return;
   const vars = extractVarNames(s.body || "");
   if (vars.length === 0) {
     insertIntoTarget(s.body || "");
+    reportUse(s, s.body || "");
     close();
     return;
   }
@@ -192,8 +278,7 @@ async function showVarPrompt(s, vars) {
   mode = "vars";
   const panel = root.querySelector(".sd-panel");
   panel.querySelector(".sd-search").classList.add("hidden");
-  panel.querySelector(".sd-list").classList.add("hidden");
-  panel.querySelector(".sd-preview").classList.add("hidden");
+  panel.querySelector(".sd-body").classList.add("hidden");
   const varsView = panel.querySelector(".sd-vars");
   varsView.classList.remove("hidden");
   varsView.replaceChildren();
@@ -235,7 +320,9 @@ async function showVarPrompt(s, vars) {
   const doInsert = async () => {
     const values = {};
     for (const input of inputs) values[input.dataset.var] = input.value;
-    insertIntoTarget(substitute(s.body || "", values));
+    const rendered = substitute(s.body || "", values);
+    insertIntoTarget(rendered);
+    reportUse(s, rendered);
     send(MSG.VAR_HISTORY_ADD, { snippetId: s.id, values });
     close();
   };
@@ -259,13 +346,14 @@ function backToList() {
   const panel = root.querySelector(".sd-panel");
   panel.querySelector(".sd-vars").classList.add("hidden");
   panel.querySelector(".sd-search").classList.remove("hidden");
-  panel.querySelector(".sd-list").classList.remove("hidden");
-  panel.querySelector(".sd-preview").classList.remove("hidden");
+  panel.querySelector(".sd-body").classList.remove("hidden");
   panel.querySelector(".sd-search").focus();
 }
 
 async function open() {
-  target = captureTarget();
+  // Prefer a live read; fall back to the last tracked editable (e.g. if
+  // focus already moved, or the launcher was opened from the toolbar).
+  target = computeTarget() || savedTarget;
 
   host = document.createElement("div");
   host.id = "snipdesk-overlay-host";
@@ -280,8 +368,10 @@ async function open() {
   backdrop.innerHTML = `
     <div class="sd-panel" role="dialog" aria-label="SnipDesk launcher">
       <input class="sd-search" type="text" placeholder="Search snippets..." autocomplete="off" spellcheck="false" />
-      <div class="sd-list" role="listbox"></div>
-      <div class="sd-preview"></div>
+      <div class="sd-body">
+        <div class="sd-list" role="listbox"></div>
+        <div class="sd-preview"></div>
+      </div>
       <div class="sd-vars hidden"></div>
       <div class="sd-hint"><kbd>up/down</kbd> move &nbsp; <kbd>Enter</kbd> insert &nbsp; <kbd>Esc</kbd> close</div>
     </div>`;
@@ -293,23 +383,33 @@ async function open() {
   });
 
   const search = root.querySelector(".sd-search");
-  search.addEventListener("input", () => {
+  search.addEventListener("input", (e) => {
     applyFilter(search.value);
-    renderList(search.value);
+    renderList();
+    maybeAutocomplete(e, search);
   });
   // Keep keystrokes from reaching the host page's own shortcuts while
   // the launcher has focus.
   search.addEventListener("keydown", (e) => {
     e.stopPropagation();
+    const hasGhost =
+      search.selectionStart !== search.selectionEnd &&
+      search.selectionEnd === search.value.length;
     if (e.key === "ArrowDown") { e.preventDefault(); setSelected(selected + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setSelected(selected - 1); }
     else if (e.key === "Enter") { e.preventDefault(); choose(); }
+    else if ((e.key === "Tab" || e.key === "ArrowRight") && hasGhost) {
+      // Accept the ghost completion.
+      e.preventDefault();
+      search.setSelectionRange(search.value.length, search.value.length);
+    }
   });
 
   settingsCache = (await send(MSG.SETTINGS_GET)).data || {};
+  host.dataset.theme = settingsCache.theme === "light" ? "light" : "dark";
   snippets = (await send(MSG.SNIPPETS_GET)).data || [];
   applyFilter("");
-  renderList("");
+  renderList();
   search.focus();
 }
 

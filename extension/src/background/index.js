@@ -9,24 +9,49 @@ import * as store from "../shared/storage.js";
 const SYNC_ALARM = "snipdesk-sync";
 const SYNC_PERIOD_MIN = 5;
 
+const CTX_ADD_SNIPPET = "snipdesk-add-selection";
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
+  setupContextMenu();
 });
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
+  setupContextMenu();
 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === SYNC_ALARM) syncNow().catch(() => {});
 });
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== "open-launcher") return;
+  if (command === "open-launcher") launcherOnActiveTab();
+});
+
+function launcherOnActiveTab() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const id = tabs[0]?.id;
     if (id != null) {
       chrome.tabs.sendMessage(id, { type: MSG.TOGGLE_LAUNCHER }).catch(() => {});
     }
   });
+}
+
+// Right-click selected text on any page to start a new snippet from it.
+function setupContextMenu() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: CTX_ADD_SNIPPET,
+      title: "Add selection to SnipDesk",
+      contexts: ["selection"],
+    });
+  });
+}
+chrome.contextMenus?.onClicked.addListener((info) => {
+  if (info.menuItemId === CTX_ADD_SNIPPET && info.selectionText) {
+    store.setPendingNewSnippet(info.selectionText).then(() => {
+      chrome.runtime.openOptionsPage();
+    });
+  }
 });
 
 // ---- auth helpers ----
@@ -65,22 +90,144 @@ async function pullStream(kind, fetcher) {
   const cache = await store.getCache(kind);
   const res = await fetcher(cache.hwm || 0);
   for (const view of res.snippets || []) {
+    const prev = cache.items[view.id];
+    // Never overwrite an item with un-flushed local edits; the outbox
+    // owns it until it reconciles (last-write-wins).
+    if (prev && (prev.dirty || prev.pendingCreate || prev.needsRestore)) continue;
     if (view.is_deleted) {
-      delete cache.items[view.id];
+      // Keep a tombstone locally (with whatever payload we already had)
+      // so Trash works offline; drop content-less ones we never saw.
+      if (prev) {
+        prev.deleted = true;
+        prev.syncedTombstone = true;
+        prev.version = view.version;
+      }
     } else if (view.payload) {
-      const prev = cache.items[view.id] || {};
       cache.items[view.id] = {
         id: view.id,
         version: view.version,
         updated_at: view.updated_at,
         ...view.payload,
-        uses: prev.uses || 0,
-        last_used: prev.last_used || null,
+        uses: prev?.uses || 0,
+        last_used: prev?.last_used || null,
       };
     }
   }
   cache.hwm = res.high_water_mark ?? cache.hwm;
   await store.setCache(kind, cache);
+}
+
+// ---- offline write queue (outbox) ----
+// Personal-snippet writes apply to the cache immediately and carry
+// flags: pendingCreate (never reached the server), dirty (edited since
+// last sync), deleted (tombstoned locally). flushOutbox pushes them up.
+let flushing = false;
+let flushQueued = false;
+
+function flushSoon() {
+  flushOutbox().catch(() => {});
+}
+
+async function serverVersionFor(serverUrl, token, id) {
+  try {
+    const res = await api.listSnippets(serverUrl, token, 0);
+    const hit = (res.snippets || []).find((x) => x.id === id && !x.is_deleted);
+    return hit ? hit.version : null;
+  } catch {
+    return null;
+  }
+}
+
+const payloadOf = (it) => ({
+  title: it.title || "",
+  body: it.body || "",
+  tags: it.tags || [],
+  folder_path: it.folder_path || null,
+});
+
+async function flushOutbox() {
+  if (flushing) {
+    flushQueued = true;
+    return;
+  }
+  flushing = true;
+  try {
+    const serverUrl = await store.getServerUrl();
+    const token = await store.getToken();
+    if (!serverUrl || !token) return;
+    const cache = await store.getCache("personal");
+    let changed = false;
+    for (const id of Object.keys(cache.items)) {
+      const it = cache.items[id];
+      if (!it.dirty && !it.pendingCreate && !it.needsRestore) continue;
+      try {
+        if (it.deleted) {
+          // A queued delete. Never-synced creations just vanish; others
+          // become a synced tombstone (kept locally so Trash works offline).
+          if (it.pendingCreate) {
+            delete cache.items[id];
+          } else {
+            await api.deleteSnippet(serverUrl, token, id);
+            it.dirty = false;
+            it.syncedTombstone = true;
+          }
+        } else if (it.needsRestore) {
+          await api.restoreTrash(serverUrl, token, id);
+          it.needsRestore = false;
+          it.syncedTombstone = false;
+          it.dirty = false;
+        } else if (it.pendingCreate) {
+          const res = await api.createSnippet(serverUrl, token, id, payloadOf(it));
+          it.version = res.version;
+          it.pendingCreate = false;
+          it.dirty = false;
+        } else {
+          const res = await api.updateSnippet(serverUrl, token, id, it.version, payloadOf(it));
+          it.version = res.version;
+          it.dirty = false;
+        }
+        changed = true;
+      } catch (e) {
+        if (e instanceof api.ApiError && e.kind === "network") break; // server down: stay queued
+        if (e instanceof api.ApiError && (e.kind === "unauthorized" || e.kind === "inactive")) break;
+        if (e instanceof api.ApiError && e.kind === "conflict" && !it.deleted && !it.pendingCreate) {
+          // Last-write-wins: refetch the current version, overwrite.
+          const v = await serverVersionFor(serverUrl, token, id);
+          if (v != null) {
+            try {
+              const res = await api.updateSnippet(serverUrl, token, id, v, payloadOf(it));
+              it.version = res.version;
+              it.dirty = false;
+              changed = true;
+              continue;
+            } catch {
+              /* leave dirty; next flush retries */
+            }
+          }
+        } else if (it.deleted) {
+          // Already gone server-side: settle as a synced tombstone.
+          it.dirty = false;
+          it.syncedTombstone = true;
+          changed = true;
+        } else if (it.needsRestore) {
+          it.needsRestore = false; // give up (avoid a retry loop)
+          changed = true;
+        }
+      }
+    }
+    if (changed) await store.setCache("personal", cache);
+  } finally {
+    flushing = false;
+    if (flushQueued) {
+      flushQueued = false;
+      flushOutbox();
+    }
+  }
+}
+
+async function pendingCount() {
+  const cache = await store.getCache("personal");
+  return Object.values(cache.items).filter((it) => it.dirty || it.pendingCreate || it.needsRestore).length;
 }
 
 async function syncNow() {
@@ -94,10 +241,13 @@ async function syncNow() {
       token = meRes.refreshed_token;
     }
     if (meRes?.user) await store.setUser(meRes.user);
+    await flushOutbox(); // push local writes up before pulling
     await pullStream("personal", (since) => api.listSnippets(serverUrl, token, since));
     await pullStream("library", (since) => api.listLibrary(serverUrl, token, since));
+    await store.setSyncStatus({ at: Date.now(), ok: true });
     return { ok: true };
   } catch (e) {
+    await store.setSyncStatus({ at: Date.now(), ok: false, error: e?.message || String(e) });
     return authError(e);
   }
 }
@@ -107,7 +257,9 @@ async function snippetsForUi() {
   const personal = await store.getCache("personal");
   const library = await store.getCache("library");
   const map = (cache, source) =>
-    Object.values(cache.items).map((it) => ({ ...it, source }));
+    Object.values(cache.items)
+      .filter((it) => !it.deleted) // hide locally-tombstoned items
+      .map((it) => ({ ...it, source }));
   return [...map(personal, "personal"), ...map(library, "library")];
 }
 
@@ -120,7 +272,14 @@ const handlers = {
     const serverUrl = await store.getServerUrl();
     const token = await store.getToken();
     const user = await store.getUser();
-    return { ok: true, data: { signedIn: Boolean(token && user), user, serverUrl } };
+    const lastSync = await store.getSyncStatus();
+    const pending = await pendingCount();
+    return { ok: true, data: { signedIn: Boolean(token && user), user, serverUrl, lastSync, pending } };
+  },
+
+  [MSG.LAUNCH_HERE]: async () => {
+    launcherOnActiveTab();
+    return { ok: true };
   },
 
   [MSG.AUTH_METHODS]: async ({ serverUrl }) => {
@@ -199,61 +358,87 @@ const handlers = {
   [MSG.SYNC_NOW]: async () => syncNow(),
   [MSG.SNIPPETS_GET]: async () => ({ ok: true, data: await snippetsForUi() }),
 
+  // Writes apply to the local cache immediately and queue for the
+  // outbox; flushSoon attempts to push to the server but failure (e.g.
+  // offline) just leaves the item queued for the next sync.
   [MSG.SNIPPET_CREATE]: async ({ payload }) => {
-    const serverUrl = await store.getServerUrl();
-    const token = await store.getToken();
     const id = crypto.randomUUID();
-    try {
-      const res = await api.createSnippet(serverUrl, token, id, payload);
-      const cache = await store.getCache("personal");
-      cache.items[id] = { id, version: res.version, ...payload, uses: 0, last_used: null };
-      await store.setCache("personal", cache);
-      return { ok: true, data: { id, version: res.version } };
-    } catch (e) {
-      return authError(e);
-    }
+    const cache = await store.getCache("personal");
+    cache.items[id] = { id, version: 0, ...payload, uses: 0, last_used: null, dirty: true, pendingCreate: true };
+    await store.setCache("personal", cache);
+    flushSoon();
+    return { ok: true, data: { id, version: 0 } };
   },
 
-  [MSG.SNIPPET_UPDATE]: async ({ id, expectedVersion, payload }) => {
-    const serverUrl = await store.getServerUrl();
-    const token = await store.getToken();
-    try {
-      const res = await api.updateSnippet(serverUrl, token, id, expectedVersion, payload);
-      const cache = await store.getCache("personal");
-      const prev = cache.items[id] || {};
-      cache.items[id] = { ...prev, id, version: res.version, ...payload };
-      await store.setCache("personal", cache);
-      return { ok: true, data: { version: res.version } };
-    } catch (e) {
-      return authError(e);
-    }
+  [MSG.SNIPPET_UPDATE]: async ({ id, payload }) => {
+    const cache = await store.getCache("personal");
+    const it = cache.items[id];
+    if (!it) return { ok: false, error: "snippet not found" };
+    Object.assign(it, payload, { dirty: true });
+    await store.setCache("personal", cache);
+    flushSoon();
+    return { ok: true, data: { version: it.version } };
   },
 
   [MSG.SNIPPET_DELETE]: async ({ id }) => {
-    const serverUrl = await store.getServerUrl();
-    const token = await store.getToken();
-    try {
-      await api.deleteSnippet(serverUrl, token, id);
-      const cache = await store.getCache("personal");
-      delete cache.items[id];
+    const cache = await store.getCache("personal");
+    const it = cache.items[id];
+    if (it) {
+      if (it.pendingCreate) delete cache.items[id]; // never reached the server
+      else {
+        it.deleted = true;
+        it.dirty = true;
+        it.deletedAt = Math.floor(Date.now() / 1000);
+      }
       await store.setCache("personal", cache);
-      return { ok: true };
-    } catch (e) {
-      return authError(e);
+      flushSoon();
     }
+    return { ok: true };
   },
 
+  // Trash is served from local tombstones (works offline), merged with
+  // the server's trash for items deleted on other devices when online.
   [MSG.TRASH_LIST]: async () => {
+    const cache = await store.getCache("personal");
+    const local = Object.values(cache.items)
+      .filter((it) => it.deleted)
+      .map((it) => ({
+        id: it.id,
+        version: it.version,
+        deleted_at: it.deletedAt || null,
+        payload: payloadOf(it),
+      }));
+    const localIds = new Set(local.map((x) => x.id));
+    let merged = local;
     const serverUrl = await store.getServerUrl();
     const token = await store.getToken();
-    try {
-      return { ok: true, data: await api.listTrash(serverUrl, token) };
-    } catch (e) {
-      return authError(e);
+    if (serverUrl && token) {
+      try {
+        const remote = (await api.listTrash(serverUrl, token)) || [];
+        merged = [...local, ...remote.filter((r) => !localIds.has(r.id))];
+      } catch {
+        /* offline or error: local-only trash is still useful */
+      }
     }
+    merged.sort((a, b) => (b.deleted_at || 0) - (a.deleted_at || 0));
+    return { ok: true, data: merged };
   },
 
   [MSG.TRASH_RESTORE]: async ({ id }) => {
+    const cache = await store.getCache("personal");
+    const it = cache.items[id];
+    if (it && it.deleted) {
+      // Local tombstone: undelete optimistically, queue the server-side
+      // restore if the delete had already synced.
+      it.deleted = false;
+      it.dirty = true;
+      if (it.syncedTombstone) it.needsRestore = true;
+      delete it.deletedAt;
+      await store.setCache("personal", cache);
+      flushSoon();
+      return { ok: true };
+    }
+    // Server-only tombstone (deleted on another device): needs the server.
     const serverUrl = await store.getServerUrl();
     const token = await store.getToken();
     try {
@@ -281,13 +466,28 @@ const handlers = {
   },
 
   [MSG.USAGE_REPORT]: async ({ body }) => {
+    // Bump the local per-snippet counters first; sync never overwrites
+    // `uses`, so these drive the manager display and savings footer.
+    for (const kind of ["personal", "library"]) {
+      const deltas = body[kind] || [];
+      if (!deltas.length) continue;
+      const cache = await store.getCache(kind);
+      for (const d of deltas) {
+        const it = cache.items[d.id];
+        if (it) {
+          it.uses = (it.uses || 0) + d.delta;
+          it.last_used = d.last_used;
+        }
+      }
+      await store.setCache(kind, cache);
+    }
     const serverUrl = await store.getServerUrl();
     const token = await store.getToken();
     try {
       await api.reportUsage(serverUrl, token, body);
       return { ok: true };
     } catch (e) {
-      // Telemetry is best-effort; never surface as a hard failure.
+      // Server telemetry is best-effort; the local bump already stuck.
       return { ok: false, error: e.message };
     }
   },

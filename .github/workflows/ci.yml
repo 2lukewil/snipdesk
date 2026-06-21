@@ -128,3 +128,33 @@ jobs:
             exit 1
           }
           Write-Host "Offline dep graph is clean."
+
+  # The browser extension is a self-contained subtree with its own
+  # package. It's OS-agnostic, so it runs on a fast Linux runner in
+  # parallel with the Windows build above.
+  extension:
+    name: Extension (test + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -11,7 +11,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "zip": "node scripts/pack.mjs"
+    "zip": "node scripts/pack.mjs",
+    "test": "node --test"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.28",

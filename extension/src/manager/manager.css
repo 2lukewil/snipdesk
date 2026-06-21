@@ -24,6 +24,8 @@ header .brand { font-size: 17px; font-weight: 600; }
 header .spacer { flex: 1; }
 header .savings { font-size: 12px; color: var(--accent); }
 header .identity { font-size: 13px; color: var(--text-dim); }
+.sync-indicator { font-size: 12px; color: var(--text-dim); }
+.sync-indicator.err { color: var(--danger); }
 
 nav#tabs { display: flex; gap: 4px; }
 nav#tabs button {

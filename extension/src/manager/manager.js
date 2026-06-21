@@ -35,6 +35,7 @@ const SERVER_ERR = "Server request failed. Is the server reachable?";
 
 const ALL = "__all__";
 const UNFILED = "__unfiled__";
+const MAX_LIST_ROWS = 500; // cap rendered rows so huge libraries stay responsive
 
 // Glyphs mirror the desktop folder tree.
 const ICON_ALL = "\u{1F4D4}"; // notebook with decorative cover
@@ -81,6 +82,7 @@ async function init() {
   applyDensity();
   wire();
   showTab("snippets");
+  setInterval(refreshSyncIndicator, 20000);
 
   // Text captured from a page's right-click menu opens a prefilled
   // new snippet.
@@ -96,6 +98,26 @@ async function loadSnippets() {
   renderTree();
   renderTagStrip();
   renderList();
+  refreshSyncIndicator();
+}
+
+// Header hint when local writes haven't reached the server yet.
+async function refreshSyncIndicator() {
+  const st = (await send(MSG.AUTH_STATUS)).data || {};
+  const ind = $("sync-indicator");
+  if (!ind) return;
+  const pending = st.pending || 0;
+  const failed = st.lastSync && !st.lastSync.ok;
+  if (pending && failed) {
+    ind.textContent = `Sync failed, ${pending} pending`;
+    ind.className = "sync-indicator err";
+  } else if (pending) {
+    ind.textContent = `${pending} unsynced`;
+    ind.className = "sync-indicator";
+  } else {
+    ind.textContent = "";
+    ind.className = "sync-indicator";
+  }
 }
 
 // ---- tag filter strip ----
@@ -593,9 +615,8 @@ function renderList() {
   const list = $("list");
   list.replaceChildren();
   const q = $("search").value.trim().toLowerCase();
-  const items = visibleSnippets();
-  visibleItems = items;
-  if (items.length === 0) {
+  const all = visibleSnippets();
+  if (all.length === 0) {
     const blank = snippets.length === 0 && !q && selectedFolder === ALL && !selectedTag;
     list.appendChild(
       el(
@@ -606,8 +627,13 @@ function renderList() {
           : "No snippets.",
       ),
     );
+    visibleItems = [];
     return;
   }
+  // Cap rendered rows so a multi-thousand library stays snappy; the cap
+  // only bites when nothing is filtering it down.
+  const items = all.length > MAX_LIST_ROWS ? all.slice(0, MAX_LIST_ROWS) : all;
+  visibleItems = items;
   items.forEach((s, index) => {
     const row = el("div", "row");
     row.dataset.id = s.id;
@@ -660,6 +686,9 @@ function renderList() {
     row.addEventListener("click", (e) => handleRowClick(s, index, e));
     list.appendChild(row);
   });
+  if (all.length > items.length) {
+    list.appendChild(el("div", "empty", `Showing first ${items.length} of ${all.length}. Refine your search.`));
+  }
 }
 
 // Explorer-style selection: plain click opens the snippet; Ctrl/Cmd
@@ -1260,7 +1289,11 @@ function wire() {
   for (const btn of document.querySelectorAll("#tabs button")) {
     btn.addEventListener("click", () => showTab(btn.dataset.tab));
   }
-  $("search").addEventListener("input", renderList);
+  let searchTimer;
+  $("search").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderList, 90);
+  });
   $("folder-create").addEventListener("submit", (e) => {
     e.preventDefault();
     createFolder();

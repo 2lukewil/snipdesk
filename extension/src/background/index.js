@@ -101,6 +101,7 @@ async function pullStream(kind, fetcher) {
         prev.deleted = true;
         prev.syncedTombstone = true;
         prev.version = view.version;
+        prev.deletedAt = prev.deletedAt || view.updated_at || Math.floor(Date.now() / 1000);
       }
     } else if (view.payload) {
       cache.items[view.id] = {
@@ -157,6 +158,8 @@ async function flushOutbox() {
     if (!serverUrl || !token) return;
     const cache = await store.getCache("personal");
     let changed = false;
+    let broke = false;
+    let breakErr = null;
     for (const id of Object.keys(cache.items)) {
       const it = cache.items[id];
       if (!it.dirty && !it.pendingCreate && !it.needsRestore) continue;
@@ -188,8 +191,16 @@ async function flushOutbox() {
         }
         changed = true;
       } catch (e) {
-        if (e instanceof api.ApiError && e.kind === "network") break; // server down: stay queued
-        if (e instanceof api.ApiError && (e.kind === "unauthorized" || e.kind === "inactive")) break;
+        if (e instanceof api.ApiError && e.kind === "network") {
+          broke = true;
+          breakErr = "server unreachable; changes will retry";
+          break; // server down: stay queued
+        }
+        if (e instanceof api.ApiError && (e.kind === "unauthorized" || e.kind === "inactive")) {
+          broke = true;
+          breakErr = e.message;
+          break;
+        }
         if (e instanceof api.ApiError && e.kind === "conflict" && !it.deleted && !it.pendingCreate) {
           // Last-write-wins: refetch the current version, overwrite.
           const v = await serverVersionFor(serverUrl, token, id);
@@ -216,6 +227,10 @@ async function flushOutbox() {
       }
     }
     if (changed) await store.setCache("personal", cache);
+    // Surface flush outcome so the popup/manager show "couldn't sync"
+    // even when the flush was triggered by a write rather than a sync.
+    if (broke) await store.setSyncStatus({ at: Date.now(), ok: false, error: breakErr });
+    else if (changed) await store.setSyncStatus({ at: Date.now(), ok: true });
   } finally {
     flushing = false;
     if (flushQueued) {
@@ -228,6 +243,24 @@ async function flushOutbox() {
 async function pendingCount() {
   const cache = await store.getCache("personal");
   return Object.values(cache.items).filter((it) => it.dirty || it.pendingCreate || it.needsRestore).length;
+}
+
+// Drop fully-synced tombstones once they age out, matching the server's
+// retention, so local trash doesn't grow without bound. Un-flushed
+// deletes (still dirty) are always kept.
+const TOMBSTONE_TTL_DAYS = 90;
+async function pruneTombstones() {
+  const cache = await store.getCache("personal");
+  const cutoff = Math.floor(Date.now() / 1000) - TOMBSTONE_TTL_DAYS * 86400;
+  let changed = false;
+  for (const id of Object.keys(cache.items)) {
+    const it = cache.items[id];
+    if (it.deleted && it.syncedTombstone && !it.dirty && it.deletedAt && it.deletedAt < cutoff) {
+      delete cache.items[id];
+      changed = true;
+    }
+  }
+  if (changed) await store.setCache("personal", cache);
 }
 
 async function syncNow() {
@@ -244,6 +277,7 @@ async function syncNow() {
     await flushOutbox(); // push local writes up before pulling
     await pullStream("personal", (since) => api.listSnippets(serverUrl, token, since));
     await pullStream("library", (since) => api.listLibrary(serverUrl, token, since));
+    await pruneTombstones();
     await store.setSyncStatus({ at: Date.now(), ok: true });
     return { ok: true };
   } catch (e) {

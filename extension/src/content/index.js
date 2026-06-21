@@ -42,7 +42,9 @@ function applyFilter(rawQuery) {
       return tags.every((t) => have.some((h) => h.startsWith(t)));
     });
   }
-  filtered = list;
+  // Cap results so a large library doesn't build thousands of rows per
+  // keystroke; ranked matches mean the top slice is what you want.
+  filtered = list.length > 100 ? list.slice(0, 100) : list;
   selected = 0;
   lastTextQuery = text;
 }

@@ -2408,15 +2408,14 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
         ),
         _ => "<span class=\"lib-folder-caret-spacer\" aria-hidden=\"true\"></span>".to_string(),
     };
-    // Tree-arrow glyph for nested folders only. Depth-0 rows skip
-    // the slot entirely - they don't need the structural hint and
-    // the empty spacer was wasting horizontal real estate on every
-    // top-level row.
-    let tree_glyph = if depth > 0 {
-        "<span class=\"lib-tree-glyph\" aria-hidden=\"true\">&#x21B3;</span>"
-    } else {
-        ""
+    // Folder glyph per node kind, matching the extension's tree:
+    // notebook for All, page for Unfiled, folder for real folders.
+    let icon = match kind {
+        FolderNodeKind::Special => "&#x1F4D4;", // notebook with decorative cover
+        FolderNodeKind::Unfiled => "&#x1F4C4;", // page facing up
+        FolderNodeKind::Real => "&#x1F4C1;",    // file folder
     };
+    let icon_html = format!("<span class=\"lib-folder-icon\" aria-hidden=\"true\">{icon}</span>");
     // Folder row is now a <div> wrapping a separate caret + link.
     // Previous shape (caret span inside an <a>) made clicking the
     // caret unreliable: even with preventDefault, some browsers
@@ -2445,29 +2444,46 @@ fn render_lib_folder_node(args: FolderNodeArgs<'_>) -> String {
     // Hover-revealed delete affordance, real folders only. The click
     // handler in LIBRARY_PAGE_JS opens the confirm modal; the row's
     // own click navigation explicitly ignores this button.
-    let delete_btn = match kind {
-        FolderNodeKind::Real => format!(
-            "<button type=\"button\" class=\"lib-folder-del\" \
-                data-folder-delete=\"{p}\" title=\"Delete folder\" \
-                aria-label=\"Delete folder {p}\">&#215;</button>",
-            p = escape_html(path),
+    // Hover-revealed rename + delete, real folders only. Rename mirrors
+    // the extension's pencil (monochrome SVG, tints on hover). The
+    // pencil SVG uses single-quoted attributes so the Rust string needs
+    // no escaping.
+    let (rename_btn, delete_btn) = match kind {
+        FolderNodeKind::Real => (
+            format!(
+                "<button type=\"button\" class=\"lib-folder-edit\" \
+                    data-folder-rename=\"{p}\" title=\"Rename folder\" \
+                    aria-label=\"Rename folder {p}\">\
+                    <svg viewBox='0 0 24 24' width='12' height='12' fill='none' \
+                     stroke='currentColor' stroke-width='2' stroke-linecap='round' \
+                     stroke-linejoin='round'><path d='M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z'/></svg>\
+                 </button>",
+                p = escape_html(path),
+            ),
+            format!(
+                "<button type=\"button\" class=\"lib-folder-del\" \
+                    data-folder-delete=\"{p}\" title=\"Delete folder\" \
+                    aria-label=\"Delete folder {p}\">&#215;</button>",
+                p = escape_html(path),
+            ),
         ),
-        _ => String::new(),
+        _ => (String::new(), String::new()),
     };
     format!(
         "<div class=\"lib-folder-row{active_class}\" \
             data-folder-path=\"{path_attr}\" data-sort-order=\"{sort_order}\" \
             data-folder-href=\"{href_attr}\" \
             {drop_attrs} {drag_attrs}{style}>\
-           {caret}{glyph}\
+           {caret}{icon}\
            <span class=\"label\">{label_safe}</span>\
-           <span class=\"count\">{count}</span>{del}\
+           <span class=\"count\">{count}</span>{rename}{del}\
          </div>",
         path_attr = escape_html(path),
         href_attr = escape_html(&folder_href),
         label_safe = escape_html(label),
         caret = caret_html,
-        glyph = tree_glyph,
+        icon = icon_html,
+        rename = rename_btn,
         del = delete_btn,
     )
 }
@@ -3612,6 +3628,25 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
       .then(function (r) { return r.text(); })
       .then(openModal);
   });
+  // ---- Folder rename: pencil on sidebar rows. Prompts for a new leaf
+  // name and reuses the folder-move endpoint (a rename is a prefix
+  // rewrite within the same parent). ----
+  document.body.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".lib-folder-edit");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var path = btn.getAttribute("data-folder-rename") || "";
+    if (!path) return;
+    var parts = path.split("/");
+    var leaf = parts[parts.length - 1];
+    var name = window.prompt("Rename folder", leaf);
+    if (name == null) return;
+    var clean = name.trim().replace(/\//g, "");
+    if (!clean || clean === leaf) return;
+    parts[parts.length - 1] = clean;
+    submitFolderMove(path, parts.join("/"));
+  });
   // ---- One-shot result banners (import results, folder deletes)
   // fade out after a few seconds. The query params that produced
   // them are stripped immediately so a refresh doesn't resurrect
@@ -3902,6 +3937,7 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     // Delete-button clicks open the confirm modal (handled by their
     // own delegated listener); they must never double as navigation.
     if (e.target.closest && e.target.closest(".lib-folder-del")) return;
+    if (e.target.closest && e.target.closest(".lib-folder-edit")) return;
     var caret = e.target.closest && e.target.closest(".lib-folder-caret");
     if (caret) {
       e.preventDefault();
@@ -4777,9 +4813,21 @@ pub async fn library_folder_move(
         }
     };
     if affected.is_empty() {
-        // Empty source folder = noop success. Lets the JS treat it
-        // as "we moved nothing" rather than 404.
-        return StatusCode::NO_CONTENT.into_response();
+        // No snippets under `old`, but it may still be an explicit
+        // empty folder (a library_folders row with nothing in it).
+        // Those must still move, so only bail when the source doesn't
+        // exist as a folder row at all.
+        let folder_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM library_folders WHERE path = ?1 OR path LIKE ?2",
+        )
+        .bind(old)
+        .bind(&like_pattern)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap_or(0);
+        if folder_rows == 0 {
+            return StatusCode::NO_CONTENT.into_response();
+        }
     }
     let base_version: i64 =
         sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM library_snippets")

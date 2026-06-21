@@ -1,43 +1,51 @@
 /* SnipDesk admin dashboard - minimal, light/dark-respecting,
    monospaced for table data so columns line up at a glance. */
 
+/* Palette shared with the desktop client and browser extension: the
+   canonical SnipDesk look. --bg is the page, --bg-elev cards/nav,
+   --bg-3 recessed surfaces (inputs, thead), --bg-hover row hovers. */
 :root {
-  --bg: #ffffff;
-  --bg-elev: #f7f7f8;
-  --fg: #16181d;
-  --fg-dim: #6b7280;
-  --border: #e4e6eb;
-  --accent: #3563ff;
+  --bg: #f5f6f8;
+  --bg-elev: #ffffff;
+  --bg-3: #eef0f3;
+  --bg-hover: #e2e6eb;
+  --fg: #1a1c20;
+  --fg-dim: #5a6270;
+  --border: #d1d5db;
+  --accent: #2c6fd8;
   --accent-fg: #ffffff;
-  --danger: #c2410c;
-  --danger-bg: #fff4ed;
-  --ok: #047857;
-  --warn-bg: #fef3c7;
-  --warn-fg: #92400e;
-  --pill-admin-bg: #ede9fe;
-  --pill-admin-fg: #4c1d95;
-  --pill-member-bg: #e0f2fe;
-  --pill-member-fg: #075985;
+  --danger: #c03535;
+  --danger-bg: #f7e3e3;
+  --ok: #2f9e6e;
+  --warn-bg: #fdf0d5;
+  --warn-fg: #8a5a12;
+  --pill-admin-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  --pill-admin-fg: var(--accent);
+  --pill-member-bg: color-mix(in srgb, var(--fg-dim) 16%, transparent);
+  --pill-member-fg: var(--fg);
+  --radius: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0d12;
-    --bg-elev: #14171e;
-    --fg: #e5e7eb;
-    --fg-dim: #9ca3af;
-    --border: #262a33;
-    --accent: #6f8cff;
-    --accent-fg: #0b0d12;
-    --danger: #f87171;
-    --danger-bg: #2b1715;
-    --ok: #34d399;
-    --warn-bg: #2d2410;
-    --warn-fg: #fbbf24;
-    --pill-admin-bg: #2e1d57;
-    --pill-admin-fg: #c4b5fd;
-    --pill-member-bg: #0c324b;
-    --pill-member-fg: #7dd3fc;
+    --bg: #1a1c20;
+    --bg-elev: #222529;
+    --bg-3: #2a2e34;
+    --bg-hover: #2f343b;
+    --fg: #e7e9ec;
+    --fg-dim: #9aa1aa;
+    --border: #3a3f46;
+    --accent: #4c9aff;
+    --accent-fg: #ffffff;
+    --danger: #e06b6b;
+    --danger-bg: #2c1d1f;
+    --ok: #5fc27e;
+    --warn-bg: #2c2614;
+    --warn-fg: #ffcf5c;
+    --pill-admin-bg: color-mix(in srgb, var(--accent) 22%, transparent);
+    --pill-admin-fg: var(--accent);
+    --pill-member-bg: color-mix(in srgb, var(--fg-dim) 22%, transparent);
+    --pill-member-fg: var(--fg);
   }
 }
 
@@ -76,7 +84,7 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .nav-links { display: flex; gap: 14px; }
 .nav-links a {
   padding: 4px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--fg);
 }
 .nav-links a.active { background: var(--accent); color: var(--accent-fg); }
@@ -99,7 +107,7 @@ table.data {
   border-collapse: collapse;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 table.data th, table.data td {
@@ -117,6 +125,7 @@ table.data thead th {
   letter-spacing: 0.04em;
 }
 table.data tbody tr:last-child td { border-bottom: none; }
+table.data tbody tr:hover td { background: var(--bg-hover); }
 table.data tbody tr.disabled td { opacity: 0.55; }
 table.data .col-actions { text-align: right; white-space: nowrap; }
 
@@ -154,7 +163,7 @@ button, .btn {
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 5px 11px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 button:hover, .btn:hover { border-color: var(--fg-dim); }
@@ -169,10 +178,10 @@ form.stack { display: flex; flex-direction: column; gap: 10px; }
 form.stack label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-dim); }
 input[type="text"], input[type="email"], input[type="password"], textarea, select {
   font: inherit;
-  background: var(--bg);
+  background: var(--bg-3);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 6px 9px;
 }
 input:focus, textarea:focus, select:focus {
@@ -215,7 +224,7 @@ textarea {
   text-decoration: none;
   padding: 9px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--fg);
   background: var(--bg);
   font-size: 13px;
@@ -229,10 +238,10 @@ textarea {
   flex: 1;
   min-width: 160px;
   padding: 7px 10px;
-  background: var(--bg);
+  background: var(--bg-3);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   font: inherit;
 }
 .library-toolbar .btn {
@@ -240,7 +249,7 @@ textarea {
   text-decoration: none;
   padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--fg);
   font-size: 13px;
 }
@@ -250,8 +259,8 @@ textarea {
    verbatim from the desktop client's .preview-var so {placeholders}
    read identically on both surfaces. */
 .preview-var {
-  background: rgba(76, 154, 255, 0.2);
-  border: 1px solid rgba(76, 154, 255, 0.5);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 3px;
   padding: 0 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -310,11 +319,11 @@ textarea {
 }
 .imp-toolbar input[type="search"] {
   flex: 1; min-width: 160px; padding: 7px 10px;
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px; font: inherit;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--radius); font: inherit;
 }
 #imp-tree {
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius);
   padding: 8px 10px; max-height: 380px; overflow-y: auto;
   background: var(--bg);
 }
@@ -332,9 +341,9 @@ textarea {
 .imp-item {
   margin: 1px 0 1px 26px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
-.imp-item:hover { background: rgba(255, 255, 255, 0.04); }
+.imp-item:hover { background: var(--bg-hover); }
 .imp-item label {
   display: flex; align-items: center; gap: 6px;
   cursor: pointer; font-size: 13px;
@@ -353,7 +362,7 @@ textarea {
 
 .banner {
   padding: 9px 13px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   margin-bottom: 12px;
   font-size: 13px;
 }
@@ -381,7 +390,7 @@ textarea {
 .library-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 12px 14px;
   /* Audit-log links land on #lib-<id>; keep the card clear of the
      top edge when the browser scrolls the anchor into view. */
@@ -414,7 +423,7 @@ textarea {
 .library-card pre.body {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 8px 10px;
   margin: 8px 0 0;
   white-space: pre-wrap;
@@ -433,7 +442,7 @@ textarea {
 .lib-form {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 14px;
   margin-bottom: 16px;
 }
@@ -468,7 +477,7 @@ textarea {
 .library-sidebar {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 6px;
   position: sticky;
   top: 12px;
@@ -496,13 +505,13 @@ textarea {
   align-items: center;
   gap: 4px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--fg);
   user-select: none;
   border-left: 3px solid transparent;
 }
 .lib-folder-row[data-folder-href] { cursor: pointer; }
-.lib-folder-row:hover { background: var(--bg); }
+.lib-folder-row:hover { background: var(--bg-hover); }
 /* Hover-revealed folder delete. Hidden via opacity (not display)
    so the row width doesn't jump when it appears. */
 .lib-folder-del {
@@ -531,7 +540,7 @@ textarea {
   flex-wrap: wrap;
 }
 .lib-folder-row.active {
-  background: var(--bg);
+  background: var(--bg-hover);
   border-left-color: var(--accent);
 }
 .lib-folder-row.drop-target {
@@ -564,12 +573,12 @@ textarea {
   align-items: center;
   gap: 6px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--fg);
   text-decoration: none;
   user-select: none;
 }
-.lib-folder-node:hover { background: var(--bg); }
+.lib-folder-node:hover { background: var(--bg-hover); }
 
 /* Dragging-state styling for library cards. The whole card is the
    drag target (no explicit handle), so cursor:grab and the dragging
@@ -585,9 +594,9 @@ textarea {
   margin-bottom: 4px;
 }
 .format-toolbar .fmt-btn {
-  background: var(--bg);
+  background: var(--bg-3);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 3px 8px;
   font-size: 12px;
   cursor: pointer;
@@ -602,7 +611,7 @@ textarea {
 .lib-edit-form {
   background: var(--bg-elev);
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 14px;
 }
 .lib-edit-form textarea { min-height: 140px; }
@@ -615,7 +624,7 @@ textarea {
   gap: 8px 18px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 16px 18px;
   max-width: 720px;
 }
@@ -667,7 +676,7 @@ textarea {
   cursor: pointer;
   font-size: 12px;
   padding: 4px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--fg);
@@ -683,7 +692,7 @@ textarea {
   min-width: 220px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -697,7 +706,7 @@ textarea {
   text-align: left;
   padding: 6px 10px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 .stats-add-item:hover { background: var(--bg); }
@@ -715,7 +724,7 @@ textarea {
 .stat-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 14px 16px;
   position: relative;
 }
@@ -735,7 +744,7 @@ textarea {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 .stat-card .stat-close:hover {
   background: var(--bg);
@@ -772,7 +781,7 @@ textarea {
   padding: 0;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 .recent-list li {
   padding: 9px 14px;
@@ -811,7 +820,7 @@ textarea {
   border-collapse: collapse;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
   overflow: hidden;
   font-size: 12.5px;
 }
@@ -896,7 +905,7 @@ textarea {
   line-height: 1.45;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   overflow-x: auto;
   white-space: pre;
 }
@@ -936,7 +945,7 @@ textarea {
   padding: 4px 10px;
   margin: 2px 4px 6px;
   border: 1px dashed var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
   text-align: center;
   color: var(--fg-dim);
   font-size: 11px;
@@ -962,11 +971,11 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 18px;
+  width: 16px;
+  height: 20px;
   flex-shrink: 0;
   box-sizing: border-box;
-  font-size: 14px;
+  font-size: 20px;
   line-height: 1;
   color: var(--fg-dim);
   user-select: none;
@@ -982,23 +991,35 @@ textarea {
   outline: none;
 }
 
-/* Tree-arrow glyph for nested folders. Depth-0 rows skip this
-   slot entirely now (the previous spacer-on-everything wasted
-   real estate at the top level). 16px font for legibility -
-   the U+21B3 arrow is finicky at small sizes. */
-.lib-tree-glyph {
+/* Folder glyph (notebook / page / folder), matching the extension's
+   tree. Sits between the caret and the label on every row. */
+.lib-folder-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 18px;
   flex-shrink: 0;
-  box-sizing: border-box;
-  color: var(--fg-dim);
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1;
   user-select: none;
 }
+
+/* Hover-revealed rename pencil. Monochrome SVG (currentColor) that
+   tints to accent on hover, mirroring the extension. */
+.lib-folder-edit {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  padding: 0 3px;
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.lib-folder-edit svg { display: block; }
+.lib-folder-row:hover .lib-folder-edit,
+.lib-folder-edit:focus-visible { opacity: 1; }
+.lib-folder-edit:hover { color: var(--accent); }
 
 /* Hide descendant folder rows when any ancestor is collapsed.
    JS computes membership; this rule just renders the result.

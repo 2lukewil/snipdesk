@@ -12,6 +12,12 @@ analysis. The recommendation at the bottom is the path most likely
 to ship; the alternatives are documented to explain why they were
 ruled out.
 
+> The browser extension itself now exists (see
+> [Browser extension](/extension)) and inserts snippets into web fields,
+> with variables filled in manually. What these notes still cover is the
+> remaining piece: **auto-prefilling** those variables from the WHMCS
+> ticket or customer page the agent is viewing.
+
 ## Path comparison
 
 | Path | What it reads | OS support | Works on SaaS | Extension install? | Maintenance |

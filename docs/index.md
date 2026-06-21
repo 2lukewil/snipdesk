@@ -27,10 +27,10 @@ features:
     linkText: Install and first run
   - title: Teams (server-backed)
     details: >-
-      Sync personal snippets across devices, share a team library,
-      sign in with passwords or SSO (Google Workspace, Keycloak),
-      manage users from a browser dashboard. Personal snippets are
-      encrypted on the server.
+      Sync personal snippets across devices from the desktop app or the
+      browser extension, share a team library, sign in with passwords or
+      SSO (Google Workspace, Keycloak), manage users from a browser
+      dashboard. Personal snippets are encrypted on the server.
     link: /docker-quickstart
     linkText: Spin up a server
   - title: Self-hosted and whitelabel
@@ -45,6 +45,7 @@ features:
 ## What's in this site
 
 - **[Getting started](/getting-started)** - install the desktop client, learn the hotkey, add your first snippet, sign in to Teams if your org runs a server.
+- **[Browser extension](/extension)** - the same launcher and library as a Chrome extension for pasting into web apps (WHMCS, mail, chat): offline-first, SSO, and fleet-installable.
 - **[Docker quickstart](/docker-quickstart)** - fresh-machine-to-working-dashboard in about five minutes for the self-hosted server.
 - **[Production deploy](/deploy)** - TLS, reverse proxy, OIDC (Google Workspace + Keycloak / any compliant IdP), backups, retention, security checklist.
 - **[Server architecture](/server-design)** - schema, sync algorithm, encryption posture, JWT + refresh-token rotation.

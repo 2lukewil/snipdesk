@@ -43,14 +43,30 @@ minutes, and refreshes the token automatically as it nears expiry.
   insert into the focused field. Inline autocomplete completes the top
   match; Tab or Right accepts it.
 - **Manager** (toolbar **Open manager**): browse and edit personal
-  snippets, organise folders (create, rename, nest, reorder, delete),
-  import/export, restore from Trash, and configure savings, theme, and
-  density.
+  snippets, filter by tag, multi-select for bulk move/delete, organise
+  folders (create, rename, nest, reorder, and delete with a move-to-Unfiled
+  or delete-contents choice), import/export with a folder-grouped
+  selection tree, search and restore from Trash, and configure savings,
+  theme, density, sort, and usage counts.
 - **Add selection to SnipDesk**: right-click selected text on any page to
   start a new snippet prefilled with it.
 
 Team-library snippets appear read-only with a cloud marker; they are
 managed in the dashboard (the admin-only **Team library** link opens it).
+
+## Offline and sync
+
+Personal snippets are offline-first. Searching, inserting, creating,
+editing, deleting, folder operations, and Trash all work with the server
+unreachable: changes apply to a local cache immediately and queue in an
+outbox that flushes on the next sync (every five minutes, on a manual
+**Sync now**, or at sign-in). The popup and the manager header show how
+many changes are still pending, and flag a failed sync.
+
+Cross-device conflicts resolve **last-write-wins** (your local edit wins
+on reconcile). The team library is read-only and online only. Sync uses
+`GET /api/snippets?since=N` deltas with soft-delete tombstones; client
+IDs are minted locally so offline-created snippets upload cleanly.
 
 ## Fleet deployment
 
@@ -85,6 +101,16 @@ not subject to page CORS.
   into it, after which it syncs like any other folder.
 - **Canvas-based editors** (such as Google Docs) expose no standard DOM
   field and are not supported. Standard inputs, textareas, and
-  contenteditable regions work.
+  contenteditable regions work, including ones inside a same-origin
+  iframe. A contenteditable inside a **cross-origin** iframe can't be
+  reached from the page's top frame (browser security), so insertion
+  there isn't supported.
 - The launcher follows the Dark/Light theme setting like the manager and
   popup.
+
+## Develop
+
+From `extension/`: `npm run dev` for a watch build, `npm run build` for a
+production build, `npm run zip` to package, and `npm test` to run the unit
+tests (the pure search/variable/validation logic, via Node's built-in
+runner). CI runs the tests and build on every change.

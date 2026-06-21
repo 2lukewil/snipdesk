@@ -2043,8 +2043,8 @@ function folderNodeEl(path, label, isActive, depth, hasChildren, expanded, count
 
   const iconSpan = document.createElement("span");
   iconSpan.className = "folder-icon";
-  if (path === null) iconSpan.textContent = "✦ ";
-  else if (path === ROOT_FOLDER) iconSpan.textContent = "∘ ";
+  if (path === null) iconSpan.textContent = "📔 ";
+  else if (path === ROOT_FOLDER) iconSpan.textContent = "📄 ";
   else iconSpan.textContent = "📁 ";
   div.appendChild(iconSpan);
 
@@ -2381,21 +2381,12 @@ function renderList() {
 
     const title = document.createElement("div");
     title.className = "snip-title";
-    // .snip-title uses flex + space-between to push the usage count
-    // to the far right, so the cloud + title need to live together
-    // inside ONE flex item or the cloud gets ripped to the opposite
-    // side of the row. The wrapper span carries the existing
-    // `:first-child` ellipsis styling, so the title still truncates
-    // cleanly when long.
+    // .snip-title is flex + space-between: the title head sits on the
+    // left and ellipsizes, usage count and the cloud glyph park on the
+    // right. Keeping the cloud out of the head means every title's
+    // text starts at the same x whether or not it's a team snippet.
     const titleHead = document.createElement("span");
     titleHead.className = "snip-title-head";
-    if (isTeam) {
-      const cloud = document.createElement("span");
-      cloud.className = "snip-cloud";
-      cloud.textContent = "☁";
-      cloud.title = "Shared team snippet";
-      titleHead.appendChild(cloud);
-    }
     const titleText = document.createElement("span");
     titleText.className = "snip-title-text";
     appendHighlighted(titleText, s.title, els.search.value);
@@ -2407,6 +2398,13 @@ function renderList() {
       count.className = "snip-count";
       count.textContent = `${s.usage_count} usages`;
       title.appendChild(count);
+    }
+    if (isTeam) {
+      const cloud = document.createElement("span");
+      cloud.className = "snip-cloud";
+      cloud.textContent = "☁";
+      cloud.title = "Shared team snippet";
+      title.appendChild(cloud);
     }
     li.appendChild(title);
 

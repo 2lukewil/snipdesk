@@ -263,16 +263,23 @@ html, body {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .folder-node .folder-caret {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 14px;
   font-size: 13px;
+  line-height: 1;
   color: var(--text-dim);
 }
-/* Pseudo-node markers (✦ All / ∘ Unfiled) and the folder emoji.
+/* Pseudo-node markers (All / Unfiled) and the folder emoji.
    Sized for legibility - the old 11px glyphs read as specks. */
 .folder-node .folder-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.8;
   font-size: 13px;
+  line-height: 1;
 }
 .folder-node .folder-caret.empty {
   visibility: hidden;
@@ -531,12 +538,10 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   color: var(--accent);
   font-size: 12px;
   flex-shrink: 0;
-  margin-right: 4px;
   opacity: 0.85;
 }
 .folder-cloud {
   margin-left: 4px;
-  margin-right: 0;
 }
 
 /* Trash modal: list of soft-deleted snippets fetched from the server.

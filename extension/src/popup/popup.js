@@ -22,6 +22,9 @@ async function refresh() {
     return;
   }
   const { signedIn: isIn, user, serverUrl } = res.data;
+  // Local snippets work without an account, so counts/savings/launch are
+  // always shown; sign-in only unlocks the team library and sync.
+  loadCounts();
   if (isIn) {
     statusEl.textContent = "Signed in";
     statusEl.classList.add("ok");
@@ -30,9 +33,8 @@ async function refresh() {
     $("who-name").textContent = user?.display_name || "";
     $("who-email").textContent = user?.email || "";
     renderSyncStatus(res.data.lastSync, res.data.pending);
-    loadCounts();
   } else {
-    statusEl.textContent = "Not signed in";
+    statusEl.textContent = "Local only";
     statusEl.classList.remove("ok");
     signedIn.classList.add("hidden");
     signedOut.classList.remove("hidden");

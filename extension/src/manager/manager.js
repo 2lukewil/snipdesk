@@ -64,14 +64,19 @@ const expanded = new Set();
 
 async function init() {
   const status = (await send(MSG.AUTH_STATUS)).data || {};
-  if (!status.signedIn) {
+  $("dock").classList.remove("hidden");
+  $("tab-snippets").classList.remove("hidden");
+  if (status.signedIn) {
+    $("btn-logout").classList.remove("hidden");
+    $("identity").textContent = status.user?.display_name || status.user?.email || "";
+    if (status.user?.role === "admin") {
+      $("btn-dashboard").classList.remove("hidden");
+      $("admin-badge").classList.remove("hidden");
+    }
+  } else {
+    // Local-only: snippets still work; offer sign-in for team + sync.
     $("signed-out").classList.remove("hidden");
-    return;
   }
-  $("tabs").classList.remove("hidden");
-  $("btn-logout").classList.remove("hidden");
-  $("identity").textContent = status.user?.display_name || status.user?.email || "";
-  if (status.user?.role === "admin") $("btn-dashboard").classList.remove("hidden");
 
   settings = (await send(MSG.SETTINGS_GET)).data || {};
   applyTheme();
@@ -81,8 +86,11 @@ async function init() {
   fillSettingsForm();
   applyDensity();
   wire();
-  showTab("snippets");
-  setInterval(refreshSyncIndicator, 20000);
+  $("server-status").classList.remove("hidden");
+  statusTick();
+  setInterval(statusTick, 12000);
+  window.addEventListener("offline", refreshServerStatus);
+  window.addEventListener("online", statusTick);
 
   // Text captured from a page's right-click menu opens a prefilled
   // new snippet.
@@ -98,26 +106,46 @@ async function loadSnippets() {
   renderTree();
   renderTagStrip();
   renderList();
-  refreshSyncIndicator();
+  refreshServerStatus();
 }
 
-// Header hint when local writes haven't reached the server yet.
-async function refreshSyncIndicator() {
+// Probe the server (when signed in and online) so "Disconnected" reflects a
+// server that went down, then repaint the dot. Signed-out is local-only with
+// no server to reach, so we skip the sync entirely.
+async function statusTick() {
   const st = (await send(MSG.AUTH_STATUS)).data || {};
-  const ind = $("sync-indicator");
-  if (!ind) return;
-  const pending = st.pending || 0;
-  const failed = st.lastSync && !st.lastSync.ok;
-  if (pending && failed) {
-    ind.textContent = `Sync failed, ${pending} pending`;
-    ind.className = "sync-indicator err";
-  } else if (pending) {
-    ind.textContent = `${pending} unsynced`;
-    ind.className = "sync-indicator";
-  } else {
-    ind.textContent = "";
-    ind.className = "sync-indicator";
+  if (st.signedIn && navigator.onLine) await send(MSG.SYNC_NOW);
+  refreshServerStatus();
+}
+
+// Live connection state in the bottom-left dot: neutral when local-only
+// (not signed in), red when offline or the last sync failed, amber while
+// local writes are still flushing, green when connected and fully synced.
+async function refreshServerStatus() {
+  const box = $("server-status");
+  if (!box) return;
+  const st = (await send(MSG.AUTH_STATUS)).data || {};
+  if (!st.signedIn) {
+    box.className = "server-status local";
+    box.querySelector(".status-text").textContent = "Local only";
+    return;
   }
+  const pending = st.pending || 0;
+  const offline = !navigator.onLine;
+  const failed = st.lastSync && !st.lastSync.ok;
+  let cls, label;
+  if (offline || failed) {
+    cls = "err";
+    label = offline ? "Offline" : "Disconnected";
+  } else if (pending) {
+    cls = "pending";
+    label = `Syncing ${pending}...`;
+  } else {
+    cls = "ok";
+    label = "Connected";
+  }
+  box.className = `server-status ${cls}`;
+  box.querySelector(".status-text").textContent = label;
 }
 
 // ---- tag filter strip ----
@@ -138,15 +166,20 @@ function renderTagStrip() {
   }
 }
 
-// ---- tabs ----
-function showTab(name) {
-  for (const btn of document.querySelectorAll("#tabs button")) {
-    btn.classList.toggle("active", btn.dataset.tab === name);
-  }
-  for (const sec of document.querySelectorAll(".tab")) {
-    sec.classList.toggle("hidden", sec.id !== `tab-${name}`);
-  }
-  if (name === "trash") loadTrash();
+// ---- modals (trash / settings) ----
+function openModalEl(id) {
+  $(id).classList.remove("hidden");
+  if (id === "settings-modal") fillSettingsForm();
+  if (id === "trash-modal") loadTrash();
+}
+
+function closeModalEl(id) {
+  $(id).classList.add("hidden");
+}
+
+function closeAllModals() {
+  closeModalEl("settings-modal");
+  closeModalEl("trash-modal");
 }
 
 // ---- folder tree ----
@@ -1018,15 +1051,20 @@ async function saveSettings() {
 let trashItems = [];
 
 async function loadTrash() {
-  const list = $("trash-list");
-  list.replaceChildren(el("div", "muted", "Loading..."));
-  const res = await send(MSG.TRASH_LIST);
-  if (!res.ok) {
-    list.replaceChildren(el("div", "muted", res.error || "Could not load trash."));
-    return;
+  // Render local tombstones immediately (instant offline), then fold in
+  // the server's trash if it's reachable.
+  const local = await send(MSG.TRASH_LIST, { localOnly: true });
+  if (local.ok) {
+    trashItems = local.data || [];
+    renderTrash();
   }
-  trashItems = res.data || [];
-  renderTrash();
+  const merged = await send(MSG.TRASH_LIST);
+  if (merged.ok) {
+    trashItems = merged.data || [];
+    renderTrash();
+  } else if (!local.ok) {
+    $("trash-list").replaceChildren(el("div", "muted", merged.error || "Could not load trash."));
+  }
 }
 
 function trashMatches(item, q) {
@@ -1286,9 +1324,19 @@ function onListKey(e) {
 
 // ---- wiring ----
 function wire() {
-  for (const btn of document.querySelectorAll("#tabs button")) {
-    btn.addEventListener("click", () => showTab(btn.dataset.tab));
+  $("btn-trash").addEventListener("click", () => openModalEl("trash-modal"));
+  $("btn-settings").addEventListener("click", () => openModalEl("settings-modal"));
+  for (const btn of document.querySelectorAll(".modal-close")) {
+    btn.addEventListener("click", () => closeModalEl(btn.dataset.close));
   }
+  for (const back of document.querySelectorAll("#settings-modal, #trash-modal")) {
+    back.addEventListener("mousedown", (e) => {
+      if (e.target === back) closeModalEl(back.id);
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAllModals();
+  });
   let searchTimer;
   $("search").addEventListener("input", () => {
     clearTimeout(searchTimer);
@@ -1328,7 +1376,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const text = area === "local" && changes.pending_new_snippet?.newValue;
   if (text) {
     clearPendingNewSnippet();
-    showTab("snippets");
+    closeAllModals();
     openEditor(null, { body: text });
   }
 });

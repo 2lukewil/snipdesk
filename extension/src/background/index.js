@@ -165,10 +165,13 @@ async function flushOutbox() {
       if (!it.dirty && !it.pendingCreate && !it.needsRestore) continue;
       try {
         if (it.deleted) {
-          // A queued delete. Never-synced creations just vanish; others
-          // become a synced tombstone (kept locally so Trash works offline).
+          // A queued delete. Items that never reached the server settle as
+          // a local-only tombstone (kept so Trash works offline); synced
+          // ones get deleted server-side and become a synced tombstone.
           if (it.pendingCreate) {
-            delete cache.items[id];
+            it.pendingCreate = false;
+            it.dirty = false;
+            it.localOnly = true;
           } else {
             await api.deleteSnippet(serverUrl, token, id);
             it.dirty = false;
@@ -255,7 +258,7 @@ async function pruneTombstones() {
   let changed = false;
   for (const id of Object.keys(cache.items)) {
     const it = cache.items[id];
-    if (it.deleted && it.syncedTombstone && !it.dirty && it.deletedAt && it.deletedAt < cutoff) {
+    if (it.deleted && (it.syncedTombstone || it.localOnly) && !it.dirty && it.deletedAt && it.deletedAt < cutoff) {
       delete cache.items[id];
       changed = true;
     }
@@ -418,11 +421,16 @@ const handlers = {
     const cache = await store.getCache("personal");
     const it = cache.items[id];
     if (it) {
-      if (it.pendingCreate) delete cache.items[id]; // never reached the server
-      else {
-        it.deleted = true;
+      it.deleted = true;
+      it.deletedAt = Math.floor(Date.now() / 1000);
+      if (it.pendingCreate) {
+        // Never reached the server: keep a local-only tombstone so Trash
+        // works offline and the delete stays reversible. Nothing to sync.
+        it.pendingCreate = false;
+        it.dirty = false;
+        it.localOnly = true;
+      } else {
         it.dirty = true;
-        it.deletedAt = Math.floor(Date.now() / 1000);
       }
       await store.setCache("personal", cache);
       flushSoon();
@@ -432,7 +440,7 @@ const handlers = {
 
   // Trash is served from local tombstones (works offline), merged with
   // the server's trash for items deleted on other devices when online.
-  [MSG.TRASH_LIST]: async () => {
+  [MSG.TRASH_LIST]: async ({ localOnly } = {}) => {
     const cache = await store.getCache("personal");
     const local = Object.values(cache.items)
       .filter((it) => it.deleted)
@@ -442,32 +450,42 @@ const handlers = {
         deleted_at: it.deletedAt || null,
         payload: payloadOf(it),
       }));
-    const localIds = new Set(local.map((x) => x.id));
-    let merged = local;
+    const byDeleted = (a, b) => (b.deleted_at || 0) - (a.deleted_at || 0);
     const serverUrl = await store.getServerUrl();
     const token = await store.getToken();
-    if (serverUrl && token) {
-      try {
-        const remote = (await api.listTrash(serverUrl, token)) || [];
-        merged = [...local, ...remote.filter((r) => !localIds.has(r.id))];
-      } catch {
-        /* offline or error: local-only trash is still useful */
-      }
+    // Local tombstones render instantly. Skip the server round-trip when
+    // the caller only wants the local set, or when we're plainly offline,
+    // so Trash never blocks on an unreachable host.
+    if (localOnly || !serverUrl || !token || !navigator.onLine) {
+      return { ok: true, data: local.sort(byDeleted), partial: !localOnly };
     }
-    merged.sort((a, b) => (b.deleted_at || 0) - (a.deleted_at || 0));
-    return { ok: true, data: merged };
+    const localIds = new Set(local.map((x) => x.id));
+    let merged = local;
+    try {
+      const remote = (await api.listTrash(serverUrl, token)) || [];
+      merged = [...local, ...remote.filter((r) => !localIds.has(r.id))];
+    } catch {
+      /* offline or error: local-only trash is still useful */
+    }
+    return { ok: true, data: merged.sort(byDeleted) };
   },
 
   [MSG.TRASH_RESTORE]: async ({ id }) => {
     const cache = await store.getCache("personal");
     const it = cache.items[id];
     if (it && it.deleted) {
-      // Local tombstone: undelete optimistically, queue the server-side
-      // restore if the delete had already synced.
+      // Local tombstone: undelete optimistically. A never-synced item is
+      // restored by re-queuing its create; a synced one queues a restore.
       it.deleted = false;
-      it.dirty = true;
-      if (it.syncedTombstone) it.needsRestore = true;
       delete it.deletedAt;
+      if (it.localOnly) {
+        it.localOnly = false;
+        it.pendingCreate = true;
+        it.dirty = true;
+      } else {
+        it.dirty = true;
+        if (it.syncedTombstone) it.needsRestore = true;
+      }
       await store.setCache("personal", cache);
       flushSoon();
       return { ok: true };

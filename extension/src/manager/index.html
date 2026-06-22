@@ -9,23 +9,21 @@
   <body>
     <header>
       <span class="brand">SnipDesk</span>
-      <nav id="tabs" class="hidden">
-        <button data-tab="snippets" class="active">Snippets</button>
-        <button data-tab="settings">Settings</button>
-        <button data-tab="trash">Trash</button>
-      </nav>
       <span class="spacer"></span>
-      <span id="sync-indicator" class="sync-indicator"></span>
-      <span id="identity" class="identity"></span>
-      <button id="btn-logout" class="ghost hidden">Sign out</button>
+      <span class="user">
+        <span id="admin-badge" class="admin-badge hidden">Admin</span>
+        <span id="identity" class="identity"></span>
+      </span>
+      <button id="btn-logout" class="icon-btn hidden" title="Sign out" aria-label="Sign out">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+      </button>
     </header>
 
     <main>
       <div id="signed-out" class="notice hidden">
-        Sign in from the SnipDesk toolbar icon, then reload this page.
+        You're using SnipDesk locally. Sign in from the toolbar icon to enable the team library and cross-device sync.
       </div>
 
-      <!-- Snippets tab -->
       <section id="tab-snippets" class="tab hidden">
         <div class="toolbar">
           <input id="search" type="search" placeholder="Search snippets..." autocomplete="off" />
@@ -33,7 +31,6 @@
           <button id="btn-export" class="ghost" title="Export your personal snippets to a file">Export</button>
           <button id="btn-import" class="ghost" title="Import snippets from a file">Import</button>
           <input id="import-file" type="file" accept="application/json,.json" hidden />
-          <button id="btn-dashboard" class="ghost hidden" title="Team library is managed in the dashboard">Team library...</button>
         </div>
         <div id="tag-strip" class="tag-strip hidden"></div>
         <div class="three-pane">
@@ -50,40 +47,73 @@
           </div>
         </div>
       </section>
-
-      <!-- Settings tab -->
-      <section id="tab-settings" class="tab hidden">
-        <h2>Savings estimate</h2>
-        <label class="check"><input type="checkbox" id="set-show-savings" /> Show time/money saved</label>
-        <label>Typing speed (WPM)<input type="number" id="set-wpm" min="1" max="500" /></label>
-        <label>Hourly wage (0 to hide money)<input type="number" id="set-wage" min="0" step="0.01" /></label>
-        <label>Currency symbol<input type="text" id="set-currency" maxlength="8" /></label>
-        <h2>Display</h2>
-        <label>Theme
-          <select id="set-theme">
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
-        </label>
-        <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
-        <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
-        <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
-        <div class="actions"><button id="btn-save-settings" class="primary">Save settings</button></div>
-        <div id="settings-status" class="status"></div>
-
-        <h2>Keyboard shortcut</h2>
-        <p class="muted">Open the launcher on any page with your shortcut (default Ctrl+Shift+Space). Rebind it on Chrome's shortcuts page.</p>
-        <div class="actions"><button id="btn-shortcut" class="ghost">Change shortcut</button></div>
-      </section>
-
-      <!-- Trash tab -->
-      <section id="tab-trash" class="tab hidden">
-        <div class="trash-toolbar">
-          <input id="trash-search" type="search" placeholder="Search trash..." autocomplete="off" />
-        </div>
-        <div id="trash-list"></div>
-      </section>
     </main>
+
+    <!-- Live server status -->
+    <div id="server-status" class="server-status hidden">
+      <span class="status-dot"></span>
+      <span class="status-text"></span>
+    </div>
+
+    <!-- Quick actions: team library (admin) on top, then settings, trash -->
+    <div id="dock" class="fab-dock hidden">
+      <button id="btn-dashboard" class="fab hidden" title="Team library (managed in the dashboard)" aria-label="Team library">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+      </button>
+      <button id="btn-settings" class="fab" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+      </button>
+      <button id="btn-trash" class="fab" title="Trash" aria-label="Trash">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg>
+      </button>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings-modal" class="modal-back hidden">
+      <div class="modal modal-panel modal-settings">
+        <div class="modal-head">
+          <h2>Settings</h2>
+          <button class="modal-close" data-close="settings-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <h2>Savings estimate</h2>
+          <label class="check"><input type="checkbox" id="set-show-savings" /> Show time/money saved</label>
+          <label>Typing speed (WPM)<input type="number" id="set-wpm" min="1" max="500" /></label>
+          <label>Hourly wage (0 to hide money)<input type="number" id="set-wage" min="0" step="0.01" /></label>
+          <label>Currency symbol<input type="text" id="set-currency" maxlength="8" /></label>
+          <h2>Display</h2>
+          <label>Theme
+            <select id="set-theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
+          <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
+          <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
+          <div class="actions"><button id="btn-save-settings" class="primary">Save settings</button></div>
+          <div id="settings-status" class="status"></div>
+
+          <h2>Keyboard shortcut</h2>
+          <p class="muted">Open the launcher on any page with your shortcut (default Ctrl+Shift+Space). Rebind it on Chrome's shortcuts page.</p>
+          <div class="actions"><button id="btn-shortcut" class="ghost">Change shortcut</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trash -->
+    <div id="trash-modal" class="modal-back hidden">
+      <div class="modal modal-panel modal-trash">
+        <div class="modal-head">
+          <h2>Trash</h2>
+          <input id="trash-search" type="search" placeholder="Search trash..." autocomplete="off" />
+          <button class="modal-close" data-close="trash-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="trash-list"></div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./manager.js"></script>
   </body>

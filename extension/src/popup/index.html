@@ -10,8 +10,27 @@
     <header><span class="title">SnipDesk</span><span id="status" class="status">Loading...</span></header>
     <main>
 
-      <!-- Signed-out: server URL + password sign-in + token paste -->
+      <!-- Always available: local snippets work without an account -->
+      <section id="core">
+        <div class="who">
+          <div id="counts" class="muted">No snippets yet.</div>
+          <div id="popup-savings" class="savings"></div>
+        </div>
+        <button id="btn-launch" class="primary">Launch here</button>
+        <button id="open-manager">Open manager</button>
+      </section>
+
+      <!-- Signed-in: identity + sync + sign out -->
+      <section id="signed-in" class="hidden">
+        <div class="who-id"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
+        <div id="sync-status" class="muted"></div>
+        <button id="btn-sync">Sync now</button>
+        <button id="btn-logout" class="ghost">Sign out</button>
+      </section>
+
+      <!-- Signed-out: optional sign-in for team library + cross-device sync -->
       <section id="signed-out" class="hidden">
+        <p class="hint">Personal snippets work offline without an account. Sign in to a SnipDesk server for the team library and cross-device sync.</p>
         <label>Server URL
           <input id="server-url" type="text" placeholder="https://snippets.example.com" autocomplete="off" spellcheck="false" />
         </label>
@@ -32,20 +51,6 @@
           <button id="btn-token">Use token</button>
         </details>
         <div id="error" class="error hidden"></div>
-      </section>
-
-      <!-- Signed-in: identity + sync + counts + sign out -->
-      <section id="signed-in" class="hidden">
-        <div class="who">
-          <div class="who-id"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
-          <div id="popup-savings" class="savings"></div>
-        </div>
-        <div id="counts" class="muted">No snippets synced yet.</div>
-        <div id="sync-status" class="muted"></div>
-        <button id="btn-launch" class="primary">Launch here</button>
-        <button id="btn-sync">Sync now</button>
-        <button id="open-manager">Open manager</button>
-        <button id="btn-logout" class="ghost">Sign out</button>
       </section>
     </main>
     <script type="module" src="./popup.js"></script>

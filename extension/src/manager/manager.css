@@ -16,32 +16,32 @@ header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
+  padding: 7px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }
-header .brand { font-size: 17px; font-weight: 600; }
+header .brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 header .spacer { flex: 1; }
 header .savings { font-size: 12px; color: var(--accent); }
-header .identity { font-size: 13px; color: var(--text-dim); }
-.sync-indicator { font-size: 12px; color: var(--text-dim); }
-.sync-indicator.err { color: var(--danger); }
-
-nav#tabs { display: flex; gap: 4px; }
-nav#tabs button {
+header .identity { font-size: 16px; color: var(--text-dim); line-height: 1; }
+header .user { display: inline-flex; align-items: center; gap: 6px; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   background: transparent;
   border: 0;
   color: var(--text-dim);
-  padding: 6px 12px;
   border-radius: var(--radius);
   cursor: pointer;
-  font-size: 14px;
 }
-nav#tabs button.active { background: var(--bg-3); color: var(--text); }
+.icon-btn:hover { color: var(--text); background: var(--bg-3); }
 
 /* Centered content column. */
 main { padding: 24px; max-width: 1120px; margin: 0 auto; }
-.notice { padding: 16px; background: var(--bg-3); border-radius: var(--radius); color: var(--text); }
+.notice { padding: 10px 14px; margin-bottom: 14px; background: var(--bg-3); border-radius: var(--radius); color: var(--text-dim); font-size: 13px; }
 
 .toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
 .toolbar input[type="search"] { flex: 1; }
@@ -259,6 +259,102 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .modal h2 { margin: 0 0 8px; font-size: 16px; }
 .modal .modal-msg { color: var(--text-dim); margin: 0 0 14px; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Panel-style modals (Trash, Settings): headed with a scrollable body. */
+.modal-panel { padding: 0; margin-top: 6vh; width: min(900px, 94vw); }
+.modal-settings { width: min(640px, 94vw); }
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-head h2 { margin: 0; font-size: 16px; flex: 0 0 auto; }
+.modal-head input[type="search"] { flex: 1; min-width: 0; }
+.modal-close {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 16px 18px; max-height: 86vh; overflow-y: auto; }
+
+/* Floating quick-action icons (bottom corners) */
+.fab-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 40;
+}
+.fab {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: color 0.15s, border-color 0.15s;
+}
+.fab:hover { color: var(--text); border-color: var(--accent); }
+
+/* Live server status (bottom-left): red disconnected, amber syncing, green connected */
+.server-status {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.server-status .status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+.server-status.local .status-dot { background: var(--text-dim); }
+.server-status.ok .status-dot { background: #46c46b; box-shadow: 0 0 0 3px rgba(70, 196, 107, 0.18); }
+.server-status.pending .status-dot { background: #e0a64c; box-shadow: 0 0 0 3px rgba(224, 166, 76, 0.18); }
+.server-status.err .status-dot { background: var(--danger); box-shadow: 0 0 0 3px rgba(224, 107, 107, 0.18); }
+
+/* Admin badge beside the signed-in name */
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
 .import-list {
   max-height: 50vh;
   overflow-y: auto;
@@ -335,21 +431,22 @@ body.compact .list .row { padding: 6px 12px; }
 body.compact .list .row .body { display: none; }
 body.compact .tree-node { padding: 3px 8px; }
 
-.tab h2 { font-size: 14px; font-weight: 600; margin: 18px 0 10px; }
-#tab-settings { max-width: 460px; margin: 0 auto; }
-#tab-settings label { display: block; margin-bottom: 12px; max-width: 360px; }
-#tab-settings label.check { display: flex; align-items: center; gap: 8px; }
-#tab-settings input[type="number"], #tab-settings input[type="text"] { display: block; width: 100%; margin-top: 4px; }
-#tab-settings .actions { margin-top: 8px; }
-/* Trash: cards flow into a responsive grid, several per row when small,
-   within a capped overall width. */
-.trash-toolbar { max-width: 1140px; margin-bottom: 14px; }
-.trash-toolbar input { width: min(360px, 100%); }
+.modal-body h2 { font-size: 14px; font-weight: 600; margin: 18px 0 10px; }
+.modal-body h2:first-child { margin-top: 0; }
+.modal-settings label { display: block; margin-bottom: 12px; }
+.modal-settings label.check { display: flex; align-items: center; gap: 8px; }
+.modal-settings input[type="number"], .modal-settings input[type="text"], .modal-settings select {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 4px;
+}
+.modal-settings .actions { margin-top: 8px; }
+/* Trash: cards flow into a responsive grid within the modal body. */
 #trash-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-  max-width: 1140px;
   align-items: start;
 }
 .trash-item {

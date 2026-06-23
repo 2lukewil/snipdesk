@@ -19,6 +19,10 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
 
+  // Kept in-repo as an internal design reference, but not published to
+  // the public docs site.
+  srcExclude: ["browser-integration.md"],
+
   // Cross-folder relative links (../README.md, ../brands/_template/README.md,
   // ../crates/...) point at source files that aren't part of the docs tree.
   // The markdown.config hook below rewrites them to GitHub URLs so they open
@@ -60,7 +64,6 @@ export default defineConfig({
           { text: "Build from source", link: "/build" },
           { text: "Releases & Auto-update", link: "/auto-update" },
           { text: "Whitelabel brand bundles", link: "/whitelabel" },
-          { text: "Browser integration (design)", link: "/browser-integration" },
         ],
       },
       {
@@ -100,13 +103,6 @@ export default defineConfig({
             { text: "Auto-update & release flow", link: "/auto-update" },
             { text: "CI reference (GitLab, Linux runners)", link: "/ci-reference" },
             { text: "Whitelabel brand bundles", link: "/whitelabel" },
-          ],
-        },
-        {
-          text: "Reference",
-          collapsed: false,
-          items: [
-            { text: "Browser integration (design)", link: "/browser-integration" },
           ],
         },
       ],

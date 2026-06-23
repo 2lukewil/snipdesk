@@ -8,6 +8,10 @@ body {
   font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .hidden { display: none !important; }
 .muted { color: var(--text-dim); }
@@ -39,15 +43,12 @@ header .user { display: inline-flex; align-items: center; gap: 6px; }
 }
 .icon-btn:hover { color: var(--text); background: var(--bg-3); }
 
-/* Centered content column. */
-main { padding: 24px; max-width: 1120px; margin: 0 auto; }
-.notice { padding: 10px 14px; margin-bottom: 14px; background: var(--bg-3); border-radius: var(--radius); color: var(--text-dim); font-size: 13px; }
+/* Content fills the viewport under the header. */
+main { flex: 1; min-height: 0; width: 100%; max-width: 1500px; margin: 0 auto; padding: 16px 20px; display: flex; flex-direction: column; overflow: hidden; }
+.tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-.toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
-.toolbar input[type="search"] { flex: 1; }
-
-/* Tag filter strip */
-.tag-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+/* Tag filter, in the left pane below the folder tree */
+.tag-strip { display: flex; flex-wrap: wrap; gap: 6px; flex: none; max-height: 38%; overflow-y: auto; padding: 8px; border-top: 1px solid var(--border); }
 .tag-chip {
   font-size: 12px;
   padding: 3px 10px;
@@ -89,11 +90,23 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 /* Three panes: folder tree | snippet list | editor. */
 .three-pane {
   display: grid;
-  grid-template-columns: 220px 300px 1fr;
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: 240px 440px 1fr;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
 }
-.pane { border: 1px solid var(--border); border-radius: var(--radius); max-height: 72vh; overflow-y: auto; }
+.pane { border: 1px solid var(--border); border-radius: var(--radius); min-height: 0; overflow-y: auto; }
+/* Folder tree + snippet list read as one connected unit: no gap, a single
+   shared divider between them, rounded only on the outer edges. */
+.tree-pane { border-radius: var(--radius) 0 0 var(--radius); border-right-width: 0; }
+.list-pane { border-radius: 0 var(--radius) var(--radius) 0; display: flex; flex-direction: column; overflow: hidden; }
+.editor { margin-left: 16px; }
+.list { outline: none; }
+/* Snippet-list create bar: search + a "+" new-snippet button, mirroring
+   the folder-create bar so the two panes' tops line up. */
+.list-create { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+.list-create input { flex: 1; min-width: 0; padding: 6px 8px; }
+.list-create button { flex: none; padding: 6px 11px; }
 
 /* Folder tree pane: fixed create form on top, scrolling tree below. */
 .tree-pane { display: flex; flex-direction: column; overflow: hidden; }
@@ -168,7 +181,7 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .tree-count { font-size: 11px; color: var(--text-dim); }
 
 /* Snippet list */
-.list { outline: none; user-select: none; } /* no focus ring, no shift-click text selection */
+.list { flex: 1; min-height: 0; overflow-y: auto; user-select: none; } /* scrolls under the create bar; no shift-click text selection */
 .list .row { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .list .row:last-child { border-bottom: 0; }
 .list .row:hover { background: var(--bg-hover); }
@@ -214,27 +227,43 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .list .empty { padding: 14px; color: var(--text-dim); }
 
 /* Editor */
-.editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.editor-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.editor-fields label { margin: 0; }
+.editor-fields .f-title { flex: 1 1 200px; min-width: 0; }
+.editor-fields .f-folder, .editor-fields .f-tags { flex: 0 1 160px; min-width: 0; }
+.editor .f-body { flex: 1.4; min-height: 0; display: flex; flex-direction: column; margin: 0 0 12px; }
+.editor .f-body textarea { flex: 1; min-height: 0; resize: none; }
 .editor label { display: block; font-size: 12px; color: var(--text-dim); margin: 0 0 12px; }
 .editor input, .editor textarea { display: block; width: 100%; margin-top: 4px; }
 .editor textarea { min-height: 220px; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
 .editor .actions { display: flex; gap: 8px; margin-top: 4px; }
 .editor .ro-note { color: #d0a548; font-size: 12px; margin-bottom: 12px; }
 .editor .placeholder { color: var(--text-dim); }
-.editor-preview-wrap { margin-bottom: 12px; }
+.editor-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 12px; }
+.editor-preview-wrap .editor-preview { flex: 1; min-height: 0; overflow-y: auto; }
 .editor-preview-wrap .preview-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 .editor-preview {
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px 10px;
-  font: 13px/1.45 ui-monospace, Consolas, monospace;
-  white-space: pre-wrap;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
   word-break: break-word;
-  max-height: 160px;
   overflow-y: auto;
-  color: var(--text-dim);
+  color: var(--text);
 }
+.editor-preview .md-line { min-height: 1.25em; white-space: pre-wrap; }
+.editor-preview .md-list { margin: 4px 0; padding-left: 22px; }
+.editor-preview .md-list li { margin: 2px 0; }
+.editor-preview .md-h { font-weight: 600; margin: 8px 0 4px; }
+.editor-preview .md-h1 { font-size: 17px; }
+.editor-preview .md-h2 { font-size: 15px; }
+.editor-preview .md-h3 { font-size: 14px; }
+.editor-preview a { color: var(--accent); }
+.editor-preview code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.editor-preview var { font-style: normal; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 0 3px; border-radius: 3px; }
 .editor-preview var { font-style: normal; color: #ffcf5c; }
 
 /* Modal (folder delete choice, import preview) */
@@ -336,6 +365,67 @@ button.danger { border-color: var(--danger); color: var(--danger); }
   background: var(--text-dim);
   flex: none;
 }
+/* First-run tour */
+#onboarding-modal { align-items: center; }
+.onboarding-card { width: min(680px, 94vw); margin-top: 0; padding: 36px 44px 28px; text-align: center; }
+.onboarding-card h2 { margin: 0 0 16px; font-size: 26px; }
+.onboarding-card p { margin: 0 0 12px; color: var(--text); font-size: 17px; line-height: 1.6; }
+.onboarding-card p.muted { color: var(--text-dim); font-size: 15px; }
+.onboarding-card a { color: var(--accent); }
+.onboarding-card kbd {
+  font: inherit;
+  font-size: 15px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--text);
+  white-space: nowrap;
+}
+.ob-progress { display: flex; justify-content: center; gap: 8px; margin-bottom: 22px; }
+.ob-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.15s, width 0.15s; }
+.ob-dot.active { width: 20px; border-radius: 4px; background: var(--accent); }
+.ob-panel { display: flex; flex-direction: column; }
+.ob-actions { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+.ob-actions .spacer { flex: 1; }
+
+/* Typing test (ported from the desktop tour) */
+.onboarding-phrase {
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 12px 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: none;
+  cursor: text;
+}
+.onboarding-phrase.is-focused { border-color: var(--accent); }
+.onboarding-phrase .ch { opacity: 0.35; }
+.onboarding-phrase .ch.ok { opacity: 1; color: color-mix(in srgb, #2ea043 70%, var(--text)); }
+.onboarding-phrase .ch.bad { opacity: 1; color: #f85149; background: color-mix(in srgb, #f85149 18%, transparent); border-radius: 2px; }
+.onboarding-phrase .ch.cursor { opacity: 0.8; background: color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 2px; }
+.typing-capture { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.onboarding-result {
+  text-align: left;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 6px;
+  font-size: 16px;
+}
+.onboarding-result strong { font-size: 22px; }
+#ob-typing-restart { align-self: center; margin-top: 12px; }
+.ob-field { display: block; text-align: left; margin: 0 0 14px; color: var(--text-dim); font-size: 15px; }
+.ob-field input, .ob-field select { display: block; width: 100%; margin-top: 4px; }
+
 .server-status.local .status-dot { background: var(--text-dim); }
 .server-status.ok .status-dot { background: #46c46b; box-shadow: 0 0 0 3px rgba(70, 196, 107, 0.18); }
 .server-status.pending .status-dot { background: #e0a64c; box-shadow: 0 0 0 3px rgba(224, 166, 76, 0.18); }
@@ -441,7 +531,7 @@ body.compact .tree-node { padding: 3px 8px; }
   max-width: 320px;
   margin-top: 4px;
 }
-.modal-settings .actions { margin-top: 8px; }
+.modal-settings .actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
 /* Trash: cards flow into a responsive grid within the modal body. */
 #trash-list {
   display: grid;

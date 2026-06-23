@@ -61,6 +61,8 @@ let visibleItems = [];
 let selectedFolder = ALL;
 let draggingFolderPath = null;
 const expanded = new Set();
+let treeKeys = []; // [{ key, hasKids }] in display order, for arrow-key nav
+let navPane = "list"; // "list" | "tree" - which section the arrow keys drive
 
 async function init() {
   const status = (await send(MSG.AUTH_STATUS)).data || {};
@@ -73,10 +75,9 @@ async function init() {
       $("btn-dashboard").classList.remove("hidden");
       $("admin-badge").classList.remove("hidden");
     }
-  } else {
-    // Local-only: snippets still work; offer sign-in for team + sync.
-    $("signed-out").classList.remove("hidden");
   }
+  // Signed out is local-only: the bottom-left status dot reads "Local only";
+  // the toolbar and dock stay fully usable.
 
   settings = (await send(MSG.SETTINGS_GET)).data || {};
   applyTheme();
@@ -91,6 +92,8 @@ async function init() {
   setInterval(statusTick, 12000);
   window.addEventListener("offline", refreshServerStatus);
   window.addEventListener("online", statusTick);
+
+  if (!settings.onboarded) showOnboarding();
 
   // Text captured from a page's right-click menu opens a prefilled
   // new snippet.
@@ -182,6 +185,129 @@ function closeAllModals() {
   closeModalEl("trash-modal");
 }
 
+// ---- first-run tour ----
+const OB_STEPS = ["welcome", "launcher", "organize", "typing", "wage", "team", "done"];
+const OB_PHRASE =
+  "A time may come soon, when none will return. Then there will be need of valour without renown, " +
+  "for none shall remember the deeds that are done in the last defence of your homes. " +
+  "Yet the deeds will not be less valiant because they are unpraised.";
+let obStep = 0;
+let obTyping = null; // { startedAt, wpm }
+let obWpm = null; // measured WPM, applied on advancing past the typing step
+
+function guessCurrencyFromLocale() {
+  const map = {
+    AU: "AUD", US: "USD", GB: "GBP", DE: "EUR", FR: "EUR", IT: "EUR", ES: "EUR",
+    NL: "EUR", AT: "EUR", BE: "EUR", IE: "EUR", PT: "EUR", FI: "EUR", GR: "EUR",
+    JP: "JPY", CA: "CAD", NZ: "NZD", CH: "CHF", IN: "INR", SG: "SGD", HK: "HKD",
+    ZA: "ZAR", BR: "BRL", MX: "MXN", KR: "KRW", SE: "SEK", NO: "NOK", DK: "DKK",
+    PL: "PLN", CZ: "CZK", TR: "TRY", AE: "AED", CN: "CNY", TH: "THB", ID: "IDR",
+    PH: "PHP",
+  };
+  const region = (navigator.language || "").toUpperCase().split(/[-_]/)[1] || "";
+  return map[region] || "AUD"; // fall back to a valid dropdown code
+}
+
+function primeTyping() {
+  const phrase = $("ob-typing-phrase");
+  const input = $("ob-typing-input");
+  phrase.replaceChildren();
+  for (const ch of OB_PHRASE) {
+    const span = el("span", "ch", ch);
+    phrase.appendChild(span);
+  }
+  phrase.querySelector(".ch")?.classList.add("cursor");
+  phrase.onclick = () => input.focus();
+  input.onfocus = () => phrase.classList.add("is-focused");
+  input.onblur = () => phrase.classList.remove("is-focused");
+  input.value = "";
+  obTyping = { startedAt: null };
+  obWpm = null;
+  $("ob-typing-result").classList.add("hidden");
+  $("ob-typing-restart").classList.add("hidden");
+  setTimeout(() => input.focus(), 50);
+}
+
+function onTypingInput() {
+  const phrase = $("ob-typing-phrase");
+  const typed = $("ob-typing-input").value;
+  if (!obTyping) return;
+  if (typed.length > 0 && obTyping.startedAt === null) obTyping.startedAt = Date.now();
+  const spans = phrase.querySelectorAll(".ch");
+  spans.forEach((s, i) => {
+    s.classList.remove("ok", "bad", "cursor");
+    if (i < typed.length) s.classList.add(typed[i] === OB_PHRASE[i] ? "ok" : "bad");
+    else if (i === typed.length) s.classList.add("cursor");
+  });
+  if (typed === OB_PHRASE && obWpm === null) {
+    const seconds = (Date.now() - obTyping.startedAt) / 1000;
+    const words = OB_PHRASE.trim().split(/\s+/).length;
+    obWpm = Math.max(1, Math.round((words * 60) / seconds));
+    const result = $("ob-typing-result");
+    result.replaceChildren(el("strong", null, `${obWpm} WPM`), document.createTextNode(` over ${seconds.toFixed(1)}s.`));
+    result.classList.remove("hidden");
+    $("ob-typing-restart").classList.remove("hidden");
+    $("ob-typing-input").blur();
+  }
+}
+
+function primeWage() {
+  const sel = $("ob-currency");
+  if (sel.options.length === 0) {
+    const codes = ["AUD","USD","EUR","GBP","CAD","NZD","JPY","CHF","INR","SGD","HKD","ZAR","BRL","MXN","KRW","SEK","NOK","DKK","PLN","CZK","TRY","AED","CNY","THB","IDR","PHP"];
+    for (const c of codes) sel.appendChild(el("option", null, c)).value = c;
+  }
+  $("ob-wage").value = settings.hourly_wage > 0 ? String(settings.hourly_wage) : "";
+  const existing = settings.wage_currency;
+  sel.value = [...sel.options].some((o) => o.value === existing) ? existing : guessCurrencyFromLocale();
+}
+
+// Persist whatever the actionable step (typing / wage) gathered before
+// moving on. Next never forces the task: an untyped test or blank wage
+// just leaves those settings untouched.
+async function commitOnboardingStep(step) {
+  let patch = null;
+  if (step === "typing" && obWpm !== null) patch = { typing_speed_wpm: obWpm };
+  if (step === "wage") {
+    const wage = parseFloat($("ob-wage").value);
+    patch = { wage_currency: $("ob-currency").value || "$" };
+    if (Number.isFinite(wage) && wage > 0) {
+      patch.hourly_wage = wage;
+      patch.show_savings_estimate = true; // they set a wage; surface the estimate
+    }
+  }
+  if (patch) {
+    const res = await send(MSG.SETTINGS_SET, { patch });
+    if (res.ok) settings = res.data;
+  }
+}
+
+function renderOnboarding() {
+  for (const panel of document.querySelectorAll("#onboarding-modal .ob-panel")) {
+    panel.classList.toggle("hidden", panel.dataset.step !== OB_STEPS[obStep]);
+  }
+  const prog = $("ob-progress");
+  prog.replaceChildren();
+  OB_STEPS.forEach((_, i) => prog.appendChild(el("span", "ob-dot" + (i === obStep ? " active" : ""))));
+  $("ob-back").classList.toggle("hidden", obStep === 0);
+  $("ob-next").textContent = obStep === OB_STEPS.length - 1 ? "Get started" : "Next";
+  if (OB_STEPS[obStep] === "typing") primeTyping();
+  if (OB_STEPS[obStep] === "wage") primeWage();
+}
+
+function showOnboarding() {
+  obStep = 0;
+  renderOnboarding();
+  $("onboarding-modal").classList.remove("hidden");
+}
+
+async function finishOnboarding() {
+  await commitOnboardingStep(OB_STEPS[obStep]);
+  $("onboarding-modal").classList.add("hidden");
+  const res = await send(MSG.SETTINGS_SET, { patch: { onboarded: true } });
+  if (res.ok) settings = res.data;
+}
+
 // ---- folder tree ----
 function ensurePath(root, fullPath) {
   let node = root;
@@ -242,10 +368,13 @@ function nodeAtPath(root, path) {
 function renderTree() {
   const tree = $("tree");
   tree.replaceChildren();
+  treeKeys = [];
   const unfiledCount = snippets.filter((s) => !s.folder_path).length;
 
   tree.appendChild(folderNode({ label: "All snippets", key: ALL, count: snippets.length, depth: 0, hasKids: false, icon: ICON_ALL }));
+  treeKeys.push({ key: ALL, hasKids: false });
   tree.appendChild(folderNode({ label: "Unfiled", key: UNFILED, count: unfiledCount, depth: 0, hasKids: false, icon: ICON_UNFILED }));
+  treeKeys.push({ key: UNFILED, hasKids: false });
   tree.appendChild(rootDropZone());
 
   const root = buildTree();
@@ -255,10 +384,42 @@ function renderTree() {
       tree.appendChild(
         folderNode({ label: child.name, key: child.path, count: child.count, depth, hasKids, icon: ICON_FOLDER, real: true }),
       );
+      treeKeys.push({ key: child.path, hasKids });
       if (hasKids && expanded.has(child.path)) walk(child, depth + 1);
     }
   };
   walk(root, 0);
+}
+
+// Move the active folder (filtering the list live). The active highlight
+// is the only cue: a highlighted folder + no highlighted snippet means
+// folder navigation is in effect, and vice versa.
+function selectFolderKey(key) {
+  selectedFolder = key;
+  if (selectedIds.size > 1) {
+    selectedIds = new Set();
+    clearEditor();
+  }
+  renderTree();
+  renderList();
+  $("tree").querySelector(".tree-node.active")?.scrollIntoView({ block: "nearest" });
+}
+
+function moveTreeSel(dir) {
+  if (!treeKeys.length) return;
+  let idx = treeKeys.findIndex((k) => k.key === selectedFolder);
+  if (idx < 0) idx = 0;
+  idx = dir === "down" ? Math.min(treeKeys.length - 1, idx + 1) : Math.max(0, idx - 1);
+  selectFolderKey(treeKeys[idx].key);
+}
+
+function toggleFolderExpand(key) {
+  const node = treeKeys.find((k) => k.key === key);
+  if (!node?.hasKids) return;
+  if (expanded.has(key)) expanded.delete(key);
+  else expanded.add(key);
+  renderTree();
+  $("tree").querySelector(".tree-node.active")?.scrollIntoView({ block: "nearest" });
 }
 
 // Drop a nested folder here to lift it back to the top level.
@@ -336,6 +497,7 @@ function folderNode({ label, key, count, depth, hasKids, icon, real }) {
   }
 
   node.addEventListener("click", () => {
+    navPane = "tree";
     selectedFolder = key;
     if (selectedIds.size > 1) {
       selectedIds = new Set();
@@ -738,6 +900,7 @@ function handleRowClick(s, index, e) {
     else selectedIds.add(s.id);
     anchorIndex = index;
   } else {
+    navPane = "list";
     anchorIndex = index;
     openEditor(s);
     return;
@@ -858,6 +1021,88 @@ async function bulkDelete(ids) {
 }
 
 // ---- editor ----
+// Inline markup -> DOM nodes: links, bold, italic, inline code, bare URLs,
+// and {variable} tokens. Earliest match wins; bold/italic recurse so they
+// can nest other inline marks.
+function appendInline(parent, text) {
+  const patterns = [
+    { re: /\{[A-Za-z0-9_.-]+\}/, kind: "var" },
+    { re: /\[([^\]]+)\]\(([^)\s]+)\)/, kind: "link" },
+    { re: /\*\*([^*]+)\*\*/, kind: "bold" },
+    { re: /`([^`]+)`/, kind: "code" },
+    { re: /(?:\*|_)([^*_]+)(?:\*|_)/, kind: "italic" },
+    { re: /https?:\/\/[^\s)]+/, kind: "url" },
+  ];
+  let rest = text;
+  while (rest) {
+    let best = null;
+    for (const p of patterns) {
+      const m = p.re.exec(rest);
+      if (m && (!best || m.index < best.m.index)) best = { kind: p.kind, m };
+    }
+    if (!best) {
+      parent.appendChild(document.createTextNode(rest));
+      break;
+    }
+    const { kind, m } = best;
+    if (m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, m.index)));
+    if (kind === "var") {
+      parent.appendChild(el("var", null, m[0]));
+    } else if (kind === "link" || kind === "url") {
+      const url = kind === "link" ? m[2] : m[0];
+      const a = el("a", null, kind === "link" ? m[1] : m[0]);
+      if (/^(https?:|mailto:)/i.test(url)) {
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      }
+      parent.appendChild(a);
+    } else if (kind === "bold") {
+      const b = el("strong");
+      appendInline(b, m[1]);
+      parent.appendChild(b);
+    } else if (kind === "italic") {
+      const i = el("em");
+      appendInline(i, m[1]);
+      parent.appendChild(i);
+    } else if (kind === "code") {
+      parent.appendChild(el("code", null, m[1]));
+    }
+    rest = rest.slice(m.index + m[0].length);
+  }
+}
+
+// Render a snippet body with light markdown into the live preview: bullet
+// and numbered lists, headings, and the inline marks above. Line breaks are
+// preserved so multi-line replies look right.
+function renderRichPreview(container, text) {
+  container.replaceChildren();
+  let list = null;
+  for (const line of text.split("\n")) {
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    const num = /^\s*\d+\.\s+(.*)$/.exec(line);
+    const head = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (bullet) {
+      if (list?.tagName !== "UL") container.appendChild((list = el("ul", "md-list")));
+      appendInline(list.appendChild(el("li")), bullet[1]);
+      continue;
+    }
+    if (num) {
+      if (list?.tagName !== "OL") container.appendChild((list = el("ol", "md-list")));
+      appendInline(list.appendChild(el("li")), num[1]);
+      continue;
+    }
+    list = null;
+    if (head) {
+      const h = el("div", `md-h md-h${head[1].length}`);
+      appendInline(h, head[2]);
+      container.appendChild(h);
+      continue;
+    }
+    appendInline(container.appendChild(el("div", "md-line")), line);
+  }
+}
+
 function openEditor(snippet, prefill) {
   selectedId = snippet ? snippet.id : null;
   selectedIds = snippet ? new Set([snippet.id]) : new Set();
@@ -870,12 +1115,14 @@ function openEditor(snippet, prefill) {
     editor.appendChild(el("div", "ro-note", "Team library snippet (read-only; managed in the dashboard)."));
   }
 
-  const title = inputField(editor, "Title", snippet?.title || "", readOnly);
-  const folder = inputField(editor, "Folder (optional)", snippet?.folder_path || "", readOnly);
-  const tags = inputField(editor, "Tags (comma-separated)", (snippet?.tags || []).join(", "), readOnly);
+  const fieldRow = el("div", "editor-fields");
+  const title = inputField(fieldRow, "Title", snippet?.title || "", readOnly, "f-title");
+  const folder = inputField(fieldRow, "Folder", snippet?.folder_path || "", readOnly, "f-folder");
+  const tags = inputField(fieldRow, "Tags", (snippet?.tags || []).join(", "), readOnly, "f-tags");
+  editor.appendChild(fieldRow);
   if (!snippet) title.focus(); // new snippet (incl. context-menu capture): jump to the title
 
-  const bodyLabel = el("label", null, "Body");
+  const bodyLabel = el("label", "f-body", "Body");
   const body = el("textarea");
   body.value = snippet?.body || prefill?.body || "";
   body.disabled = readOnly;
@@ -888,13 +1135,7 @@ function openEditor(snippet, prefill) {
   const preview = el("div", "editor-preview");
   previewWrap.appendChild(preview);
   editor.appendChild(previewWrap);
-  const renderPrev = () => {
-    preview.replaceChildren();
-    for (const chunk of splitForPreview(body.value)) {
-      if (chunk.type === "text") preview.appendChild(document.createTextNode(chunk.text));
-      else preview.appendChild(el("var", null, `{${chunk.name}}`));
-    }
-  };
+  const renderPrev = () => renderRichPreview(preview, body.value);
   renderPrev();
   body.addEventListener("input", renderPrev);
 
@@ -961,8 +1202,8 @@ async function afterUpsert(id) {
   }
 }
 
-function inputField(parent, labelText, value, disabled) {
-  const label = el("label", null, labelText);
+function inputField(parent, labelText, value, disabled, cls) {
+  const label = el("label", cls || null, labelText);
   const input = el("input");
   input.type = "text";
   input.value = value;
@@ -1311,15 +1552,41 @@ async function importFromFile(file) {
 }
 
 // Arrow keys move through the visible list; Enter opens the editor.
-function onListKey(e) {
-  if (!["ArrowDown", "ArrowUp", "Enter"].includes(e.key) || !visibleItems.length) return;
-  e.preventDefault();
+function moveListSel(dir) {
+  if (!visibleItems.length) return;
   let idx = visibleItems.findIndex((s) => s.id === selectedId);
-  if (e.key === "ArrowDown") idx = Math.min(visibleItems.length - 1, idx + 1);
-  else if (e.key === "ArrowUp") idx = idx <= 0 ? 0 : idx - 1;
+  idx = dir === "down" ? (idx < 0 ? 0 : Math.min(visibleItems.length - 1, idx + 1)) : idx <= 0 ? 0 : idx - 1;
   const s = visibleItems[idx] || visibleItems[0];
   openEditor(s);
   $("list").querySelector(`[data-id="${s.id}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+// Arrow keys drive navigation globally (they have no other use here): Up/Down
+// move the active section's selection, Left/Right switch which section is
+// active, Enter expands/collapses the active folder. Real text fields keep
+// their own arrow behavior; the search box is the one field arrows escape.
+function onGlobalNavKey(e) {
+  if (!e.key.startsWith("Arrow") && e.key !== "Enter") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.querySelector(".modal-back:not(.hidden)")) return;
+  const a = document.activeElement;
+  if (a && a !== $("search") && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    navPane = "tree";
+  } else if (e.key === "ArrowRight") {
+    e.preventDefault();
+    navPane = "list";
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    navPane === "tree" ? moveTreeSel("up") : moveListSel("up");
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    navPane === "tree" ? moveTreeSel("down") : moveListSel("down");
+  } else if (e.key === "Enter" && navPane === "tree") {
+    e.preventDefault();
+    toggleFolderExpand(selectedFolder);
+  }
 }
 
 // ---- wiring ----
@@ -1336,6 +1603,19 @@ function wire() {
   }
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeAllModals();
+  });
+  // Type-to-search: a printable key with no modifier, when focus isn't in a
+  // field and no modal is open, jumps to the search box so the character
+  // lands there.
+  document.addEventListener("keydown", (e) => {
+    if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+    const a = document.activeElement;
+    const editable =
+      a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
+    if (editable) return;
+    if (document.querySelector(".modal-back:not(.hidden)")) return;
+    navPane = "list"; // typing means searching, so arrows then walk results
+    $("search").focus();
   });
   let searchTimer;
   $("search").addEventListener("input", () => {
@@ -1354,8 +1634,7 @@ function wire() {
     e.target.value = ""; // allow re-importing the same file
     importFromFile(file);
   });
-  $("list").setAttribute("tabindex", "0");
-  $("list").addEventListener("keydown", onListKey);
+  document.addEventListener("keydown", onGlobalNavKey);
   $("btn-dashboard").addEventListener("click", () => {
     const base = (settings.server_url || "").replace(/\/+$/, "");
     if (base) chrome.tabs.create({ url: `${base}/dashboard/library` });
@@ -1363,6 +1642,26 @@ function wire() {
   $("btn-shortcut").addEventListener("click", () =>
     chrome.tabs.create({ url: "chrome://extensions/shortcuts" }),
   );
+  $("ob-next").addEventListener("click", async () => {
+    if (obStep >= OB_STEPS.length - 1) { finishOnboarding(); return; }
+    await commitOnboardingStep(OB_STEPS[obStep]);
+    obStep += 1;
+    renderOnboarding();
+  });
+  $("ob-back").addEventListener("click", () => {
+    if (obStep > 0) { obStep -= 1; renderOnboarding(); }
+  });
+  $("ob-skip").addEventListener("click", finishOnboarding);
+  $("ob-typing-input").addEventListener("input", onTypingInput);
+  $("ob-typing-restart").addEventListener("click", primeTyping);
+  $("ob-shortcut-link").addEventListener("click", (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+  });
+  $("btn-replay-onboarding").addEventListener("click", () => {
+    closeModalEl("settings-modal");
+    showOnboarding();
+  });
   $("trash-search").addEventListener("input", renderTrash);
   $("btn-save-settings").addEventListener("click", saveSettings);
   $("btn-logout").addEventListener("click", async () => {

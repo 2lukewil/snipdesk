@@ -11,14 +11,31 @@ const SYNC_PERIOD_MIN = 5;
 
 const CTX_ADD_SNIPPET = "snipdesk-add-selection";
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
   setupContextMenu();
+  adoptManagedServerUrl();
+  // Fresh install: open the manager, which runs the first-run tour.
+  if (details.reason === "install") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("src/manager/index.html") });
+  }
 });
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_PERIOD_MIN });
   setupContextMenu();
+  adoptManagedServerUrl();
 });
+
+// A policy-pinned server URL is authoritative: adopt it into settings so
+// every sign-in/sync path uses it. Mirrors the desktop's locked-URL
+// behavior. Re-checked each startup so a policy change rolls the fleet.
+async function adoptManagedServerUrl() {
+  const { server_url: url } = await store.getManaged();
+  const pinned = (url || "").trim();
+  if (pinned && (await store.getServerUrl()) !== pinned) {
+    await store.setSettings({ server_url: pinned });
+  }
+}
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === SYNC_ALARM) syncNow().catch(() => {});
 });

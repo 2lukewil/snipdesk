@@ -15,24 +15,12 @@
         <span id="identity" class="identity"></span>
       </span>
       <button id="btn-logout" class="icon-btn hidden" title="Sign out" aria-label="Sign out">
-        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
       </button>
     </header>
 
     <main>
-      <div id="signed-out" class="notice hidden">
-        You're using SnipDesk locally. Sign in from the toolbar icon to enable the team library and cross-device sync.
-      </div>
-
       <section id="tab-snippets" class="tab hidden">
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="Search snippets..." autocomplete="off" />
-          <button id="btn-new" class="primary">New snippet</button>
-          <button id="btn-export" class="ghost" title="Export your personal snippets to a file">Export</button>
-          <button id="btn-import" class="ghost" title="Import snippets from a file">Import</button>
-          <input id="import-file" type="file" accept="application/json,.json" hidden />
-        </div>
-        <div id="tag-strip" class="tag-strip hidden"></div>
         <div class="three-pane">
           <div class="pane tree-pane">
             <form id="folder-create" class="folder-create" autocomplete="off">
@@ -40,8 +28,16 @@
               <button type="submit" class="primary" title="Create folder">+</button>
             </form>
             <div id="tree" class="tree"></div>
+            <div id="tag-strip" class="tag-strip hidden"></div>
           </div>
-          <div id="list" class="pane list"></div>
+          <div class="pane list-pane">
+            <div class="list-create">
+              <input id="search" type="search" placeholder="Search snippets..." autocomplete="off" />
+              <button id="btn-new" class="primary" title="New snippet">+</button>
+              <input id="import-file" type="file" accept="application/json,.json" hidden />
+            </div>
+            <div id="list" class="list"></div>
+          </div>
           <div id="editor" class="editor">
             <p class="placeholder">Select a snippet, or create a new one.</p>
           </div>
@@ -55,10 +51,16 @@
       <span class="status-text"></span>
     </div>
 
-    <!-- Quick actions: team library (admin) on top, then settings, trash -->
+    <!-- Quick actions (bottom-right): team library (admin), export, import, settings, trash -->
     <div id="dock" class="fab-dock hidden">
       <button id="btn-dashboard" class="fab hidden" title="Team library (managed in the dashboard)" aria-label="Team library">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /></svg>
+      </button>
+      <button id="btn-export" class="fab" title="Export your personal snippets to a file" aria-label="Export">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 9 12 4 17 9" /><line x1="12" y1="4" x2="12" y2="16" /></svg>
+      </button>
+      <button id="btn-import" class="fab" title="Import snippets from a file" aria-label="Import">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
       </button>
       <button id="btn-settings" class="fab" title="Settings" aria-label="Settings">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
@@ -91,12 +93,12 @@
           <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
           <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
           <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
-          <div class="actions"><button id="btn-save-settings" class="primary">Save settings</button></div>
+          <div class="actions">
+            <button id="btn-save-settings" class="primary">Save settings</button>
+            <button id="btn-shortcut" class="ghost">Change shortcut</button>
+            <button id="btn-replay-onboarding" class="ghost">Replay tour</button>
+          </div>
           <div id="settings-status" class="status"></div>
-
-          <h2>Keyboard shortcut</h2>
-          <p class="muted">Open the launcher on any page with your shortcut (default Ctrl+Shift+Space). Rebind it on Chrome's shortcuts page.</p>
-          <div class="actions"><button id="btn-shortcut" class="ghost">Change shortcut</button></div>
         </div>
       </div>
     </div>
@@ -111,6 +113,66 @@
         </div>
         <div class="modal-body">
           <div id="trash-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- First-run tour -->
+    <div id="onboarding-modal" class="modal-back hidden">
+      <div class="modal onboarding-card">
+        <div id="ob-progress" class="ob-progress" aria-hidden="true"></div>
+
+        <div class="ob-panel" data-step="welcome">
+          <h2>Welcome to SnipDesk</h2>
+          <p>A snippet launcher for your browser. Here's the one-minute tour.</p>
+        </div>
+
+        <div class="ob-panel hidden" data-step="launcher">
+          <h2>Open the launcher anywhere</h2>
+          <p>Press <kbd id="ob-hotkey">Ctrl+Shift+Space</kbd> on any page to open SnipDesk. Type to search, then press Enter to drop the snippet into the field you were in.</p>
+          <p class="muted">Rebind it on <a href="#" id="ob-shortcut-link">Chrome's shortcuts page</a>, and pin the toolbar icon for one-click access.</p>
+        </div>
+
+        <div class="ob-panel hidden" data-step="organize">
+          <h2>Organize with folders and tags</h2>
+          <p>Group snippets into folders and tag them. Searching or picking a tag spans every folder. In the launcher, the Left and Right arrows jump between the folder tree and the snippet list.</p>
+        </div>
+
+        <div class="ob-panel hidden" data-step="typing">
+          <h2>How fast do you type?</h2>
+          <p>Type the passage below. We'll measure your speed so the saved-time estimate stays honest. Skip if you'd rather not.</p>
+          <div id="ob-typing-phrase" class="onboarding-phrase" tabindex="-1"></div>
+          <input id="ob-typing-input" class="typing-capture" type="text" autocomplete="off" spellcheck="false" aria-label="Type the passage" />
+          <div id="ob-typing-result" class="onboarding-result hidden"></div>
+          <button id="ob-typing-restart" class="ghost hidden" type="button">Try again</button>
+        </div>
+
+        <div class="ob-panel hidden" data-step="wage">
+          <h2>Time and money saved</h2>
+          <p>Optional: an hourly wage turns the time you save into a dollar figure in the popup.</p>
+          <label class="ob-field">Hourly wage
+            <input id="ob-wage" type="number" min="0" step="0.5" placeholder="0" />
+          </label>
+          <label class="ob-field">Currency
+            <select id="ob-currency"></select>
+          </label>
+        </div>
+
+        <div class="ob-panel hidden" data-step="team">
+          <h2>Yours, or your team's</h2>
+          <p>Personal snippets work offline with no account. Sign in from the toolbar icon to add the shared team library and cross-device sync. That's optional, and you can do it anytime.</p>
+        </div>
+
+        <div class="ob-panel hidden" data-step="done">
+          <h2>You're set</h2>
+          <p>Create one with <strong>New snippet</strong>, or right-click selected text on any page and choose <strong>Add to SnipDesk</strong>. Replay this tour anytime from Settings.</p>
+        </div>
+
+        <div class="ob-actions">
+          <button id="ob-skip" class="ghost" type="button">Skip</button>
+          <span class="spacer"></span>
+          <button id="ob-back" class="ghost" type="button">Back</button>
+          <button id="ob-next" class="primary" type="button">Next</button>
         </div>
       </div>
     </div>

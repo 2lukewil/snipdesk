@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
   show_usage_count: true,
   theme: "dark",
   compact: false,
+  onboarded: false,
 };
 
 const get = (keys) =>
@@ -121,4 +122,19 @@ export async function clearPendingNewSnippet() {
 
 export async function clearSession() {
   await remove(["token", "user", "cache_personal", "cache_library"]);
+}
+
+// Admin-managed config from enterprise policy (chrome.storage.managed).
+// Empty {} unless a managed-storage policy is deployed for this
+// extension. Readable from any extension context.
+export async function getManaged() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.managed.get(null, (v) =>
+        resolve(chrome.runtime.lastError ? {} : v || {}),
+      );
+    } catch {
+      resolve({});
+    }
+  });
 }

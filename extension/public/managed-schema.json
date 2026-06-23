@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "type": "object",
+  "properties": {
+    "server_url": {
+      "title": "SnipDesk server URL",
+      "description": "Base URL of the SnipDesk Teams server, e.g. https://snippets.example.com. When set by policy the extension adopts it and the sign-in field is locked, so agents only pick a sign-in method.",
+      "type": "string"
+    }
+  }
+}

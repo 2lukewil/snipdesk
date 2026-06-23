@@ -1,9 +1,11 @@
 # Browser extension
 
 The SnipDesk browser extension brings the snippet launcher and personal
-library to Chrome (and Chromium-based browsers). It talks to the same
-server as the desktop client, runs on every OS with no installer, and
-inserts snippets into the web fields agents actually work in.
+library to Chrome (and Chromium-based browsers). Personal snippets work
+entirely on-device with no account; signing in to a SnipDesk server is
+optional and adds the shared team library and cross-device sync. It runs
+on every OS with no installer and inserts snippets into the web fields
+agents actually work in.
 
 ## Install
 
@@ -24,8 +26,11 @@ manager's **Settings -> Keyboard shortcut -> Change shortcut**.
 
 ## Sign in
 
-Open the toolbar popup and enter your server URL. The popup then offers
-whatever the server allows:
+Signing in is **optional** - personal snippets work without it. Sign in
+to add the team library and sync across devices. Open the toolbar popup
+and enter your server URL (or it's prefilled when an admin pinned it; see
+[Pin the server URL](#pin-the-server-url-no-rebuild)). The popup then
+offers whatever the server allows:
 
 - **Password** sign-in, when the server has it enabled.
 - **One-click SSO** buttons, one per configured OIDC provider. These use
@@ -75,6 +80,40 @@ Distribute the extension to a team with Chrome's
 policy, pointing at the Web Store listing or a self-hosted update
 manifest. The manifest pins a stable extension ID via its `key`, so the
 ID (and therefore the SSO redirect URL) is consistent across installs.
+
+### Pin the server URL (no rebuild)
+
+The extension reads an admin-managed `server_url` from Chrome's managed
+storage, so a sysadmin can bake in the SnipDesk server at deploy time the
+same way the desktop build's locked URL works, without repackaging the
+extension. When the policy is set, the extension adopts that URL and the
+popup's server field is locked, so agents only choose a sign-in method.
+
+The default-built extension ID is `pmbbmppiinigigajakmffkchlibmdebo` (a
+Web Store listing reassigns its own ID; use whatever ID the install
+reports on `chrome://extensions`).
+
+**Google Workspace Admin console** (easiest): Devices -> Chrome -> Apps &
+extensions -> the SnipDesk extension -> "Policy for extensions", paste:
+
+```json
+{ "server_url": { "Value": "https://snippets.example.com" } }
+```
+
+**Windows Group Policy / registry**: set a string value `server_url`
+under the extension's policy key:
+
+```
+HKLM\Software\Policies\Google\Chrome\3rdparty\extensions\pmbbmppiinigigajakmffkchlibmdebo\policy
+  server_url = https://snippets.example.com
+```
+
+**macOS / Linux** use the same managed-policy mechanism via a
+configuration profile / managed-policy JSON keyed by the extension ID.
+
+Pair this with the `ExtensionInstallForcelist` entry above and agents get
+a force-installed extension already pointed at your server. Changing the
+policy value rolls the whole fleet on Chrome's next policy refresh.
 
 ## SSO redirect allowlist
 

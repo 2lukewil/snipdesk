@@ -1,4 +1,5 @@
 import { MSG, send } from "../shared/messages.js";
+import { getManaged } from "../shared/storage.js";
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -38,9 +39,13 @@ async function refresh() {
     statusEl.classList.remove("ok");
     signedIn.classList.add("hidden");
     signedOut.classList.remove("hidden");
-    if (serverUrl) {
-      $("server-url").value = serverUrl;
-      loadMethods(serverUrl);
+    // A policy-pinned URL locks the field; agents just pick a method.
+    const pinned = ((await getManaged()).server_url || "").trim();
+    const url = pinned || serverUrl;
+    if (url) {
+      $("server-url").value = url;
+      $("server-url").disabled = !!pinned;
+      loadMethods(url);
     }
   }
 }

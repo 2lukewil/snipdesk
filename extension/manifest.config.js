@@ -33,6 +33,9 @@ export default defineManifest({
     },
   },
   options_page: "src/manager/index.html",
+  // Admin-managed config (chrome.storage.managed). Lets a sysadmin pin
+  // the server URL via enterprise policy at deploy time, no rebuild.
+  storage: { managed_schema: "managed-schema.json" },
   background: {
     service_worker: "src/background/index.js",
     type: "module",

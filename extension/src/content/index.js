@@ -19,6 +19,26 @@ let pending = null; // snippet awaiting variable fill
 let settingsCache = {};
 let lastTextQuery = ""; // text part of the query, for highlighting
 
+// Folder + tag navigation, mirroring the desktop launcher.
+const ALL = "\u0000all";
+const UNFILED = "\u0000unfiled";
+const ICON_ALL = "\u{1F4D4}"; // notebook
+const ICON_UNFILED = "\u{1F4C4}"; // page
+const ICON_FOLDER = "\u{1F4C1}"; // folder
+const CARET_OPEN = "▾"; // down-pointing
+const CARET_CLOSED = "▸"; // right-pointing
+const CLOUD = "☁"; // team marker
+let selectedFolder = ALL;
+let selectedTag = null; // lowercased tag, or null
+let expanded = new Set();
+let paneFocus = "list"; // "list" | "tree" - which section the arrows drive
+let treeFocus = 0; // index into treeRows when paneFocus === "tree"
+let treeRows = []; // [{ key, hasChildren, open, el }] in display order
+
+function currentQuery() {
+  return root?.querySelector(".sd-search")?.value || "";
+}
+
 // A query may carry #tag tokens (AND-combined) alongside free text.
 function parseQuery(raw) {
   const tags = [];
@@ -30,11 +50,24 @@ function parseQuery(raw) {
   return { text: text.join(" "), tags };
 }
 
+function inFolder(s) {
+  if (selectedFolder === ALL) return true;
+  if (selectedFolder === UNFILED) return !s.folder_path;
+  const fp = s.folder_path || "";
+  return fp === selectedFolder || fp.startsWith(selectedFolder + "/");
+}
+
 function applyFilter(rawQuery) {
   const { text, tags } = parseQuery(rawQuery);
-  let list = text
-    ? filterSnippets(snippets, text) // already rank-ordered
-    : sortSnippets(snippets, settingsCache.sort_by_usage !== false);
+  // A text/#tag search or a selected tag spans every folder; the active
+  // folder only scopes the plain browse view.
+  const bypassFolder = text.length > 0 || tags.length > 0 || !!selectedTag;
+  let list = snippets.slice();
+  if (!bypassFolder && selectedFolder !== ALL) list = list.filter(inFolder);
+  // Tag chip filter applies in both modes.
+  if (selectedTag) {
+    list = list.filter((s) => (s.tags || []).some((t) => t.toLowerCase() === selectedTag));
+  }
   if (tags.length) {
     // Prefix match so a partial #tag narrows as you type.
     list = list.filter((s) => {
@@ -42,6 +75,9 @@ function applyFilter(rawQuery) {
       return tags.every((t) => have.some((h) => h.startsWith(t)));
     });
   }
+  list = text
+    ? filterSnippets(list, text) // already rank-ordered
+    : sortSnippets(list, settingsCache.sort_by_usage !== false);
   // Cap results so a large library doesn't build thousands of rows per
   // keystroke; ranked matches mean the top slice is what you want.
   filtered = list.length > 100 ? list.slice(0, 100) : list;
@@ -174,20 +210,169 @@ function el(tag, cls, text) {
   return n;
 }
 
-// Title with the query substring marked, built without innerHTML.
+// Append text to a parent, wrapping every case-insensitive occurrence of
+// the query in <mark>. DOM nodes only, never innerHTML.
+function appendHighlighted(parent, text, query) {
+  const needle = (query || "").trim().toLowerCase();
+  if (!needle) {
+    parent.appendChild(document.createTextNode(text));
+    return;
+  }
+  const hay = text.toLowerCase();
+  let pos = 0;
+  let hit;
+  while ((hit = hay.indexOf(needle, pos)) !== -1) {
+    if (hit > pos) parent.appendChild(document.createTextNode(text.slice(pos, hit)));
+    parent.appendChild(el("mark", null, text.slice(hit, hit + needle.length)));
+    pos = hit + needle.length;
+  }
+  if (pos < text.length) parent.appendChild(document.createTextNode(text.slice(pos)));
+}
+
 function titleNode(title, query) {
   const wrap = el("div", "t");
-  const q = (query || "").trim().toLowerCase();
-  const idx = q ? title.toLowerCase().indexOf(q) : -1;
-  if (idx < 0) {
-    wrap.textContent = title;
-  } else {
-    wrap.appendChild(document.createTextNode(title.slice(0, idx)));
-    const mk = el("mark", null, title.slice(idx, idx + q.length));
-    wrap.appendChild(mk);
-    wrap.appendChild(document.createTextNode(title.slice(idx + q.length)));
-  }
+  appendHighlighted(wrap, title, query);
   return wrap;
+}
+
+// ---- folder tree ----
+function buildTree() {
+  const rootNode = { children: new Map() };
+  for (const s of snippets) {
+    if (!s.folder_path) continue;
+    let node = rootNode;
+    let path = "";
+    for (const part of s.folder_path.split("/").filter(Boolean)) {
+      path = path ? `${path}/${part}` : part;
+      if (!node.children.has(part)) {
+        node.children.set(part, { name: part, path, children: new Map(), team: false });
+      }
+      node = node.children.get(part);
+      if (s.source === "library") node.team = true;
+    }
+  }
+  return rootNode;
+}
+
+function treeRow(label, icon, active, onClick, opts = {}) {
+  const row = el("div", "sd-tnode" + (active ? " active" : ""));
+  row.style.paddingLeft = `${8 + (opts.depth || 0) * 13}px`;
+  const caret = el("span", "sd-caret");
+  if (opts.hasChildren) {
+    caret.textContent = opts.open ? CARET_OPEN : CARET_CLOSED;
+    caret.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      opts.onToggle();
+    });
+  }
+  row.appendChild(caret);
+  row.appendChild(el("span", "sd-ticon", icon));
+  row.appendChild(el("span", "sd-tlabel", label));
+  if (opts.team) row.appendChild(el("span", "sd-tcloud", CLOUD));
+  row.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    onClick();
+  });
+  return row;
+}
+
+function renderTree() {
+  const tree = root.querySelector(".sd-tree");
+  if (!tree) return;
+  tree.replaceChildren();
+  treeRows = [];
+  // While searching or tag-filtering, the folder scope is bypassed, so
+  // dim the active-folder highlight to signal it isn't in effect.
+  const bypassed = currentQuery().trim().length > 0 || !!selectedTag;
+  const activeFolder = (f) => !bypassed && selectedFolder === f;
+  const add = (key, rowEl, hasChildren, open) => {
+    treeRows.push({ key, hasChildren: !!hasChildren, open: !!open, el: rowEl });
+    tree.appendChild(rowEl);
+  };
+  add(ALL, treeRow("All snippets", ICON_ALL, activeFolder(ALL), () => selectFolder(ALL)), false, false);
+  if (snippets.some((s) => !s.folder_path)) {
+    add(UNFILED, treeRow("Unfiled", ICON_UNFILED, activeFolder(UNFILED), () => selectFolder(UNFILED)), false, false);
+  }
+  const walk = (node, depth) => {
+    const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+    for (const child of children) {
+      const hasChildren = child.children.size > 0;
+      const open = expanded.has(child.path);
+      const rowEl = treeRow(child.name, ICON_FOLDER, activeFolder(child.path), () => selectFolder(child.path), {
+        depth,
+        hasChildren,
+        open,
+        team: child.team,
+        onToggle: () => {
+          if (open) expanded.delete(child.path);
+          else expanded.add(child.path);
+          renderTree();
+        },
+      });
+      add(child.path, rowEl, hasChildren, open);
+      if (hasChildren && open) walk(child, depth + 1);
+    }
+  };
+  walk(buildTree(), 0);
+  if (paneFocus === "tree" && treeRows.length) {
+    treeFocus = Math.min(treeRows.length - 1, Math.max(0, treeFocus));
+    treeRows[treeFocus].el.classList.add("kbd");
+  }
+}
+
+function selectFolder(f) {
+  selectedFolder = f;
+  renderTree();
+  applyFilter(currentQuery());
+  renderList();
+  root.querySelector(".sd-search")?.focus();
+}
+
+// ---- keyboard navigation between the tree and list sections ----
+function enterTree() {
+  paneFocus = "tree";
+  const idx = treeRows.findIndex((r) => r.key === selectedFolder);
+  treeFocus = idx >= 0 ? idx : 0;
+  renderTree();
+  treeRows[treeFocus]?.el.scrollIntoView({ block: "nearest" });
+}
+
+function moveTreeFocus(delta) {
+  if (!treeRows.length) return;
+  treeFocus = Math.min(treeRows.length - 1, Math.max(0, treeFocus + delta));
+  renderTree();
+  treeRows[treeFocus]?.el.scrollIntoView({ block: "nearest" });
+}
+
+// Apply the focused folder and return focus to the snippet list.
+function applyTreeFocus() {
+  const r = treeRows[treeFocus];
+  paneFocus = "list";
+  if (r) selectFolder(r.key);
+}
+
+// ---- tag strip ----
+function renderTagStrip() {
+  const strip = root.querySelector(".sd-tags");
+  if (!strip) return;
+  const tags = [...new Set(snippets.flatMap((s) => s.tags || []))].sort((a, b) => a.localeCompare(b));
+  strip.replaceChildren();
+  strip.classList.toggle("hidden", tags.length === 0);
+  if (selectedTag && !tags.some((t) => t.toLowerCase() === selectedTag)) selectedTag = null;
+  for (const tag of tags) {
+    const lc = tag.toLowerCase();
+    const chip = el("button", "sd-chip" + (selectedTag === lc ? " active" : ""), tag);
+    chip.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      selectedTag = selectedTag === lc ? null : lc;
+      renderTagStrip();
+      applyFilter(currentQuery());
+      renderList();
+      root.querySelector(".sd-search")?.focus();
+    });
+    strip.appendChild(chip);
+  }
 }
 
 function renderList(query) {
@@ -207,11 +392,23 @@ function renderList(query) {
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", String(i === selected));
     row.appendChild(titleNode(s.title || "(untitled)", lastTextQuery));
-    const metaBits = [];
-    if (s.source === "library") metaBits.push("team");
-    if (s.folder_path) metaBits.push(s.folder_path);
-    if ((s.tags || []).length) metaBits.push((s.tags || []).join(", "));
-    if (metaBits.length) row.appendChild(el("div", "meta", metaBits.join("  -  ")));
+    if (s.body) {
+      const bodyEl = el("div", "sd-rowbody");
+      appendHighlighted(bodyEl, s.body.replace(/\s+/g, " ").slice(0, 120), lastTextQuery);
+      row.appendChild(bodyEl);
+    }
+    const meta = el("div", "meta");
+    if (s.source === "library") {
+      meta.appendChild(el("span", "sd-rowcloud", CLOUD));
+    }
+    if (s.folder_path) {
+      const folder = el("span", "sd-rowfolder");
+      folder.appendChild(el("span", "sd-rowfolder-icon", ICON_FOLDER));
+      folder.appendChild(document.createTextNode(s.folder_path));
+      meta.appendChild(folder);
+    }
+    for (const tag of s.tags || []) meta.appendChild(el("span", "sd-rowtag", tag));
+    if (meta.childNodes.length) row.appendChild(meta);
     row.addEventListener("mousedown", (e) => {
       e.preventDefault();
       selected = i;
@@ -229,7 +426,7 @@ function renderPreview() {
   if (!s) return;
   for (const chunk of splitForPreview(s.body || "")) {
     if (chunk.type === "text") {
-      preview.appendChild(document.createTextNode(chunk.text));
+      appendHighlighted(preview, chunk.text, lastTextQuery);
     } else {
       preview.appendChild(el("var", null, `{${chunk.name}}`));
     }
@@ -370,7 +567,9 @@ async function open() {
   backdrop.innerHTML = `
     <div class="sd-panel" role="dialog" aria-label="SnipDesk launcher">
       <input class="sd-search" type="text" placeholder="Search snippets..." autocomplete="off" spellcheck="false" />
+      <div class="sd-tags hidden"></div>
       <div class="sd-body">
+        <div class="sd-tree"></div>
         <div class="sd-list" role="listbox"></div>
         <div class="sd-preview"></div>
       </div>
@@ -386,14 +585,33 @@ async function open() {
 
   const search = root.querySelector(".sd-search");
   search.addEventListener("input", (e) => {
+    paneFocus = "list"; // typing always returns to the search/list section
     applyFilter(search.value);
+    renderTree(); // active-folder highlight dims while searching
     renderList();
     maybeAutocomplete(e, search);
   });
   // Keep keystrokes from reaching the host page's own shortcuts while
-  // the launcher has focus.
+  // the launcher has focus. Arrows move within the focused section; Left
+  // jumps to the folder tree, Right/Enter come back to the list.
   search.addEventListener("keydown", (e) => {
     e.stopPropagation();
+    if (paneFocus === "tree") {
+      const r = treeRows[treeFocus];
+      if (e.key === "ArrowDown") { e.preventDefault(); moveTreeFocus(1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); moveTreeFocus(-1); }
+      else if (e.key === "Enter") { e.preventDefault(); applyTreeFocus(); }
+      else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        if (r?.hasChildren && !r.open) { expanded.add(r.key); renderTree(); }
+        else applyTreeFocus();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (r?.hasChildren && r.open) { expanded.delete(r.key); renderTree(); }
+        else { paneFocus = "list"; renderTree(); }
+      }
+      return;
+    }
     const hasGhost =
       search.selectionStart !== search.selectionEnd &&
       search.selectionEnd === search.value.length;
@@ -404,12 +622,19 @@ async function open() {
       // Accept the ghost completion.
       e.preventDefault();
       search.setSelectionRange(search.value.length, search.value.length);
+    } else if (e.key === "ArrowLeft" && search.selectionStart === 0 && search.selectionEnd === 0) {
+      // At the start of the query: step into the folder tree.
+      e.preventDefault();
+      enterTree();
     }
   });
 
   settingsCache = (await send(MSG.SETTINGS_GET)).data || {};
   host.dataset.theme = settingsCache.theme === "light" ? "light" : "dark";
   snippets = (await send(MSG.SNIPPETS_GET)).data || [];
+  paneFocus = "list";
+  renderTree();
+  renderTagStrip();
   applyFilter("");
   renderList();
   search.focus();

@@ -5,6 +5,9 @@
    sizes are absolute since the page's root font-size is unknown. */
 :host {
   all: initial;
+  /* Drives native scrollbars / form controls inside the shadow root so
+     they match the launcher theme instead of the page's. */
+  color-scheme: dark;
   --bg-2: #222529;
   --bg-3: #2a2e34;
   --bg-hover: #2f343b;
@@ -15,6 +18,7 @@
   --radius: 8px;
 }
 :host([data-theme="light"]) {
+  color-scheme: light;
   --bg-2: #ffffff;
   --bg-3: #eef0f3;
   --bg-hover: #e2e6eb;
@@ -56,15 +60,66 @@
   font-size: 15px;
   outline: none;
 }
-/* List on the left, live preview of the selected snippet on the right. */
+/* Tag filter strip */
+.sd-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sd-chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sd-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Folder tree | snippet list | preview. */
 .sd-body {
   display: flex;
   flex: 1;
   min-height: 0;
 }
+.sd-tree {
+  flex: 0 0 152px;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 6px 0;
+  border-right: 1px solid var(--border);
+}
+.sd-tnode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.sd-tnode:hover { background: var(--bg-hover); }
+.sd-tnode.active { background: var(--bg-3); }
+.sd-tnode.kbd { box-shadow: inset 2px 0 0 var(--accent); background: var(--bg-hover); }
+.sd-caret {
+  display: inline-flex;
+  justify-content: center;
+  width: 14px;
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.sd-ticon { flex: none; font-size: 13px; }
+.sd-tlabel { overflow: hidden; text-overflow: ellipsis; }
+.sd-tcloud { margin-left: auto; color: var(--accent); font-size: 12px; }
+
 .sd-list {
   overflow-y: auto;
-  flex: 0 0 46%;
+  flex: 1.2 1 0;
   min-height: 0;
   border-right: 1px solid var(--border);
 }
@@ -75,8 +130,48 @@
 }
 .sd-row[aria-selected="true"] { background: var(--bg-3); }
 .sd-row .t { font-weight: 500; }
-.sd-row .t mark { background: transparent; color: var(--accent); }
-.sd-row .meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.sd-rowbody {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sd-row .meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.sd-rowcloud { color: var(--accent); margin-right: 1px; }
+.sd-rowfolder {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sd-rowfolder-icon { font-size: 11px; line-height: 1; flex: none; }
+.sd-rowtag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+/* Search-match highlight in titles, body samples, and the preview. */
+.sd-list mark,
+.sd-preview mark { background: transparent; color: var(--accent); font-weight: 600; }
 
 .sd-preview {
   flex: 1;

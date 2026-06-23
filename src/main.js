@@ -1385,7 +1385,14 @@ async function installPendingUpdate() {
           break;
       }
     });
-    // Installed - relaunch into the new version.
+    // Installed - relaunch into the new version. Mark the relaunch so the
+    // new launch surfaces the window even if the user starts hidden in the
+    // tray, otherwise the update would look like the app just disappeared.
+    try {
+      await invoke("mark_pending_update_relaunch");
+    } catch (err) {
+      console.warn("update relaunch marker failed", err);
+    }
     await relaunch();
   } catch (err) {
     updateState.installing = false;
@@ -2396,7 +2403,10 @@ function renderList() {
     if (showUsage && s.usage_count > 0) {
       const count = document.createElement("span");
       count.className = "snip-count";
-      count.textContent = `${s.usage_count} usages`;
+      // Compact: just the number, full label on hover, so it stays small
+      // at the default window width.
+      count.textContent = String(s.usage_count);
+      count.title = `${s.usage_count} usages`;
       title.appendChild(count);
     }
     if (isTeam) {

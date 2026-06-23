@@ -357,13 +357,13 @@ html, body {
   white-space: nowrap;
 }
 .snip-count {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-dim);
-  font-weight: 500;
+  font-weight: 600;
   background: var(--bg);
   border: 1px solid var(--border);
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
   white-space: nowrap;
   flex-shrink: 0;
   letter-spacing: 0.02em;
@@ -616,7 +616,7 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   container-type: inline-size;
   container-name: snippet-list;
 }
-@container snippet-list (max-width: 240px) {
+@container snippet-list (max-width: 160px) {
   .snip-count {
     display: none;
   }

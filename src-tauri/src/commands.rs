@@ -817,6 +817,20 @@ pub fn open_logs_folder(app: AppHandle) -> CmdResult<()> {
     reveal_in_explorer(&logs_dir).map_err(e)
 }
 
+/// Drop a one-shot marker so the next launch surfaces the window even
+/// when "start in tray" is on. The updater calls this right before it
+/// relaunches, so a post-update restart never leaves the user wondering
+/// where the app went. lib.rs consumes (and deletes) it on startup.
+#[tauri::command]
+pub fn mark_pending_update_relaunch(app: AppHandle) -> CmdResult<()> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("no app data dir: {err}"))?;
+    std::fs::create_dir_all(&data_dir).ok();
+    std::fs::write(data_dir.join("pending-update-relaunch"), b"1").map_err(e)
+}
+
 #[tauri::command]
 pub fn open_backups_folder(app: AppHandle) -> CmdResult<()> {
     let data_dir = app

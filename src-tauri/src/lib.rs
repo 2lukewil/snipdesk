@@ -121,6 +121,19 @@ pub fn run() {
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&data_dir).ok();
 
+            // One-shot marker the updater drops before relaunching. When
+            // present, this launch forces the window visible (see the
+            // launch-visibility block below) so a just-updated app doesn't
+            // vanish for users who start hidden in the tray.
+            let post_update_relaunch = {
+                let marker = data_dir.join("pending-update-relaunch");
+                let present = marker.exists();
+                if present {
+                    let _ = std::fs::remove_file(&marker);
+                }
+                present
+            };
+
             let db_path = data_dir.join("snippets.db");
             let settings_path = data_dir.join("settings.json");
 
@@ -511,7 +524,14 @@ pub fn run() {
             // frame during webview init. Show happens here, post-paint.
             if let Some(win) = app.get_webview_window("main") {
                 let start_hidden = launched_with_autostart_flag || settings.start_in_tray;
-                if start_hidden {
+                if post_update_relaunch {
+                    // Just updated: always surface the window so the user
+                    // sees the new version landed, even when they normally
+                    // start hidden in the tray.
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                    let _ = win.emit("snipdesk://opened", ());
+                } else if start_hidden {
                     // Config already hides it.
                 } else if !settings.onboarding_completed {
                     let _ = win.show();
@@ -597,6 +617,7 @@ pub fn run() {
             commands::open_backups_folder,
             commands::get_log_path,
             commands::startup_warnings,
+            commands::mark_pending_update_relaunch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SnipDesk");

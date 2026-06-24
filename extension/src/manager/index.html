@@ -93,6 +93,18 @@
           <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
           <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
           <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
+
+          <h2>Formatting</h2>
+          <p class="muted">How <code>prefix</code>text<code>suffix</code> markup renders in the preview. Matches the desktop app, which is what WHMCS expects.</p>
+          <table class="rule-table">
+            <thead><tr><th>Label</th><th>Prefix</th><th>Suffix</th><th></th></tr></thead>
+            <tbody id="rule-rows"></tbody>
+          </table>
+          <div class="actions rule-actions">
+            <button id="btn-add-rule" class="ghost" type="button">Add rule</button>
+            <button id="btn-reset-rules" class="ghost" type="button">Reset to defaults</button>
+          </div>
+
           <div class="actions">
             <button id="btn-save-settings" class="primary">Save settings</button>
             <button id="btn-shortcut" class="ghost">Change shortcut</button>

@@ -1,6 +1,8 @@
 import { MSG, send } from "../shared/messages.js";
 import { filterSnippets, sortSnippets } from "../shared/search.js";
-import { extractVarNames, substitute, splitForPreview } from "../shared/variables.js";
+import { extractVarNames, substitute } from "../shared/variables.js";
+import { renderFormatted } from "../shared/format.js";
+import { DEFAULT_FORMAT_RULES } from "../shared/storage.js";
 import overlayCss from "./overlay.css?inline";
 
 // Insertion target. `savedTarget` continuously tracks the last editable
@@ -424,13 +426,8 @@ function renderPreview() {
   preview.replaceChildren();
   const s = filtered[selected];
   if (!s) return;
-  for (const chunk of splitForPreview(s.body || "")) {
-    if (chunk.type === "text") {
-      appendHighlighted(preview, chunk.text, lastTextQuery);
-    } else {
-      preview.appendChild(el("var", null, `{${chunk.name}}`));
-    }
-  }
+  const rules = settingsCache.format_rules?.length ? settingsCache.format_rules : DEFAULT_FORMAT_RULES;
+  renderFormatted(preview, s.body || "", rules);
   const sel = root.querySelector(`.sd-row[aria-selected="true"]`);
   sel?.scrollIntoView({ block: "nearest" });
 }
@@ -627,6 +624,13 @@ async function open() {
       e.preventDefault();
       enterTree();
     }
+  });
+
+  // Clicking empty parts of the launcher (preview, list background, padding)
+  // must not steal focus from the search box, or arrow navigation stops
+  // working. Keep focus put unless the click lands on a real control.
+  root.querySelector(".sd-panel").addEventListener("mousedown", (e) => {
+    if (!e.target.closest("input, textarea, button, a, select")) e.preventDefault();
   });
 
   settingsCache = (await send(MSG.SETTINGS_GET)).data || {};

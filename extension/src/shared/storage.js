@@ -1,6 +1,16 @@
 // chrome.storage.local accessors. The worker is the only writer for
 // auth + caches; UI surfaces read settings directly where convenient.
 
+// Inline formatting markup, mirroring the desktop app's defaults (which is
+// what WHMCS expects). Each rule wraps text with prefix/suffix; the preview
+// renders these as formatted text. Editable in Settings.
+export const DEFAULT_FORMAT_RULES = [
+  { label: "Bold", prefix: "**", suffix: "**" },
+  { label: "Italic", prefix: "*", suffix: "*" },
+  { label: "Code", prefix: "`", suffix: "`" },
+  { label: "Link", prefix: "[", suffix: "](https://)" },
+];
+
 const DEFAULT_SETTINGS = {
   server_url: "",
   show_savings_estimate: false,
@@ -12,6 +22,7 @@ const DEFAULT_SETTINGS = {
   theme: "dark",
   compact: false,
   onboarded: false,
+  format_rules: DEFAULT_FORMAT_RULES,
 };
 
 const get = (keys) =>

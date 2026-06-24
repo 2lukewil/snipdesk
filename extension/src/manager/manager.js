@@ -2,6 +2,7 @@ import { MSG, send } from "../shared/messages.js";
 import { filterSnippets, sortSnippets } from "../shared/search.js";
 import { validateSnippet } from "../shared/validate.js";
 import { splitForPreview } from "../shared/variables.js";
+import { renderFormatted } from "../shared/format.js";
 import {
   getPendingFolders,
   setPendingFolders,
@@ -9,6 +10,7 @@ import {
   setFolderOrder,
   getPendingNewSnippet,
   clearPendingNewSnippet,
+  DEFAULT_FORMAT_RULES,
 } from "../shared/storage.js";
 
 const $ = (id) => document.getElementById(id);
@@ -50,6 +52,7 @@ const PENCIL_SVG =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
 
 let settings = {};
+let editingRules = []; // working copy of format_rules, flushed on Save
 let snippets = [];
 let pendingFolders = [];
 let folderOrder = {};
@@ -389,6 +392,13 @@ function renderTree() {
     }
   };
   walk(root, 0);
+  applyNavHighlight();
+}
+
+// The active folder is blue while the folder tree is the section the
+// arrows drive, and plain grey when it's just the open folder/scope.
+function applyNavHighlight() {
+  $("tree").classList.toggle("nav-active", navPane === "tree");
 }
 
 // Move the active folder (filtering the list live). The active highlight
@@ -773,8 +783,11 @@ function inFolder(s) {
 
 function visibleSnippets() {
   const q = $("search").value;
-  let list = filterSnippets(snippets, q).filter(inFolder);
+  let list = filterSnippets(snippets, q);
+  // A selected tag spans every folder; the active folder only scopes the
+  // plain browse view.
   if (selectedTag) list = list.filter((s) => (s.tags || []).includes(selectedTag));
+  else list = list.filter(inFolder);
   if (!q.trim()) list = sortSnippets(list, settings.sort_by_usage !== false);
   return list;
 }
@@ -901,6 +914,7 @@ function handleRowClick(s, index, e) {
     anchorIndex = index;
   } else {
     navPane = "list";
+    applyNavHighlight();
     anchorIndex = index;
     openEditor(s);
     return;
@@ -1021,86 +1035,8 @@ async function bulkDelete(ids) {
 }
 
 // ---- editor ----
-// Inline markup -> DOM nodes: links, bold, italic, inline code, bare URLs,
-// and {variable} tokens. Earliest match wins; bold/italic recurse so they
-// can nest other inline marks.
-function appendInline(parent, text) {
-  const patterns = [
-    { re: /\{[A-Za-z0-9_.-]+\}/, kind: "var" },
-    { re: /\[([^\]]+)\]\(([^)\s]+)\)/, kind: "link" },
-    { re: /\*\*([^*]+)\*\*/, kind: "bold" },
-    { re: /`([^`]+)`/, kind: "code" },
-    { re: /(?:\*|_)([^*_]+)(?:\*|_)/, kind: "italic" },
-    { re: /https?:\/\/[^\s)]+/, kind: "url" },
-  ];
-  let rest = text;
-  while (rest) {
-    let best = null;
-    for (const p of patterns) {
-      const m = p.re.exec(rest);
-      if (m && (!best || m.index < best.m.index)) best = { kind: p.kind, m };
-    }
-    if (!best) {
-      parent.appendChild(document.createTextNode(rest));
-      break;
-    }
-    const { kind, m } = best;
-    if (m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, m.index)));
-    if (kind === "var") {
-      parent.appendChild(el("var", null, m[0]));
-    } else if (kind === "link" || kind === "url") {
-      const url = kind === "link" ? m[2] : m[0];
-      const a = el("a", null, kind === "link" ? m[1] : m[0]);
-      if (/^(https?:|mailto:)/i.test(url)) {
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-      }
-      parent.appendChild(a);
-    } else if (kind === "bold") {
-      const b = el("strong");
-      appendInline(b, m[1]);
-      parent.appendChild(b);
-    } else if (kind === "italic") {
-      const i = el("em");
-      appendInline(i, m[1]);
-      parent.appendChild(i);
-    } else if (kind === "code") {
-      parent.appendChild(el("code", null, m[1]));
-    }
-    rest = rest.slice(m.index + m[0].length);
-  }
-}
-
-// Render a snippet body with light markdown into the live preview: bullet
-// and numbered lists, headings, and the inline marks above. Line breaks are
-// preserved so multi-line replies look right.
-function renderRichPreview(container, text) {
-  container.replaceChildren();
-  let list = null;
-  for (const line of text.split("\n")) {
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    const num = /^\s*\d+\.\s+(.*)$/.exec(line);
-    const head = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (bullet) {
-      if (list?.tagName !== "UL") container.appendChild((list = el("ul", "md-list")));
-      appendInline(list.appendChild(el("li")), bullet[1]);
-      continue;
-    }
-    if (num) {
-      if (list?.tagName !== "OL") container.appendChild((list = el("ol", "md-list")));
-      appendInline(list.appendChild(el("li")), num[1]);
-      continue;
-    }
-    list = null;
-    if (head) {
-      const h = el("div", `md-h md-h${head[1].length}`);
-      appendInline(h, head[2]);
-      container.appendChild(h);
-      continue;
-    }
-    appendInline(container.appendChild(el("div", "md-line")), line);
-  }
+function formatRules() {
+  return settings.format_rules?.length ? settings.format_rules : DEFAULT_FORMAT_RULES;
 }
 
 function openEditor(snippet, prefill) {
@@ -1135,7 +1071,7 @@ function openEditor(snippet, prefill) {
   const preview = el("div", "editor-preview");
   previewWrap.appendChild(preview);
   editor.appendChild(previewWrap);
-  const renderPrev = () => renderRichPreview(preview, body.value);
+  const renderPrev = () => renderFormatted(preview, body.value, formatRules());
   renderPrev();
   body.addEventListener("input", renderPrev);
 
@@ -1246,6 +1182,40 @@ function fillSettingsForm() {
   $("set-usage-count").checked = settings.show_usage_count !== false;
   $("set-theme").value = settings.theme || "dark";
   $("set-compact").checked = !!settings.compact;
+  editingRules = (settings.format_rules?.length ? settings.format_rules : DEFAULT_FORMAT_RULES).map((r) => ({ ...r }));
+  renderRuleEditor();
+}
+
+// Editable table of format rules (label / prefix / suffix), mirroring the
+// desktop. The preview reads these to decide what and how to format.
+function renderRuleEditor() {
+  const rows = $("rule-rows");
+  rows.replaceChildren();
+  editingRules.forEach((rule, i) => {
+    const tr = el("tr");
+    for (const field of ["label", "prefix", "suffix"]) {
+      const td = el("td");
+      const input = el("input");
+      input.type = "text";
+      input.value = rule[field] || "";
+      input.addEventListener("input", () => {
+        rule[field] = input.value;
+      });
+      td.appendChild(input);
+      tr.appendChild(td);
+    }
+    const delTd = el("td");
+    const del = el("button", "rule-del", "✕");
+    del.type = "button";
+    del.title = "Remove rule";
+    del.addEventListener("click", () => {
+      editingRules.splice(i, 1);
+      renderRuleEditor();
+    });
+    delTd.appendChild(del);
+    tr.appendChild(delTd);
+    rows.appendChild(tr);
+  });
 }
 
 function applyTheme() {
@@ -1266,6 +1236,9 @@ async function saveSettings() {
     show_usage_count: $("set-usage-count").checked,
     theme: $("set-theme").value,
     compact: $("set-compact").checked,
+    format_rules: editingRules
+      .map((r) => ({ label: (r.label || "").trim(), prefix: r.prefix || "", suffix: r.suffix || "" }))
+      .filter((r) => r.label || r.prefix || r.suffix),
   };
   const res = await send(MSG.SETTINGS_SET, { patch });
   const status = $("settings-status");
@@ -1574,9 +1547,14 @@ function onGlobalNavKey(e) {
   if (e.key === "ArrowLeft") {
     e.preventDefault();
     navPane = "tree";
+    applyNavHighlight();
   } else if (e.key === "ArrowRight") {
     e.preventDefault();
+    if (!visibleItems.length) return; // nothing to jump to; stay on folders
     navPane = "list";
+    applyNavHighlight();
+    // Land on the top snippet so no extra keypress is needed to highlight one.
+    if (!visibleItems.some((s) => s.id === selectedId)) openEditor(visibleItems[0]);
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
     navPane === "tree" ? moveTreeSel("up") : moveListSel("up");
@@ -1615,6 +1593,7 @@ function wire() {
     if (editable) return;
     if (document.querySelector(".modal-back:not(.hidden)")) return;
     navPane = "list"; // typing means searching, so arrows then walk results
+    applyNavHighlight();
     $("search").focus();
   });
   let searchTimer;
@@ -1661,6 +1640,14 @@ function wire() {
   $("btn-replay-onboarding").addEventListener("click", () => {
     closeModalEl("settings-modal");
     showOnboarding();
+  });
+  $("btn-add-rule").addEventListener("click", () => {
+    editingRules.push({ label: "New", prefix: "", suffix: "" });
+    renderRuleEditor();
+  });
+  $("btn-reset-rules").addEventListener("click", () => {
+    editingRules = DEFAULT_FORMAT_RULES.map((r) => ({ ...r }));
+    renderRuleEditor();
   });
   $("trash-search").addEventListener("input", renderTrash);
   $("btn-save-settings").addEventListener("click", saveSettings);

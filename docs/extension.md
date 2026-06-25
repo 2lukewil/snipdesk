@@ -78,8 +78,110 @@ IDs are minted locally so offline-created snippets upload cleanly.
 Distribute the extension to a team with Chrome's
 [`ExtensionInstallForcelist`](https://chromeenterprise.google/policies/#ExtensionInstallForcelist)
 policy, pointing at the Web Store listing or a self-hosted update
-manifest. The manifest pins a stable extension ID via its `key`, so the
+manifest (see [Self-host the extension](#self-host-the-extension-private-crx)
+below). The manifest pins a stable extension ID via its `key`, so the
 ID (and therefore the SSO redirect URL) is consistent across installs.
+
+### Self-host the extension (private CRX)
+
+No Web Store listing required: pack a signed `.crx`, host it next to an
+update manifest, and force-install it by URL. All you need is a web
+server the managed browsers can reach over HTTPS (an internal host on
+the VPN is fine, since the devices are managed).
+
+#### 1. Build and pack
+
+Build first, then pack the `extension/dist` output (not the source):
+
+```bash
+cd extension && npm install && npm run build
+```
+
+Pack with Chrome's built-in packer (or the **Pack extension** button on
+`chrome://extensions`):
+
+```
+chrome.exe --pack-extension="C:\path\to\extension\dist" --pack-extension-key="C:\path\to\snipdesk.pem"
+```
+
+This writes `dist.crx` (the package you host). On the first run, omit
+`--pack-extension-key` and Chrome generates a fresh `dist.pem` beside the
+folder. **The `.pem` signs every future update: back it up and never
+commit it.** Losing it means you can't ship updates under the same ID.
+
+#### Extension ID and the signing key
+
+Chrome derives the extension ID from the package's public key. The repo
+commits a `key` in the manifest so every build already reports the
+production ID `pmbbmppiinigigajakmffkchlibmdebo` (see
+`extension/manifest.config.js`); the matching private key is
+deliberately not committed.
+
+- **You have that private key:** pack with it. The CRX is signed by the
+  same keypair the manifest `key` pins, so the ID stays
+  `pmbbmppiinigigajakmffkchlibmdebo` and nothing on the server changes.
+- **You don't:** packing generates a new keypair, which yields a
+  different ID. Replace the `key` in `extension/manifest.config.js` with
+  your new public key so source builds and the hosted CRX agree on the
+  ID, rebuild, then update that new ID in two places:
+  `SNIPDESK_OIDC_EXTENSION_REDIRECTS` on the server (see
+  [SSO redirect allowlist](#sso-redirect-allowlist)) and the
+  managed-storage policy key path (see
+  [Pin the server URL](#pin-the-server-url-no-rebuild)).
+
+#### 2. Write the update manifest
+
+Chrome polls an Omaha-protocol XML manifest to discover the current
+version. Host it next to the `.crx`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+  <app appid="pmbbmppiinigigajakmffkchlibmdebo">
+    <updatecheck codebase="https://snippets.example.com/ext/snipdesk.crx" version="1.0.0" />
+  </app>
+</gupdate>
+```
+
+- `appid` is the extension ID.
+- `codebase` is the HTTPS URL of the `.crx`.
+- `version` must match the version in the packed manifest (it comes from
+  `extension/package.json`). Bump it on every update.
+
+#### 3. Host over HTTPS
+
+Serve `updates.xml` and the `.crx` from any HTTPS endpoint the managed
+browsers can reach: an internal web server, object storage, or the
+GitLab generic package registry. HTTPS is required; the host can be
+internal/VPN-only since the target devices are managed.
+
+#### 4. Force-install through Google Workspace
+
+Admin console -> Devices -> Chrome -> Apps & extensions -> **Users &
+browsers**, pick the org unit, then add the extension:
+
+1. Click the **+**, choose **Add Chrome app or extension by ID**.
+2. Enter the ID `pmbbmppiinigigajakmffkchlibmdebo`, set the installation
+   source to **From a custom URL**, and give it your update manifest URL
+   (`https://snippets.example.com/ext/updates.xml`).
+3. Set **Installation policy** to **Force install**.
+
+The raw-policy equivalent (Windows Group Policy without Workspace) is an
+`ExtensionInstallForcelist` entry of the form `<id>;<update_url>`:
+
+```
+pmbbmppiinigigajakmffkchlibmdebo;https://snippets.example.com/ext/updates.xml
+```
+
+Pair either with the pinned `server_url` policy below so the
+force-installed extension arrives already pointed at your server.
+
+#### Pushing an update
+
+Bump the version in `extension/package.json`, rebuild, and pack a new
+`.crx` with the same `.pem`. Upload it, then update `version` (and
+`codebase` if the filename changed) in `updates.xml`. Managed browsers
+pick it up on their next update poll, typically within a few hours.
 
 ### Pin the server URL (no rebuild)
 

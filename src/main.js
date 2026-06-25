@@ -268,6 +268,10 @@ const state = {
   folders: [], // [{ path, has_snippets }]
   expandedFolders: new Set(),
   selectedFolder: ALL_FOLDERS,
+  // Which pane the arrow keys drive ("list" | "tree"), plus the ordered
+  // folder keys the tree arrows walk - rebuilt on every renderFolders.
+  navPane: "list",
+  folderNavKeys: [],
   selectedIndex: 0,
   // Multi-select set (snippet IDs). Always contains selectedIndex's row; single-
   // select is just size==1. Plain click resets, Ctrl toggles, Shift extends.
@@ -1863,6 +1867,8 @@ function attachFolderDropTarget(node, targetPath) {
 
 function renderFolders() {
   els.folderTree.innerHTML = "";
+  // Rebuilt in render order so the tree arrows walk exactly what's visible.
+  state.folderNavKeys = [];
 
   // Pseudo-nodes: All / Unfiled / Team Library.
   const allNode = folderNodeEl(
@@ -1875,6 +1881,7 @@ function renderFolders() {
   );
   allNode.addEventListener("click", () => selectFolder(ALL_FOLDERS));
   els.folderTree.appendChild(allNode);
+  state.folderNavKeys.push(ALL_FOLDERS);
 
   if (state.folders.length > 0) {
     const rootNode = folderNodeEl(
@@ -1889,6 +1896,7 @@ function renderFolders() {
     // Drop here to unfile a snippet or move a folder to the top level.
     attachFolderDropTarget(rootNode, "");
     els.folderTree.appendChild(rootNode);
+    state.folderNavKeys.push(ROOT_FOLDER);
   }
 
   // Team Library pseudo-node. Two paths feed team_snippets:
@@ -1921,6 +1929,7 @@ function renderFolders() {
     if (iconSpan) iconSpan.textContent = "☁ ";
     teamNode.addEventListener("click", () => selectFolder(TEAM_FOLDER));
     els.folderTree.appendChild(teamNode);
+    state.folderNavKeys.push(TEAM_FOLDER);
   }
 
   // Trash lives as a red icon at the footer's left edge (always
@@ -2015,6 +2024,7 @@ function renderFolders() {
         showFolderContextMenu(e.clientX, e.clientY, f.path);
       }
     });
+    state.folderNavKeys.push(f.path);
     els.folderTree.appendChild(node);
   }
 }
@@ -2071,6 +2081,9 @@ function folderNodeEl(path, label, isActive, depth, hasChildren, expanded, count
 }
 
 async function selectFolder(path) {
+  // Selecting a folder (click or arrow) makes the tree the active nav pane.
+  state.navPane = "tree";
+  applyNavHighlight();
   state.selectedFolder = path;
   state.selectedIndex = 0;
   state.selectedIds = new Set();
@@ -2093,6 +2106,40 @@ async function selectFolder(path) {
 // Combobox reads state.folders live; nothing to refresh. Kept for legacy callers.
 function updateFolderDatalist() {}
 
+// ---------- Arrow-key navigation (folder tree <-> snippet list) ----------
+// Arrows drive whichever pane is active: Left/Right switch panes, Up/Down
+// move within the active one, Enter expands a folder when the tree is
+// active. While the tree drives, the active folder turns accent-colored
+// and the list selection recedes (body.nav-tree in styles.css), so it's
+// always clear which pane the arrows steer.
+function applyNavHighlight() {
+  document.body.classList.toggle("nav-tree", state.navPane === "tree");
+}
+
+async function moveTreeSel(dir) {
+  const keys = state.folderNavKeys;
+  if (!keys.length) return;
+  let idx = keys.indexOf(state.selectedFolder);
+  if (idx < 0) idx = 0;
+  idx = dir === "down" ? Math.min(keys.length - 1, idx + 1) : Math.max(0, idx - 1);
+  await selectFolder(keys[idx]);
+  els.folderTree.querySelector(".folder-node.active")?.scrollIntoView({ block: "nearest" });
+}
+
+function folderHasChildren(path) {
+  return state.folders.some((f) => f.path.startsWith(`${path}/`));
+}
+
+// Enter on a real folder toggles its expansion; pseudo-nodes and leaf
+// folders no-op.
+function expandSelectedFolder() {
+  const path = state.selectedFolder;
+  if (typeof path !== "string" || path === ROOT_FOLDER || path === TEAM_FOLDER) return;
+  if (!folderHasChildren(path)) return;
+  toggleFolderExpanded(path);
+  els.folderTree.querySelector(".folder-node.active")?.scrollIntoView({ block: "nearest" });
+}
+
 // ---------- Selection helpers ----------
 // Collapse to single-select at index `i` and reset the shift-click anchor.
 function selectOnly(i) {
@@ -2110,6 +2157,9 @@ function selectOnly(i) {
 function handleSnippetClick(i, ev) {
   const s = state.snippets[i];
   if (!s) return;
+  // Clicking a snippet makes the list the active nav pane.
+  state.navPane = "list";
+  applyNavHighlight();
 
   if (ev.shiftKey) {
     const anchor = state.anchorIndex ?? state.selectedIndex ?? i;
@@ -5122,6 +5172,10 @@ async function confirmTreeSelection() {
 function bindEvents() {
   let searchTimer = null;
   els.search.addEventListener("input", () => {
+    // Typing a query means the user is working the result list, so the
+    // arrows should walk it even if they'd just stepped into the tree.
+    state.navPane = "list";
+    applyNavHighlight();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.selectedIndex = 0;
@@ -5382,6 +5436,27 @@ function bindEvents() {
   window.addEventListener("resize", hideContextMenu);
 
   document.addEventListener("keydown", onKeyDown);
+
+  // Type-to-search: a printable key with no modifier, when focus isn't
+  // already in a field, jumps to the search box so the character lands
+  // there. Arrows then walk the results.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (anyModalOpen()) return;
+    const a = document.activeElement;
+    if (
+      a &&
+      (a.tagName === "INPUT" ||
+        a.tagName === "TEXTAREA" ||
+        a.tagName === "SELECT" ||
+        a.isContentEditable)
+    ) {
+      return;
+    }
+    state.navPane = "list";
+    applyNavHighlight();
+    els.search.focus();
+  });
 }
 
 function anyModalOpen() {
@@ -5464,6 +5539,8 @@ async function onKeyDown(ev) {
       state.activeTag = null;
       state.selectedFolder = ALL_FOLDERS;
       state.selectedIndex = 0;
+      state.navPane = "list";
+      applyNavHighlight();
       await refresh();
     } else {
       await invoke("hide_window");
@@ -5504,32 +5581,49 @@ async function onKeyDown(ev) {
     await deleteCurrent();
     return;
   }
+  // Left/Right switch which pane the arrows drive. The folder tree is
+  // only a target when it's actually on screen (it hides with no folders).
+  if (ev.key === "ArrowLeft" && !els.pane.classList.contains("no-sidebar")) {
+    ev.preventDefault();
+    state.navPane = "tree";
+    applyNavHighlight();
+    els.folderTree.querySelector(".folder-node.active")?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (ev.key === "ArrowRight" && state.navPane === "tree") {
+    ev.preventDefault();
+    if (state.snippets.length === 0) return; // nothing to jump to; stay on folders
+    state.navPane = "list";
+    applyNavHighlight();
+    // Land on a row so no extra keypress is needed to highlight one.
+    selectOnly(Math.min(Math.max(state.selectedIndex, 0), state.snippets.length - 1));
+    return;
+  }
   if (ev.key === "ArrowDown") {
     ev.preventDefault();
-    if (state.selectedIndex < state.snippets.length - 1) {
+    if (state.navPane === "tree") {
+      await moveTreeSel("down");
+    } else if (state.selectedIndex < state.snippets.length - 1) {
       // Plain arrow collapses to single; Shift+Arrow extends. Explorer/Finder semantics.
-      if (ev.shiftKey) {
-        extendSelectionTo(state.selectedIndex + 1);
-      } else {
-        selectOnly(state.selectedIndex + 1);
-      }
+      if (ev.shiftKey) extendSelectionTo(state.selectedIndex + 1);
+      else selectOnly(state.selectedIndex + 1);
     }
     return;
   }
   if (ev.key === "ArrowUp") {
     ev.preventDefault();
-    if (state.selectedIndex > 0) {
-      if (ev.shiftKey) {
-        extendSelectionTo(state.selectedIndex - 1);
-      } else {
-        selectOnly(state.selectedIndex - 1);
-      }
+    if (state.navPane === "tree") {
+      await moveTreeSel("up");
+    } else if (state.selectedIndex > 0) {
+      if (ev.shiftKey) extendSelectionTo(state.selectedIndex - 1);
+      else selectOnly(state.selectedIndex - 1);
     }
     return;
   }
   if (ev.key === "Enter" && !anyModalOpen()) {
     ev.preventDefault();
-    await usePastedSnippet(ev.shiftKey);
+    if (state.navPane === "tree") expandSelectedFolder();
+    else await usePastedSnippet(ev.shiftKey);
     return;
   }
 }

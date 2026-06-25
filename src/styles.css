@@ -323,6 +323,24 @@ html, body {
 .snippet-list li.multi-selected:hover {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
+
+/* Arrow-key navigation: while the folder tree is the pane the arrows
+   drive (body.nav-tree), the active folder reads as focused and the
+   list's selection recedes, so it's clear which pane is in play. */
+body.nav-tree .folder-node.active {
+  background: var(--accent);
+  color: #fff;
+  border-left-color: var(--accent);
+}
+body.nav-tree .folder-node.active .folder-caret,
+body.nav-tree .folder-node.active .folder-icon,
+body.nav-tree .folder-node.active .folder-count {
+  color: #fff;
+}
+body.nav-tree .snippet-list li.selected {
+  background: var(--bg-2);
+  border-left-color: transparent;
+}
 .snip-title {
   font-weight: 600;
   display: flex;
@@ -633,11 +651,11 @@ body[data-brand-locked="true"] .brand-locked-show { display: block; }
   margin-top: 3px;
 }
 .snip-tag {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   margin-right: 4px;
 }

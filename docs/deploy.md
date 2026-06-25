@@ -434,7 +434,9 @@ server {
 
 (Cloudflare in front works fine too. Set the origin certificate or
 flexible-SSL toggle to taste; `secure_cookies = true` in the server
-config is what really matters.)
+config is what really matters. If you turn on bot protection, exempt
+the `/api/*` paths from it; see the troubleshooting note on 403s
+below for why.)
 
 Once TLS resolves, confirm `https://snippets.yourcompany.com/api/health`
 answers, then point desktop clients at that URL
@@ -870,6 +872,37 @@ block failed to parse (check `docker compose logs` for a TOML
 error at boot). The client renders buttons strictly from
 `GET /api/auth/methods`; hit that URL directly to see what the
 server thinks is enabled.
+
+**Desktop client gets 403 on every API call (but the browser
+extension works)**: a CDN or WAF in front of the server is
+challenging non-browser traffic. Cloudflare Bot Fight Mode, a
+managed-challenge or browser-integrity rule, and equivalents on
+other edges all do this. The desktop client is a native HTTP
+client, not a browser, so it can't pass a JavaScript or
+browser-fingerprint challenge and gets a 403 before the request
+ever reaches the server. The browser extension escapes this only
+because it runs inside a real browser. Confirm from any machine:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" https://snippets.yourcompany.com/api/auth/methods
+```
+
+A 403 here (when the same URL returns JSON in a browser) is the
+edge blocking the request, not the server: `/api/auth/methods` is
+unauthenticated and the server never 403s it. The visible symptom
+is "desktop shows only email/password, no SSO button", because the
+client falls back to a password form when it can't read
+`/api/auth/methods`.
+
+Fix: exempt the `/api/*` path prefix from bot/anti-automation
+protection at the edge. Those endpoints are a programmatic API
+meant for native clients and carry their own JWT auth, so a
+browser-challenge layer doesn't belong in front of them. On
+Cloudflare, add a configuration/WAF rule that skips Bot Fight Mode,
+Managed Challenge, and Browser Integrity Check when the URI path
+starts with `/api/`; leave rate limiting and the managed WAF rules
+in place. The dashboard and OIDC sign-in pages are reached by a
+real browser, so they keep full protection.
 
 **Snippets aren't syncing on a client**: check the client's local
 `high_water_mark` sync state. The server-side `/api/snippets` and

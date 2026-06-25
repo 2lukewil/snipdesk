@@ -151,6 +151,11 @@ fn agent() -> &'static ureq::Agent {
         ureq::AgentBuilder::new()
             .timeout_connect(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(20))
+            // Identify the client honestly. The default ureq UA gets
+            // caught by edge bot filters (a 403 before the request ever
+            // reaches the server), which fails every API call while a
+            // browser-based client sails through.
+            .user_agent(concat!("SnipDesk/", env!("CARGO_PKG_VERSION")))
             .build()
     })
 }

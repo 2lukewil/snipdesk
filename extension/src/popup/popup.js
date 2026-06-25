@@ -42,6 +42,7 @@ async function refresh() {
     // A policy-pinned URL locks the field; agents just pick a method.
     const pinned = ((await getManaged()).server_url || "").trim();
     const url = pinned || serverUrl;
+    $("auth-options").classList.toggle("hidden", !url);
     if (url) {
       $("server-url").value = url;
       $("server-url").disabled = !!pinned;
@@ -137,6 +138,9 @@ async function loadMethods(serverUrl) {
   }
 }
 
+$("server-url").addEventListener("input", () => {
+  $("auth-options").classList.toggle("hidden", !$("server-url").value.trim());
+});
 $("server-url").addEventListener("blur", () => loadMethods($("server-url").value.trim()));
 
 $("btn-login").addEventListener("click", async () => {

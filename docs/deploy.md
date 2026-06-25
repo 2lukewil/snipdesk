@@ -873,36 +873,25 @@ error at boot). The client renders buttons strictly from
 `GET /api/auth/methods`; hit that URL directly to see what the
 server thinks is enabled.
 
-**Desktop client gets 403 on every API call (but the browser
-extension works)**: a CDN or WAF in front of the server is
-challenging non-browser traffic. Cloudflare Bot Fight Mode, a
-managed-challenge or browser-integrity rule, and equivalents on
-other edges all do this. The desktop client is a native HTTP
-client, not a browser, so it can't pass a JavaScript or
-browser-fingerprint challenge and gets a 403 before the request
-ever reaches the server. The browser extension escapes this only
-because it runs inside a real browser. Confirm from any machine:
+**Desktop client gets 403 on every API call**: a 403 the server
+itself wouldn't produce (e.g. `/api/auth/methods` is unauthenticated
+and never 403s) means something in front of the server is refusing
+the request. Confirm with:
 
 ```
 curl -s -o /dev/null -w "%{http_code}\n" https://snippets.yourcompany.com/api/auth/methods
 ```
 
-A 403 here (when the same URL returns JSON in a browser) is the
-edge blocking the request, not the server: `/api/auth/methods` is
-unauthenticated and the server never 403s it. The visible symptom
-is "desktop shows only email/password, no SSO button", because the
-client falls back to a password form when it can't read
-`/api/auth/methods`.
-
-Fix: exempt the `/api/*` path prefix from bot/anti-automation
-protection at the edge. Those endpoints are a programmatic API
-meant for native clients and carry their own JWT auth, so a
-browser-challenge layer doesn't belong in front of them. On
-Cloudflare, add a configuration/WAF rule that skips Bot Fight Mode,
-Managed Challenge, and Browser Integrity Check when the URI path
-starts with `/api/`; leave rate limiting and the managed WAF rules
-in place. The dashboard and OIDC sign-in pages are reached by a
-real browser, so they keep full protection.
+For an internal deployment the usual cause is a network access
+control: the client machine isn't on the VPN, or isn't inside the
+IP allowlist that fronts the server. Get the host onto the network
+and the 403 clears. Less commonly, a CDN or WAF bot rule (Cloudflare
+Bot Fight Mode, a managed-challenge or browser-integrity rule) will
+403 a native client while letting an in-browser request through; if
+you front the server with one, exempt the `/api/*` paths. Those are
+a programmatic API for native clients and carry their own JWT auth,
+so a browser-challenge layer doesn't belong in front of them; leave
+rate limiting and the managed WAF rules in place.
 
 **Snippets aren't syncing on a client**: check the client's local
 `high_water_mark` sync state. The server-side `/api/snippets` and

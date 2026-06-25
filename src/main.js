@@ -4158,12 +4158,22 @@ async function loadServerMethods(serverUrl) {
 function renderSignInSurface() {
   if (!TEAMS_BUILD) return;
   const methods = state.serverMethods;
-  // Conservative default: when we haven't fetched yet (or the fetch
-  // failed), show the password section so the user has SOMETHING to
-  // act on. Hide the OIDC pieces - they'd just be broken buttons
-  // without the server confirming the provider is wired.
-  const showPassword = methods ? methods.password.enabled : true;
-  const providers = methods ? methods.providers : [];
+  // Hide every sign-in option until there's a server URL to act on -
+  // a blank panel with a lone URL field reads cleaner than offering
+  // sign-in controls that can't go anywhere yet.
+  const url = (
+    els.setServerUrl?.value ||
+    document.getElementById("onboarding-server-url")?.value ||
+    state.settings?.server_url ||
+    state.brandDefaults?.server_url ||
+    ""
+  ).trim();
+  const hasUrl = url.length > 0;
+  // With a URL present but methods not yet fetched (or the fetch
+  // failed), fall back to showing the password section so there's
+  // SOMETHING to act on; OIDC stays hidden until the server confirms it.
+  const showPassword = hasUrl && (methods ? methods.password.enabled : true);
+  const providers = hasUrl && methods ? methods.providers : [];
   const googleProvider = providers.find((p) => p.id === "google") || null;
   const otherProviders = providers.filter((p) => p.id !== "google");
   const hasAnyProvider = providers.length > 0;
@@ -4188,7 +4198,7 @@ function renderSignInSurface() {
   // Onboarding mirrors the same surface: Google button only when the
   // server reports Google, plus a button per other provider.
   const obGoogle = document.getElementById("onboarding-signin-oidc");
-  if (obGoogle && methods) {
+  if (obGoogle) {
     obGoogle.classList.toggle("hidden", !googleProvider);
   }
   renderOnboardingProviderButtons(otherProviders);
@@ -4673,9 +4683,12 @@ function collectSettingsForSave() {
         ? els.setShowTeamInline.checked
         : (state.settings?.show_team_snippets_inline ?? true),
     // Server URL is managed by login/logout flows (not directly editable
-    // from the form), but we round-trip the current value so update_settings
-    // doesn't reset it to the default "".
-    server_url: state.settings?.server_url ?? "",
+    // from the form), so round-trip the current value rather than reset it.
+    // Prefer the live value from server_status: the OIDC deep-link sign-in
+    // updates the URL backend-side without refreshing this JS settings
+    // cache, so trusting state.settings here would write back "" and
+    // silently sign the user out on the next Save.
+    server_url: state.serverStatus?.server_url || state.settings?.server_url || "",
     // prefer_sso_signin lost its UI when the SSO toggle was removed
     // (the /api/auth/methods endpoint drives sign-in visibility now);
     // round-trip the last persisted value to keep update_settings
@@ -5220,6 +5233,18 @@ function bindEvents() {
   });
 
   if (TEAMS_BUILD) {
+    // Reveal the sign-in options as soon as a URL is typed (and hide them
+    // again if it's cleared); fetch the server's methods after a short
+    // idle so the right SSO buttons appear.
+    if (els.setServerUrl) {
+      let methodsTimer;
+      els.setServerUrl.addEventListener("input", () => {
+        renderSignInSurface();
+        clearTimeout(methodsTimer);
+        const url = els.setServerUrl.value.trim();
+        if (url) methodsTimer = setTimeout(() => loadServerMethods(url), 400);
+      });
+    }
     els.btnServerLogin.addEventListener("click", doServerLogin);
     els.btnServerSignup.addEventListener("click", doServerSignup);
     els.btnServerLogout.addEventListener("click", doServerLogout);

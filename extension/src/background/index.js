@@ -387,11 +387,16 @@ const handlers = {
       const finalUrl = await launchWebAuthFlow(authUrl);
       const token = new URL(finalUrl).searchParams.get("token");
       if (!token) return { ok: false, error: "no token returned from sign-in" };
+      // Validate the token inline so a bad one still fails fast, but defer
+      // the first sync: reporting success only after a full personal +
+      // library pull is what made sign-in feel slow. The popup flips to
+      // signed-in immediately and snippets fill in as the sync lands; the
+      // periodic sync reconciles if this kick gets cut short.
       const meRes = await api.me(serverUrl, token);
       await store.setToken(token);
       await store.setUser(meRes.user);
       await store.setSettings({ server_url: serverUrl });
-      await syncNow();
+      syncNow().catch(() => {});
       return { ok: true, data: { user: meRes.user } };
     } catch (e) {
       return { ok: false, error: e.message };

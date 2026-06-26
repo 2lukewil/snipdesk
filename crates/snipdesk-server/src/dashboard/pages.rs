@@ -5183,7 +5183,7 @@ pub async fn library_folder_reorder(
     if body.paths.len() > 500 {
         return (StatusCode::BAD_REQUEST, "too many paths in one reorder").into_response();
     }
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match crate::db::begin_write(&state.pool).await {
         Ok(t) => t,
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response()
@@ -5287,7 +5287,7 @@ pub async fn library_folder_move(
     // N times.
     let prefix = format!("{old}/");
     let like_pattern = format!("{prefix}%");
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match crate::db::begin_write(&state.pool).await {
         Ok(t) => t,
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response();
@@ -5606,7 +5606,7 @@ pub async fn library_folder_delete(
     };
 
     let like = format!("{path}/%");
-    let mut tx = match state.pool.begin().await {
+    let mut tx = match crate::db::begin_write(&state.pool).await {
         Ok(t) => t,
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("begin: {e}")).into_response();

@@ -130,7 +130,7 @@ pub async fn update_user(
         }
     }
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     // Capture the BEFORE state so the audit log can show role/disabled
     // transitions ("from member to admin") rather than just the new
     // value. Combined with the AFTER read at the end, the details

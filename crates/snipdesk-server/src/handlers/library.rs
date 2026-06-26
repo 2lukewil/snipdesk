@@ -223,7 +223,7 @@ pub async fn create(
     )
     .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     // Reject id collisions explicitly so admin tools get a clean 409
     // instead of a constraint-violation 500.
@@ -310,7 +310,7 @@ pub async fn update(
     )
     .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     // Pull the full BEFORE row inside the same transaction. We need
     // the existing title/body/tags/folder_path so the audit log can
@@ -422,7 +422,7 @@ pub async fn delete(
 ) -> Result<StatusCode, ApiError> {
     auth.require_admin()?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     // Title + folder ride into the audit row: a delete is exactly the
     // case where "library snippet <uuid>" tells the operator nothing,

@@ -25,6 +25,14 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .foreign_keys(true)
+        // Wait for the write lock instead of failing instantly when
+        // another connection holds it. SQLite serialises writers, so
+        // concurrent writes (two admins, a burst of imports) would
+        // otherwise return SQLITE_BUSY. Paired with BEGIN IMMEDIATE on
+        // write transactions (see db::begin_write), which takes the
+        // write lock up front so a read-then-write txn can't later trip
+        // SQLITE_BUSY_SNAPSHOT.
+        .busy_timeout(std::time::Duration::from_secs(5))
         // sqlx is chatty at INFO; drop to warn for noisy SQL statements.
         .log_statements(tracing::log::LevelFilter::Debug);
 
@@ -36,6 +44,20 @@ pub async fn open(data_dir: &Path) -> Result<SqlitePool> {
 
     run_migrations(&pool).await?;
     Ok(pool)
+}
+
+/// Begin a write transaction with `BEGIN IMMEDIATE`, taking SQLite's
+/// single write lock up front. A plain `BEGIN` is deferred: it reads
+/// first and only grabs the write lock at the first write, so two
+/// concurrent read-then-write transactions can deadlock into
+/// SQLITE_BUSY / SQLITE_BUSY_SNAPSHOT. Taking the lock immediately makes
+/// concurrent writers queue (bounded by the connection busy_timeout)
+/// instead of failing. Use this for every transaction that writes;
+/// read-only work can use the pool directly.
+pub async fn begin_write(
+    pool: &SqlitePool,
+) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    pool.begin_with("BEGIN IMMEDIATE").await
 }
 
 /// Apply the embedded migrations to a pool. Split out so tests can call

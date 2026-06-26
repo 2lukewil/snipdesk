@@ -99,9 +99,7 @@ pub async fn report(
     // One transaction so a partial failure rolls everything back -
     // we never want to bump `users.chars_pasted` without also
     // bumping the per-snippet counters that explain it.
-    let mut tx = state
-        .pool
-        .begin()
+    let mut tx = crate::db::begin_write(&state.pool)
         .await
         .map_err(|e| ApiError::internal(format!("usage report begin: {e}")))?;
 

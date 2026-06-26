@@ -861,7 +861,7 @@ async fn upsert_oidc_user(
     display_name: &str,
     admin_override: Option<bool>,
 ) -> Result<String, ApiError> {
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
     let provider_id = provider.id();
 
     // First: existing user already linked to this provider/subject.

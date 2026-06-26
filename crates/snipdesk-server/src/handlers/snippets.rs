@@ -118,7 +118,7 @@ pub async fn create(
     )
     .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     // Reject id collisions explicitly so the client gets a clear 409
     // instead of a SQLITE_CONSTRAINT 500 from the PRIMARY KEY. Checked
@@ -274,7 +274,7 @@ pub async fn update(
     )
     .map_err(|m| ApiError::bad_request("invalid_payload", m))?;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     let current: Option<(i64, i64, i64)> = sqlx::query_as(
         "SELECT version, created_at, is_deleted FROM personal_snippets WHERE id = ? AND owner_id = ?",
@@ -340,7 +340,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let owner_id = &auth.0.sub;
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     let current: Option<(i64,)> =
         sqlx::query_as("SELECT is_deleted FROM personal_snippets WHERE id = ? AND owner_id = ?")
@@ -454,7 +454,7 @@ pub async fn restore(
 ) -> Result<Json<WriteResponse>, ApiError> {
     let owner_id = &auth.0.sub;
 
-    let mut tx = state.pool.begin().await?;
+    let mut tx = crate::db::begin_write(&state.pool).await?;
 
     let current: Option<RestoreRow> = sqlx::query_as(
         "SELECT id, payload_ciphertext, payload_nonce, version, encrypted_version, created_at, is_deleted \

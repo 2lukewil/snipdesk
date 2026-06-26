@@ -426,6 +426,7 @@ const els = {
   setLogDays: document.getElementById("set-log-days"),
   btnOpenBackups: document.getElementById("btn-open-backups"),
   btnOpenLogs: document.getElementById("btn-open-logs"),
+  btnDedupe: document.getElementById("btn-dedupe"),
   logPathDisplay: document.getElementById("log-path-display"),
   aboutVersion: document.getElementById("about-version"),
   btnCheckUpdates: document.getElementById("btn-check-updates"),
@@ -4813,6 +4814,47 @@ async function openLogsFolder() {
   }
 }
 
+// Find snippets with an identical title AND body, keep the most-used in
+// each set, and move the rest to Trash (the normal delete path, so they
+// tombstone and sync). Operates on the full personal set, not the
+// current view.
+async function dedupeSnippets() {
+  const groups = new Map();
+  for (const s of state.allSnippets || []) {
+    const key = `${s.title || ""} ${s.body || ""}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  const toDelete = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0));
+    toDelete.push(...group.slice(1));
+  }
+  if (toDelete.length === 0) {
+    setStatus("No duplicate snippets found.");
+    return;
+  }
+  const confirmed = await confirmModal({
+    title: "Remove duplicates",
+    message: `Found ${toDelete.length} duplicate snippet${toDelete.length === 1 ? "" : "s"} (identical title and body). Keep the most-used in each set and move the rest to Trash?`,
+    confirmText: "Remove",
+    danger: true,
+  });
+  if (!confirmed) return;
+  let removed = 0;
+  for (const s of toDelete) {
+    try {
+      await invoke("delete_snippet", { id: s.id });
+      removed++;
+    } catch (err) {
+      console.warn("dedupe delete failed", s.id, err);
+    }
+  }
+  await refresh();
+  setStatus(`Moved ${removed} duplicate${removed === 1 ? "" : "s"} to Trash.`);
+}
+
 // ---------- Import / Export ----------
 async function withDialogSuppressed(fn) {
   try {
@@ -5319,6 +5361,7 @@ function bindEvents() {
 
   els.btnOpenBackups.addEventListener("click", openBackupsFolder);
   els.btnOpenLogs.addEventListener("click", openLogsFolder);
+  els.btnDedupe.addEventListener("click", dedupeSnippets);
 
   els.btnCheckUpdates.addEventListener("click", () => checkForUpdates({ silent: false }));
   els.updateInstall.addEventListener("click", installPendingUpdate);

@@ -2,15 +2,19 @@
 //! endpoint lands in this file as later phases add them (auth, snippet
 //! sync, library, admin).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{DefaultBodyLimit, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{HeaderValue, StatusCode},
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tower_http::cors::CorsLayer;
@@ -159,8 +163,14 @@ fn build_inner_router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/methods", get(handlers::auth::methods))
-        .route("/api/auth/signup", post(handlers::auth::signup))
-        .route("/api/auth/login", post(handlers::auth::login))
+        .route(
+            "/api/auth/signup",
+            post(handlers::auth::signup).layer(middleware::from_fn(auth_rate_limit)),
+        )
+        .route(
+            "/api/auth/login",
+            post(handlers::auth::login).layer(middleware::from_fn(auth_rate_limit)),
+        )
         .route("/api/auth/logout", post(handlers::auth::logout))
         .route(
             "/api/me",
@@ -242,6 +252,57 @@ fn build_inner_router() -> Router<AppState> {
         // listener so a single binary serves both the JSON API and the
         // admin UI. Cookie-gated; non-admins see a bounce page.
         .merge(crate::dashboard::routes())
+}
+
+// --- Per-client rate limit for the auth endpoints ---
+// Fixed-window counter keyed by the caller's IP, read from
+// X-Forwarded-For / X-Real-IP since the server runs behind a
+// TLS-terminating proxy (falls back to one shared bucket when neither
+// header is present). Brute-force defence-in-depth on the public,
+// unauthenticated surface; the cap is generous so normal sign-in is
+// never affected.
+const AUTH_RL_WINDOW: Duration = Duration::from_secs(60);
+const AUTH_RL_MAX: u32 = 20;
+
+static AUTH_RL: Lazy<Mutex<HashMap<String, (u32, Instant)>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+async fn auth_rate_limit(req: Request, next: Next) -> Response {
+    let key = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            req.headers()
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "shared".to_string());
+
+    let now = Instant::now();
+    let over = {
+        let mut map = AUTH_RL.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() > 4096 {
+            map.retain(|_, (_, start)| now.duration_since(*start) <= AUTH_RL_WINDOW);
+        }
+        let entry = map.entry(key).or_insert((0, now));
+        if now.duration_since(entry.1) > AUTH_RL_WINDOW {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        entry.0 > AUTH_RL_MAX
+    };
+    if over {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts; please wait a minute and try again",
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 #[derive(Serialize)]

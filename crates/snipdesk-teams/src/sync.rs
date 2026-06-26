@@ -22,7 +22,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use snipdesk_core::db::{Db, TelemetryKind};
+use snipdesk_core::db::{Db, NewSnippet, TelemetryKind};
 
 use crate::api::{
     self, ApiError, CreateBody, SnippetPayload, UpdateBody, UsageReport, UsageSnippetDelta,
@@ -187,16 +187,62 @@ pub fn tick(db: &Mutex<Db>, server_url: &str, token: &str) -> Result<SyncOutcome
                 max_pushed_version = max_pushed_version.max(resp.version);
                 out.pushed += 1;
             }
-            // Stale push: leave the row dirty=1 for now - step 3's pull
-            // will overwrite it with the server's content and clear
-            // dirty as part of upsert_from_remote. The local edit is
-            // lost (v1 LWW); v1.1 will preserve it as a conflict copy.
+            // Last-write-wins on the row itself (step 3's pull overwrites
+            // it with the server's version), but preserve the user's
+            // losing edit as a separate "(conflict copy)" snippet so a
+            // concurrent edit on another device isn't silently dropped.
             Err(ApiError::VersionConflict) => {
-                eprintln!("push {} conflict; will reconcile via pull", d.id);
+                eprintln!(
+                    "push {} conflict; saving local edit as a conflict copy",
+                    d.id
+                );
+                if let Ok(db) = db.lock() {
+                    let _ = db.create(NewSnippet {
+                        title: format!("{} (conflict copy)", payload.title),
+                        body: payload.body.clone(),
+                        tags: payload.tags.clone(),
+                        folder_path: payload.folder_path.clone(),
+                    });
+                }
                 out.errors += 1;
             }
             Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
             Err(ApiError::AccountInactive(msg)) => return Err(ApiError::AccountInactive(msg)),
+            // The server already has this id (e.g. created on another
+            // device before our local server_version caught up).
+            // Reconcile by updating in place instead of looping forever
+            // on a create that can't succeed.
+            Err(ApiError::Server { code, .. }) if code == "id_taken" => {
+                match api::list_snippets(server_url, token, 0) {
+                    Ok(list) => {
+                        if let Some(remote) =
+                            list.snippets.iter().find(|s| s.id == d.id && !s.is_deleted)
+                        {
+                            match api::update_snippet(
+                                server_url,
+                                token,
+                                &d.id,
+                                &UpdateBody {
+                                    expected_version: remote.version,
+                                    payload: &payload,
+                                },
+                            ) {
+                                Ok(resp) => {
+                                    if let Ok(db) = db.lock() {
+                                        let _ = db.mark_synced(&d.id, resp.version);
+                                    }
+                                    max_pushed_version = max_pushed_version.max(resp.version);
+                                    out.pushed += 1;
+                                }
+                                Err(_) => out.errors += 1,
+                            }
+                        } else {
+                            out.errors += 1;
+                        }
+                    }
+                    Err(_) => out.errors += 1,
+                }
+            }
             Err(e) => {
                 eprintln!("push {} failed: {e}", d.id);
                 out.errors += 1;

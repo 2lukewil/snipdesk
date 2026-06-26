@@ -1362,12 +1362,17 @@ function formatWhen(unixSeconds) {
 // A folder-grouped tree of snippets with per-item and per-folder
 // checkboxes (mirrors the desktop/dashboard flow). Calls onConfirm with
 // the chosen items.
-function openSelectionModal({ heading, items, confirmLabel, onConfirm }) {
+function openSelectionModal({ heading, items, confirmLabel, onConfirm, dupeIndices = new Set() }) {
   const back = el("div", "modal-back");
   const box = el("div", "modal modal-wide");
   box.appendChild(el("h2", null, heading));
 
-  const selected = new Set(items.map((_, i) => i));
+  // Duplicates start unchecked (the user can still tick them) so a
+  // re-import doesn't silently re-add everything that's already here.
+  const selected = new Set(items.map((_, i) => i).filter((i) => !dupeIndices.has(i)));
+  if (dupeIndices.size) {
+    box.appendChild(el("p", "sel-hint", `${dupeIndices.size} already exist and start unchecked.`));
+  }
 
   const masterRow = el("label", "sel-master");
   const master = document.createElement("input");
@@ -1405,6 +1410,7 @@ function openSelectionModal({ heading, items, confirmLabel, onConfirm }) {
       cb.type = "checkbox";
       row.appendChild(cb);
       row.appendChild(el("span", "t-text", items[i].title || "(untitled)"));
+      if (dupeIndices.has(i)) row.appendChild(el("span", "sel-dupe", "duplicate"));
       listEl.appendChild(row);
       cb.addEventListener("change", () => {
         cb.checked ? selected.add(i) : selected.delete(i);
@@ -1455,7 +1461,7 @@ function openSelectionModal({ heading, items, confirmLabel, onConfirm }) {
 function exportSnippets() {
   const personal = snippets
     .filter((s) => s.source === "personal")
-    .map((s) => ({ title: s.title, body: s.body, tags: s.tags || [], folder_path: s.folder_path || null }));
+    .map((s) => ({ id: s.id, title: s.title, body: s.body, tags: s.tags || [], folder_path: s.folder_path || null }));
   if (!personal.length) {
     toast("No personal snippets to export.");
     return;
@@ -1500,26 +1506,57 @@ async function importFromFile(file) {
       tags: Array.isArray(raw?.tags) ? raw.tags.map(String) : [],
       folder_path: raw?.folder_path ? String(raw.folder_path) : null,
     };
-    if (!validateSnippet(payload)) valid.push(payload);
+    // Preserve an exported id so a re-import updates in place rather
+    // than creating a fresh copy.
+    if (!validateSnippet(payload)) valid.push({ id: raw?.id ? String(raw.id) : null, ...payload });
   }
   if (!valid.length) {
     openModal("Nothing to import", "No valid snippets were found in that file.", [{ label: "OK" }]);
     return;
   }
+  // Flag items that already exist - by id (idempotent re-import) or, for
+  // id-less files, by title - so duplicates start unchecked.
+  const existingById = new Map();
+  const existingTitles = new Set();
+  for (const s of snippets) {
+    if (s.source !== "personal") continue;
+    existingById.set(s.id, s);
+    existingTitles.add((s.title || "").trim().toLowerCase());
+  }
+  const dupeIndices = new Set();
+  valid.forEach((it, i) => {
+    const idMatch = it.id && existingById.has(it.id);
+    const titleMatch = existingTitles.has((it.title || "").trim().toLowerCase());
+    if (idMatch || titleMatch) dupeIndices.add(i);
+  });
   openSelectionModal({
     heading: "Import snippets",
     items: valid,
     confirmLabel: "Import",
+    dupeIndices,
     onConfirm: async (chosen) => {
-      for (const payload of chosen) {
-        const res = await send(MSG.SNIPPET_CREATE, { payload });
+      let created = 0;
+      let updated = 0;
+      for (const it of chosen) {
+        const payload = { title: it.title, body: it.body, tags: it.tags, folder_path: it.folder_path };
+        // An id matching an existing snippet updates it in place;
+        // everything else is a new snippet (id preserved when present).
+        const isUpdate = it.id && existingById.has(it.id);
+        const res = isUpdate
+          ? await send(MSG.SNIPPET_UPDATE, { id: it.id, payload })
+          : await send(MSG.SNIPPET_CREATE, { id: it.id || undefined, payload });
         if (!res.ok) {
           toast(res.error || SERVER_ERR, true);
           break;
         }
+        if (isUpdate) updated++;
+        else created++;
       }
       await loadSnippets();
-      toast(`Imported ${chosen.length} snippet${chosen.length > 1 ? "s" : ""}.`);
+      const parts = [];
+      if (created) parts.push(`${created} added`);
+      if (updated) parts.push(`${updated} updated`);
+      toast(parts.length ? `Imported: ${parts.join(", ")}.` : "Nothing imported.");
     },
   });
 }
@@ -1612,6 +1649,16 @@ function wire() {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-importing the same file
     importFromFile(file);
+  });
+  $("btn-dedupe").addEventListener("click", async () => {
+    const res = await send(MSG.SNIPPET_DEDUPE);
+    if (!res.ok) {
+      toast(res.error || SERVER_ERR, true);
+      return;
+    }
+    const n = res.data?.removed || 0;
+    if (n) await loadSnippets();
+    toast(n ? `Moved ${n} duplicate${n > 1 ? "s" : ""} to Trash.` : "No duplicates found.");
   });
   document.addEventListener("keydown", onGlobalNavKey);
   $("btn-dashboard").addEventListener("click", () => {

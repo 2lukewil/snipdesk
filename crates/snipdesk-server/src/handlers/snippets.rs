@@ -125,10 +125,12 @@ pub async fn create(
     // globally - a snippet id collision across users would be a
     // client-bug too (UUIDv4 collisions are astronomically unlikely),
     // and treating it as a global namespace is simpler.
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM personal_snippets WHERE id = ?")
-        .bind(&body.id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM personal_snippets WHERE id = ? AND owner_id = ?")
+            .bind(&body.id)
+            .bind(owner_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     if exists.is_some() {
         return Err(ApiError::conflict(
             "id_taken",
@@ -162,7 +164,19 @@ pub async fn create(
     .bind(now)
     .bind(version)
     .execute(&mut *tx)
-    .await?;
+    .await
+    .map_err(|e| match e {
+        // The owner-scoped check above is the normal path; this only
+        // fires on a cross-user UUID collision (astronomically
+        // unlikely) tripping the global primary key. Return the same
+        // clean 409 rather than a 500.
+        sqlx::Error::Database(db)
+            if matches!(db.kind(), sqlx::error::ErrorKind::UniqueViolation) =>
+        {
+            ApiError::conflict("id_taken", "a snippet with that id already exists")
+        }
+        other => other.into(),
+    })?;
     tx.commit().await?;
 
     // Diagnostic log: prove the INSERT actually committed before we

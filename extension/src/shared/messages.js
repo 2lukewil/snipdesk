@@ -22,6 +22,7 @@ export const MSG = {
   SNIPPET_CREATE: "snippet-create",
   SNIPPET_UPDATE: "snippet-update",
   SNIPPET_DELETE: "snippet-delete",
+  SNIPPET_DEDUPE: "snippet-dedupe",
 
   TRASH_LIST: "trash-list",
   TRASH_RESTORE: "trash-restore",

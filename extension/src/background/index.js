@@ -221,6 +221,24 @@ async function flushOutbox() {
           breakErr = e.message;
           break;
         }
+        if (e instanceof api.ApiError && e.status === 409 && e.code === "id_taken" && it.pendingCreate) {
+          // The server already has this id (created on another device
+          // before this create flushed). Reconcile by updating in place
+          // instead of looping on a create that can't succeed.
+          const v = await serverVersionFor(serverUrl, token, id);
+          if (v != null) {
+            try {
+              const res = await api.updateSnippet(serverUrl, token, id, v, payloadOf(it));
+              it.version = res.version;
+              it.pendingCreate = false;
+              it.dirty = false;
+              changed = true;
+            } catch {
+              /* leave pendingCreate; next flush retries */
+            }
+          }
+          continue;
+        }
         if (e instanceof api.ApiError && e.kind === "conflict" && !it.deleted && !it.pendingCreate) {
           // Last-write-wins: refetch the current version, overwrite.
           const v = await serverVersionFor(serverUrl, token, id);
@@ -420,13 +438,16 @@ const handlers = {
   // Writes apply to the local cache immediately and queue for the
   // outbox; flushSoon attempts to push to the server but failure (e.g.
   // offline) just leaves the item queued for the next sync.
-  [MSG.SNIPPET_CREATE]: async ({ payload }) => {
-    const id = crypto.randomUUID();
+  [MSG.SNIPPET_CREATE]: async ({ id, payload }) => {
     const cache = await store.getCache("personal");
-    cache.items[id] = { id, version: 0, ...payload, uses: 0, last_used: null, dirty: true, pendingCreate: true };
+    // Honour a caller-supplied id (import preserving an exported id) so a
+    // re-import is idempotent; mint one otherwise. If the id already
+    // exists locally, fall back to a fresh one rather than clobber it.
+    const newId = id && !cache.items[id] ? id : crypto.randomUUID();
+    cache.items[newId] = { id: newId, version: 0, ...payload, uses: 0, last_used: null, dirty: true, pendingCreate: true };
     await store.setCache("personal", cache);
     flushSoon();
-    return { ok: true, data: { id, version: 0 } };
+    return { ok: true, data: { id: newId, version: 0 } };
   },
 
   [MSG.SNIPPET_UPDATE]: async ({ id, payload }) => {
@@ -458,6 +479,42 @@ const handlers = {
       flushSoon();
     }
     return { ok: true };
+  },
+
+  // Remove exact-content duplicates: group live snippets by title+body,
+  // keep the most-used in each group, tombstone the rest (settles like
+  // any other delete, so it syncs and the trash stays consistent).
+  [MSG.SNIPPET_DEDUPE]: async () => {
+    const cache = await store.getCache("personal");
+    const groups = new Map();
+    for (const it of Object.values(cache.items)) {
+      if (it.deleted) continue;
+      const key = `${it.title || ""} ${it.body || ""}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    }
+    let removed = 0;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => (b.uses || 0) - (a.uses || 0));
+      for (const it of group.slice(1)) {
+        it.deleted = true;
+        it.deletedAt = Math.floor(Date.now() / 1000);
+        if (it.pendingCreate) {
+          it.pendingCreate = false;
+          it.dirty = false;
+          it.localOnly = true;
+        } else {
+          it.dirty = true;
+        }
+        removed++;
+      }
+    }
+    if (removed) {
+      await store.setCache("personal", cache);
+      flushSoon();
+    }
+    return { ok: true, data: { removed } };
   },
 
   // Trash is served from local tombstones (works offline), merged with

@@ -1137,6 +1137,23 @@ impl Db {
         created_at: i64,
         updated_at: i64,
     ) -> Result<()> {
+        // A row the user deleted locally whose delete hasn't reached the
+        // server yet must not be resurrected by a pull: the local
+        // tombstone wins, and the sync engine pushes the delete on a
+        // later tick. Without this guard, a pull that races an
+        // un-flushed delete (offline, or a failed delete call) re-adds
+        // the row the user just removed.
+        let pending_delete: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM pending_deletes WHERE snippet_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if pending_delete.is_some() {
+            return Ok(());
+        }
         let tags_str = encode_tags(tags);
         let folder = normalize_folder(folder_path);
         if let Some(f) = folder.as_deref() {

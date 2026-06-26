@@ -498,6 +498,8 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .sel-item:last-child, .sel-folder:last-child { border-bottom: 0; }
 .sel-item .t-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sel-master input, .sel-folder input, .sel-item input { accent-color: var(--accent); }
+.sel-dupe { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
+.sel-hint { margin: 0 0 8px; font-size: 12px; color: var(--text-dim); }
 
 /* Toast */
 .toast {

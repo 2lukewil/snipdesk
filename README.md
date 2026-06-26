@@ -1,8 +1,8 @@
 # SnipDesk
 
-Fast snippet launcher for support agents. Hit a global hotkey, type a few characters, press Enter - the canned reply pastes into whatever window you were just in.
+Fast snippet launcher for support agents. Hit a hotkey, type a few characters, press Enter - the canned reply drops into whatever field you were just in. It comes as a native desktop app and as a Chrome extension; both organize snippets into folders with tags and can share a synced team library.
 
-Built with Tauri (Rust + web UI): a small (~5-10 MB), native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. Ships in two editions: **Lite** (free, offline, snippets live on the device) and **Teams** (server-backed sync across devices, shared team library, single sign-on, admin dashboard).
+The desktop app is built with Tauri (Rust + web UI): a small (~5-10 MB) native binary for Windows, macOS, and Linux that starts instantly and runs from the system tray. It ships in two editions: **Lite** (free, offline, snippets live on the device) and **Teams** (server-backed sync across devices, shared team library, single sign-on, admin dashboard). The browser extension carries the same launcher and snippet manager into web fields, working offline with an optional sign-in for sync and the team library.
 
 ## Components
 

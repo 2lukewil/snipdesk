@@ -231,29 +231,45 @@ textarea {
 }
 .sso-button:hover { border-color: var(--accent); color: var(--accent); }
 
-/* --- Library toolbar (search + export/import) --- */
+/* --- Snippet-list create bar: search + "+" new + export/import.
+       Mirrors the folder-create bar so the two panes' tops line up. --- */
 
-.library-toolbar { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
-.library-toolbar input[type="search"] {
+.list-create {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.list-create input[type="search"] {
   flex: 1;
-  min-width: 160px;
-  padding: 7px 10px;
+  min-width: 0;
+  padding: 6px 9px;
   background: var(--bg-3);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font: inherit;
 }
-.library-toolbar .btn {
-  white-space: nowrap;
-  text-decoration: none;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--fg);
-  font-size: 13px;
+.list-create input[type="search"]:focus { outline: none; border-color: var(--accent); }
+.list-create button { flex: none; padding: 6px 11px; white-space: nowrap; }
+.list-create #library-new-btn { font-weight: 700; }
+
+/* Native search clear (x): the browser default renders as a faint
+   gradient glyph that's near-invisible on the dark theme. Replace it
+   with a flat theme-coloured x via an alpha mask. */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  cursor: pointer;
+  background-color: var(--fg-dim);
+  -webkit-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4L12 12M12 4L4 12' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4L12 12M12 4L4 12' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center / contain no-repeat;
 }
-.library-toolbar .btn:hover { border-color: var(--accent); color: var(--accent); }
+input[type="search"]::-webkit-search-cancel-button:hover { background-color: var(--fg); }
 
 /* Template variables inside library snippet bodies. Values copied
    verbatim from the desktop client's .preview-var so {placeholders}
@@ -377,114 +393,211 @@ textarea {
 
 /* --- Library cards --- */
 
-/* Responsive multi-column grid. 320px min keeps a card readable
-   even when 3+ columns fit on a wide monitor; narrower screens
-   collapse to 1 column automatically. Lets admins see roughly 3x
-   the snippets at once without losing card legibility. */
-.library-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 10px;
-  align-items: start;
+/* Snippet list: compact selectable rows, scrolling under the create
+   bar. Mirrors the extension manager's list pane. */
+.library-list.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Shift-click row selection shouldn't paint text selection. */
+  user-select: none;
 }
-.library-card {
-  background: var(--bg-elev);
+.library-list.list .empty { padding: 14px; color: var(--fg-dim); }
+.library-row {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  /* Audit-log links land on #lib-<id>; keep the row clear of the
+     pane's top edge when scrolled into view. */
+  scroll-margin-top: 12px;
+}
+.library-row:last-child { border-bottom: 0; }
+.library-row:hover { background: var(--bg-hover); }
+.library-row.active { background: var(--bg-3); border-left-color: var(--accent); }
+.library-row.dragging { opacity: 0.5; }
+.library-row[draggable="true"] { cursor: grab; }
+.library-row .t { font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.library-row .t-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-row .t-right { margin-left: auto; flex: none; }
+.library-row .uses { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.library-row .body {
+  margin-top: 3px;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Clamp the preview to two lines; the full body shows in the editor. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-height: 3.2em;
+}
+/* Inline marks rendered into the body preview (bold / italic / code /
+   link / {var}), so a snippet reads as formatted text rather than raw
+   markers. */
+.library-row .body strong { font-weight: 700; color: var(--fg); }
+.library-row .body em { font-style: italic; }
+.library-row .body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  background: var(--bg-3);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.library-row .body a { color: var(--accent); }
+.library-row .body .preview-var { font-size: 11.5px; }
+/* Folder + tag strip under the body, mirroring the extension's row. */
+.library-row .row-meta {
+  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.library-row .row-meta .folder { color: var(--fg-dim); white-space: nowrap; }
+.library-row .row-meta .tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.library-row .row-meta .tag {
+  background: var(--bg-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  /* Audit-log links land on #lib-<id>; keep the card clear of the
-     top edge when the browser scrolls the anchor into view. */
-  scroll-margin-top: 80px;
+  border-radius: 999px;
+  padding: 0 7px;
+  color: var(--fg-dim);
 }
 /* Arriving via an audit-log link (#lib-<id> fragment): flash, then
-   keep a quiet accent outline so the admin can still tell which
-   card the log entry meant after the flash fades. */
-.library-card:target {
+   keep a quiet accent outline so the admin can still tell which row
+   the log entry meant after the flash fades. */
+.library-row:target {
   outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -1px;
   animation: card-target-flash 2s ease-out;
 }
 @keyframes card-target-flash {
-  0% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
-  }
-  100% {
-    box-shadow: none;
-    background: var(--bg-elev);
-  }
+  0% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background: transparent; }
 }
-.library-card .card-head {
+
+/* --- Three panes: folder tree | snippet list | editor.
+       Mirrors the extension manager, full-bleed below the nav: the
+       library page drops main's max-width + padding (see the :has rule)
+       so the three panes own the whole viewport and each scrolls
+       independently. --- */
+
+/* Let the library page break out of the centred, capped main column. */
+main:has(.library-three-pane) { max-width: none; padding: 0; }
+
+.library-three-pane {
+  display: grid;
+  /* Tree fixed; list caps at 520 but yields space; editor takes the
+     rest of the now full-width row. */
+  grid-template-columns: 260px minmax(360px, 520px) minmax(360px, 1fr);
+  gap: 0;
+  /* Fill the viewport below the nav (set via --nav-h, measured at
+     runtime by LIBRARY_PAGE_JS so a wrapped/banner nav can't clip it). */
+  height: calc(100vh - var(--nav-h, 47px));
+}
+.library-three-pane > * { min-width: 0; min-height: 0; }
+/* Tree + list + editor read as one connected, edge-to-edge unit:
+   shared dividers, no gap, no rounding (the panes meet the screen). */
+.library-sidebar.tree-pane {
+  position: static;
+  top: auto;
+  max-height: none;
+  padding: 0;
+  border-radius: 0;
+  border-left-width: 0;
+  border-right-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  overflow: hidden;
 }
-.library-card .card-head .title { font-weight: 600; }
-.library-card .card-head .meta { color: var(--fg-dim); font-size: 12px; margin-left: auto; }
-.library-card pre.body {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12.5px;
-  /* Cap body height so a 200-line snippet doesn't push the rest
-     of the page off-screen. Vertical scroll inside the card keeps
-     the multi-column grid uniform. */
-  max-height: 9.5em;
-  overflow: auto;
-}
-.library-card .card-actions { margin-top: 10px; display: flex; gap: 8px; }
-
-/* --- New / edit dialog (inline) --- */
-
-.lib-form {
+.list-pane {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 16px;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.lib-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-/* Same .actions chrome regardless of which form variant; the edit
-   form has class .lib-edit-form, not .lib-form, so we list both. */
-.lib-form .actions,
-.lib-edit-form .actions { display: flex; gap: 8px; margin-top: 10px; }
-.lib-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg-dim); }
-/* `role="group"` div for the Body field. Avoids `<label>` so the
-   first labelable descendant (Bold button) isn't picked up as the
-   label's associated control - hovering the label would otherwise
-   highlight the Bold button instead of the textarea. */
-.lib-form .field-block {
+.library-editor.editor {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left-width: 0;
+  border-right-width: 0;
+  border-radius: 0;
+  padding: 16px;
+  overflow-y: auto;
+}
+.library-editor .placeholder { color: var(--fg-dim); }
+
+/* --- Editor pane form --- */
+.editor-form { height: 100%; min-height: 0; gap: 12px; }
+/* Title / Folder / Tags share one row; the wide editor pane has room,
+   so they shrink rather than wrap. */
+.editor-fields { display: flex; flex-wrap: nowrap; gap: 10px; }
+.editor-fields label { margin: 0; }
+.editor-fields .f-title { flex: 2 1 0; min-width: 0; }
+.editor-fields .f-folder, .editor-fields .f-tags { flex: 1 1 0; min-width: 0; }
+.editor-form input[type="text"] { width: 100%; box-sizing: border-box; }
+.editor-form .f-body {
+  flex: 1.4;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
   color: var(--fg-dim);
+  margin: 0;
 }
-.lib-form .field-block > span { color: var(--fg-dim); }
+.editor-form .f-body textarea { flex: 1; min-height: 90px; resize: none; margin: 0; }
+.editor-form .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
+.editor-form .actions button { white-space: nowrap; }
+.editor-form .editor-meta { margin-left: auto; color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
 
-/* --- Library layout: sidebar + main, mirrors the desktop client's
-       folder pane + snippet list. --- */
-
-.library-layout {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 14px;
-  align-items: start;
-}
-.library-sidebar {
-  background: var(--bg-elev);
+/* Live preview below the body, mirroring the extension editor. Values
+   match the extension's .editor-preview so both surfaces read alike. */
+.editor-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.editor-preview-wrap .preview-label { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px; }
+.editor-preview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 6px;
-  position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
+  padding: 8px 10px;
+  font-size: 13px;
 }
-.library-main { min-width: 0; }
+.editor-preview .md-line { min-height: 1.25em; white-space: pre-wrap; }
+.editor-preview .md-list { margin: 4px 0; padding-left: 22px; }
+.editor-preview .md-list li { margin: 2px 0; }
+.editor-preview .md-h { font-weight: 600; margin: 8px 0 4px; }
+.editor-preview .md-h1 { font-size: 17px; }
+.editor-preview .md-h2 { font-size: 15px; }
+.editor-preview .md-h3 { font-size: 14px; }
+.editor-preview a { color: var(--accent); }
+.editor-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.editor-preview var {
+  font-style: normal;
+  color: #ffcf5c;
+  background: color-mix(in srgb, #ffcf5c 14%, transparent);
+  padding: 0 3px;
+  border-radius: 3px;
+}
 .lib-folder-header {
   font-size: 10px;
   font-weight: 700;
@@ -504,7 +617,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 6px;
+  padding: 5px 8px;
   border-radius: var(--radius);
   color: var(--fg);
   user-select: none;
@@ -539,10 +652,18 @@ textarea {
   margin: 12px 0;
   flex-wrap: wrap;
 }
+/* Selected folder: plain grey while it's just the open scope; accent
+   blue with white text while the tree is the section the arrow keys
+   drive (.lib-tree.nav-active). Matches the extension exactly. */
 .lib-folder-row.active {
-  background: var(--bg-hover);
-  border-left-color: var(--accent);
+  background: var(--bg-3);
+  border-left-color: transparent;
 }
+.lib-tree.nav-active .lib-folder-row.active {
+  background: var(--accent);
+  color: #fff;
+}
+.lib-tree.nav-active .lib-folder-row.active > .count { color: #fff; }
 .lib-folder-row.drop-target {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
@@ -580,13 +701,6 @@ textarea {
 }
 .lib-folder-node:hover { background: var(--bg-hover); }
 
-/* Dragging-state styling for library cards. The whole card is the
-   drag target (no explicit handle), so cursor:grab and the dragging
-   opacity are the only visual cues needed. */
-.library-card { position: relative; }
-.library-card[draggable="true"] { cursor: grab; }
-.library-card.dragging { opacity: 0.5; }
-
 /* Formatting toolbar above each body textarea. */
 .format-toolbar {
   display: flex;
@@ -605,16 +719,6 @@ textarea {
 .format-toolbar .fmt-btn:hover {
   border-color: var(--fg-dim);
 }
-
-/* Inline edit form within the cards stack picks up the same chrome
-   as a card so the slot doesn't visually jump on edit. */
-.lib-edit-form {
-  background: var(--bg-elev);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 14px;
-}
-.lib-edit-form textarea { min-height: 140px; }
 
 /* --- User detail page --- */
 
@@ -941,21 +1045,25 @@ textarea {
 
 /* Root drop zone for un-nesting. Subtle by default so it doesn't
    shout; lights up when a folder drag enters. */
+/* One-slot un-nest zone pinned at the bottom of the tree. Subtle until
+   a folder is dragged over it. */
 .lib-folder-root-drop {
-  padding: 4px 10px;
-  margin: 2px 4px 6px;
+  margin-top: 6px;
+  padding: 6px 10px;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   text-align: center;
   color: var(--fg-dim);
   font-size: 11px;
   user-select: none;
+  opacity: 0.65;
 }
 .lib-folder-root-drop.drop-target {
   border-style: solid;
   border-color: var(--accent);
   background: var(--bg-elev);
   color: var(--fg);
+  opacity: 1;
 }
 
 /* Caret toggle in front of folders with children. Bumped from
@@ -1030,12 +1138,36 @@ textarea {
   display: none !important;
 }
 
-/* Sort-mode dropdown + create-folder form at the top of the
-   sidebar. Both sit between the "Folders" header and the
-   pseudo-nodes (All, Unfiled, root-drop). Compact so they don't
-   crowd the sidebar's working area. */
+/* Tree pane top bars, matching the snippet list's create bar so the
+   two panes' tops line up. The create-folder form is the primary bar
+   (input + a compact "+"); the sort row sits just under it. Both stay
+   pinned while .lib-tree scrolls below. */
+.lib-folder-create {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  margin: 0;
+}
+.lib-folder-create input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+.lib-folder-create input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.lib-folder-create button { flex: none; padding: 6px 11px; font-weight: 700; }
 .lib-folder-controls {
-  padding: 4px 6px;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
   font-size: 11px;
   color: var(--fg-dim);
 }
@@ -1044,23 +1176,13 @@ textarea {
   align-items: center;
   gap: 6px;
 }
-.lib-sort-mode select { font: inherit; }
-.lib-folder-create {
-  display: flex;
-  gap: 4px;
-  padding: 4px 6px 8px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-}
-.lib-folder-create input[type="text"] {
+.lib-sort-mode select { font: inherit; font-size: 11px; }
+/* Scrolling node list under the pinned bars. */
+.lib-tree {
   flex: 1;
-  min-width: 0;
-  font-size: 12px;
-}
-.lib-folder-create button {
-  font-size: 11px;
-  padding: 4px 8px;
-  white-space: nowrap;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
 }
 
 /* Reorder drop indicators painted ON the folder row itself

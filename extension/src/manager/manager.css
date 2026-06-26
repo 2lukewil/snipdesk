@@ -43,23 +43,10 @@ header .user { display: inline-flex; align-items: center; gap: 6px; }
 }
 .icon-btn:hover { color: var(--text); background: var(--bg-3); }
 
-/* Content fills the viewport under the header. */
-main { flex: 1; min-height: 0; width: 100%; max-width: 1500px; margin: 0 auto; padding: 16px 20px; display: flex; flex-direction: column; overflow: hidden; }
+/* Content fills the whole viewport under the header, edge to edge. */
+main { flex: 1; min-height: 0; width: 100%; margin: 0; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* Tag filter, in the left pane below the folder tree */
-.tag-strip { display: flex; flex-wrap: wrap; gap: 6px; flex: none; max-height: 38%; overflow-y: auto; padding: 8px; border-top: 1px solid var(--border); }
-.tag-chip {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 12px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.tag-chip:hover:not(:disabled) { border-color: var(--accent); }
-.tag-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .bulk-title { margin-top: 0; }
 input, textarea, select {
   background: var(--bg-3);
@@ -70,6 +57,22 @@ input, textarea, select {
   font: inherit;
 }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+/* Native search clear (x): the browser default is a faint gradient glyph
+   that's near-invisible on the dark theme. Replace it with a flat
+   theme-coloured x via an alpha mask. */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  cursor: pointer;
+  background-color: var(--text-dim);
+  -webkit-mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4L12 12M12 4L4 12' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 4L12 12M12 4L4 12' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center / contain no-repeat;
+}
+input[type="search"]::-webkit-search-cancel-button:hover { background-color: var(--text); }
 
 button {
   border: 1px solid var(--border);
@@ -87,20 +90,22 @@ button.primary:hover:not(:disabled) { background: var(--accent-2); border-color:
 button.ghost { background: transparent; }
 button.danger { border-color: var(--danger); color: var(--danger); }
 
-/* Three panes: folder tree | snippet list | editor. */
+/* Three panes: folder tree | snippet list | editor. Full-bleed below
+   the header: the list column flexes (so the editor never gets
+   squeezed) and the outer edges meet the viewport (no rounding). */
 .three-pane {
   display: grid;
-  grid-template-columns: 240px 440px 1fr;
+  grid-template-columns: 240px minmax(360px, 520px) minmax(360px, 1fr);
   gap: 0;
   flex: 1;
   min-height: 0;
 }
-.pane { border: 1px solid var(--border); border-radius: var(--radius); min-height: 0; overflow-y: auto; }
-/* Folder tree + snippet list read as one connected unit: no gap, a single
-   shared divider between them, rounded only on the outer edges. */
-.tree-pane { border-radius: var(--radius) 0 0 var(--radius); border-right-width: 0; }
+.pane { border: 1px solid var(--border); min-height: 0; overflow-y: auto; }
+/* Folder tree + snippet list + editor read as one connected, edge-to-edge
+   unit: no gap, shared dividers, no rounding, flush to the screen. */
+.tree-pane { border-radius: 0; border-left-width: 0; border-right-width: 0; }
 .list-pane { border-radius: 0; display: flex; flex-direction: column; overflow: hidden; }
-.editor { margin-left: 0; border-left-width: 0; border-radius: 0 var(--radius) var(--radius) 0; }
+.editor { margin-left: 0; border-radius: 0; border-left-width: 0; border-right-width: 0; }
 .list { outline: none; }
 /* Snippet-list create bar: search + a "+" new-snippet button, mirroring
    the folder-create bar so the two panes' tops line up. */
@@ -230,11 +235,13 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .list .empty { padding: 14px; color: var(--text-dim); }
 
 /* Editor */
-.editor { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.editor-fields { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.editor { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Title / Folder / Tags share one row; the wide editor pane has room,
+   so they shrink rather than wrap. */
+.editor-fields { display: flex; flex-wrap: nowrap; gap: 10px; margin-bottom: 12px; }
 .editor-fields label { margin: 0; }
-.editor-fields .f-title { flex: 1 1 200px; min-width: 0; }
-.editor-fields .f-folder, .editor-fields .f-tags { flex: 0 1 160px; min-width: 0; }
+.editor-fields .f-title { flex: 2 1 0; min-width: 0; }
+.editor-fields .f-folder, .editor-fields .f-tags { flex: 1 1 0; min-width: 0; }
 .editor .f-body { flex: 1.4; min-height: 0; display: flex; flex-direction: column; margin: 0 0 12px; }
 .editor .f-body textarea { flex: 1; min-height: 0; resize: none; }
 .editor label { display: block; font-size: 12px; color: var(--text-dim); margin: 0 0 12px; }

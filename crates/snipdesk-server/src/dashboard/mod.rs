@@ -63,6 +63,8 @@ pub fn routes() -> Router<AppState> {
         // page provides the container.
         .route("/dashboard/users/rows", get(pages::users_rows))
         .route("/dashboard/library/cards", get(pages::library_cards))
+        // Blank editor-pane create form for the list pane's "+" button.
+        .route("/dashboard/library/new", get(pages::library_new_editor))
         // Folder-tree fragment for the library sidebar polling sweep.
         .route("/dashboard/library/folders", get(pages::library_folders))
         .route("/dashboard/users/:id", put(pages::user_update_row))

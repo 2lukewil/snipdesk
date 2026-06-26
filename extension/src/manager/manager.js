@@ -59,7 +59,6 @@ let folderOrder = {};
 let selectedId = null;
 let selectedIds = new Set();
 let anchorIndex = null;
-let selectedTag = null;
 let visibleItems = [];
 let selectedFolder = ALL;
 let draggingFolderPath = null;
@@ -110,7 +109,6 @@ async function init() {
 async function loadSnippets() {
   snippets = (await send(MSG.SNIPPETS_GET)).data || [];
   renderTree();
-  renderTagStrip();
   renderList();
   refreshServerStatus();
 }
@@ -152,24 +150,6 @@ async function refreshServerStatus() {
   }
   box.className = `server-status ${cls}`;
   box.querySelector(".status-text").textContent = label;
-}
-
-// ---- tag filter strip ----
-function renderTagStrip() {
-  const strip = $("tag-strip");
-  const tags = [...new Set(snippets.flatMap((s) => s.tags || []))].sort((a, b) => a.localeCompare(b));
-  strip.replaceChildren();
-  strip.classList.toggle("hidden", tags.length === 0);
-  if (selectedTag && !tags.includes(selectedTag)) selectedTag = null;
-  for (const tag of tags) {
-    const chip = el("button", "tag-chip" + (selectedTag === tag ? " active" : ""), tag);
-    chip.addEventListener("click", () => {
-      selectedTag = selectedTag === tag ? null : tag;
-      renderTagStrip();
-      renderList();
-    });
-    strip.appendChild(chip);
-  }
 }
 
 // ---- modals (trash / settings) ----
@@ -784,11 +764,13 @@ function inFolder(s) {
 function visibleSnippets() {
   const q = $("search").value;
   let list = filterSnippets(snippets, q);
-  // A selected tag spans every folder; the active folder only scopes the
-  // plain browse view.
-  if (selectedTag) list = list.filter((s) => (s.tags || []).includes(selectedTag));
-  else list = list.filter(inFolder);
-  if (!q.trim()) list = sortSnippets(list, settings.sort_by_usage !== false);
+  // A text search spans every folder (matching the launcher); the active
+  // folder only scopes the plain browse view, which is also where the
+  // usage/alphabetical sort applies.
+  if (!q.trim()) {
+    list = list.filter(inFolder);
+    list = sortSnippets(list, settings.sort_by_usage !== false);
+  }
   return list;
 }
 
@@ -825,7 +807,7 @@ function renderList() {
   const q = $("search").value.trim().toLowerCase();
   const all = visibleSnippets();
   if (all.length === 0) {
-    const blank = snippets.length === 0 && !q && selectedFolder === ALL && !selectedTag;
+    const blank = snippets.length === 0 && !q && selectedFolder === ALL;
     list.appendChild(
       el(
         "div",

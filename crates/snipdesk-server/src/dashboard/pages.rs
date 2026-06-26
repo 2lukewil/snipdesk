@@ -2004,11 +2004,6 @@ pub async fn library_page(
     let selected = library_selected_folder(&q.folder);
 
     let mut body = String::new();
-    body.push_str("<h1>Shared library</h1>");
-    body.push_str(
-        "<p class=\"muted\">Snippets here appear in every signed-in member's Team Library sidebar. \
-         They're plaintext at rest - don't put secrets in.</p>",
-    );
     // One-shot import-result banner (the import-confirm redirect
     // carries the counts in the query string).
     if let Some(imported) = q.imported {
@@ -2046,9 +2041,14 @@ pub async fn library_page(
             escape_html(folder),
         ));
     }
-    body.push_str("<div class=\"library-layout\">");
+    // Three panes, mirroring the extension manager: folder tree |
+    // snippet list | editor. The tree + list read as one connected
+    // unit (shared dividers, no gap); the editor sits on the right.
+    body.push_str("<div class=\"library-three-pane\">");
+    // ---- Pane 1: folder tree (the existing sidebar, restyled as a
+    // grid cell). Carries its own "+ New folder" form + sort controls.
     body.push_str(
-        "<aside class=\"library-sidebar\" id=\"library-sidebar\" \
+        "<aside class=\"library-sidebar tree-pane\" id=\"library-sidebar\" \
         hx-get=\"/dashboard/library/folders\" \
         hx-trigger=\"every 10s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
         hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">",
@@ -2056,39 +2056,67 @@ pub async fn library_page(
     let folders = load_library_folders(&state).await;
     body.push_str(&render_library_folder_tree(&rows, &folders, &selected));
     body.push_str("</aside>");
-    body.push_str("<div class=\"library-main\">");
+    // ---- Pane 2: snippet list. Top bar = search + a "+" new-snippet
+    // button + Export/Import. Below it, the scrolling list of rows.
+    body.push_str("<div class=\"library-main list-pane\">");
     // Hidden input mirrors the current folder so polling sweeps the
     // right view. htmx's hx-include picks it up and appends ?folder=.
     body.push_str(&format!(
         "<input type=\"hidden\" id=\"library-folder-input\" name=\"folder\" value=\"{}\" />",
         escape_html(&selected),
     ));
-    body.push_str(&library_create_form(&selected));
-    // Search + export/import toolbar. The search input re-fetches
-    // the cards fragment as the admin types (debounced). Export and
-    // Import both open the selection-tree modal: Export fetches the
-    // picker fragment over the whole library; Import pops the file
-    // browser directly and posts the file's text to the preview
-    // endpoint. Wiring lives in LIBRARY_PAGE_JS.
+    // Search re-fetches the list as the admin types (debounced). "+"
+    // loads a blank create form into the editor pane. Export/Import
+    // open the selection-tree modal (wiring lives in LIBRARY_PAGE_JS).
     let q_value = q.q.as_deref().unwrap_or("");
     body.push_str(&format!(
-        "<div class=\"library-toolbar\">\
+        "<div class=\"list-create\">\
            <input type=\"search\" id=\"library-search-input\" name=\"q\" value=\"{q}\" \
-                  placeholder=\"Search title, body, tags\" autocomplete=\"off\" \
+                  placeholder=\"Search snippets...\" autocomplete=\"off\" \
                   hx-get=\"/dashboard/library/cards\" \
                   hx-trigger=\"input changed delay:300ms, search\" \
                   hx-target=\"#library-list\" \
                   hx-include=\"#library-folder-input\" \
                   hx-swap=\"innerHTML\" />\
-           <button class=\"btn\" id=\"library-export-btn\" type=\"button\">Export</button>\
-           <button class=\"btn\" id=\"library-import-btn\" type=\"button\">Import</button>\
+           <button class=\"primary\" id=\"library-new-btn\" type=\"button\" title=\"New snippet\" \
+                  hx-get=\"/dashboard/library/new\" hx-target=\"#library-editor\" \
+                  hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">+</button>\
+           <button class=\"btn\" id=\"library-export-btn\" type=\"button\" title=\"Export\">Export</button>\
+           <button class=\"btn\" id=\"library-import-btn\" type=\"button\" title=\"Import\">Import</button>\
            <input type=\"file\" id=\"library-import-file\" accept=\".json,.csv\" hidden />\
          </div>",
         q = escape_html(q_value),
     ));
-    // Selection-tree modal shell. Export and import fragments load
-    // into #library-modal-body; behaviour is delegated from
-    // LIBRARY_PAGE_JS so inserted markup needs no scripts of its own.
+    // Polls every 5s so another admin's adds / edits / deletes surface
+    // without a manual refresh. The folder filter + search query ride
+    // along via hx-include. The JS-expression gate on the periodic
+    // trigger skips the poll when the editor pane has an open form,
+    // so a half-finished edit isn't wiped; libraryChanged still fires
+    // through (it's a separate trigger spec).
+    body.push_str(
+        "<div class=\"library-list list\" id=\"library-list\" \
+              hx-get=\"/dashboard/library/cards\" \
+              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
+              hx-include=\"#library-folder-input,#library-search-input\" \
+              hx-swap=\"innerHTML\">",
+    );
+    let filtered = library_visible_rows(&rows, &selected, &q.q);
+    body.push_str(&render_library_cards_inner(
+        &filtered,
+        q.q.as_deref().unwrap_or(""),
+    ));
+    body.push_str("</div>");
+    body.push_str("</div>");
+    // ---- Pane 3: editor. Row clicks + the "+" button swap content
+    // in here. Starts empty.
+    body.push_str("<div class=\"library-editor editor\" id=\"library-editor\">");
+    body.push_str(render_library_editor_placeholder());
+    body.push_str("</div>");
+    body.push_str("</div>");
+    // Selection-tree modal shell, outside the grid (position:fixed).
+    // Export and import fragments load into #library-modal-body;
+    // behaviour is delegated from LIBRARY_PAGE_JS so inserted markup
+    // needs no scripts of its own.
     body.push_str(
         "<div id=\"library-modal\" class=\"dash-modal\" hidden>\
            <div class=\"dash-modal-card\">\
@@ -2097,27 +2125,6 @@ pub async fn library_page(
            </div>\
          </div>",
     );
-    // Polls every 5s so another admin's adds / edits / deletes surface
-    // without a manual refresh. The folder filter + search query ride
-    // along via hx-include. The JS-expression gate on the trigger
-    // skips the poll when an inline edit form is open, otherwise the
-    // next tick would wipe whatever the admin was typing - the poll
-    // swaps the whole tbody's innerHTML, including their
-    // half-finished edit.
-    body.push_str(
-        "<div class=\"library-list\" id=\"library-list\" \
-              hx-get=\"/dashboard/library/cards\" \
-              hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
-              hx-include=\"#library-folder-input,#library-search-input\" \
-              hx-swap=\"innerHTML\">",
-    );
-    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
-    body.push_str(&render_library_cards_inner(
-        &filtered,
-        q.q.as_deref().unwrap_or(""),
-    ));
-    body.push_str("</div>");
-    body.push_str("</div></div>");
     // Drag-drop + formatting-toolbar JS, scoped to the library page.
     // Inline so we don't have to ship another static asset.
     body.push_str(LIBRARY_PAGE_JS);
@@ -2260,12 +2267,23 @@ fn render_library_folder_tree(
         .collect();
 
     let mut out = String::new();
-    out.push_str("<div class=\"lib-folder-header\">Folders</div>");
-    // Sort-mode toggle. The actual ordering happens client-side
-    // (JS reads the data-sort-order attribute and re-shuffles the
-    // DOM); the server always emits alphabetical so the
-    // first-paint is correct without JS, and the JS pass swaps
-    // siblings into manual order if the admin has chosen that.
+    // Top bar mirroring the snippet list's create bar: a new-folder
+    // input + a compact "+" button, so the two panes' tops line up.
+    // Submits via JS-driven fetch (LIBRARY_PAGE_JS) so we can clear the
+    // input + refresh without a full reload; the path goes through the
+    // same normalisation as the snippet save path on the server.
+    out.push_str(
+        "<form class=\"lib-folder-create\" id=\"lib-folder-create-form\" autocomplete=\"off\">\
+           <input type=\"text\" id=\"lib-folder-create-input\" \
+                  placeholder=\"New folder...\" spellcheck=\"false\" />\
+           <button type=\"submit\" class=\"primary\" title=\"Create folder\">+</button>\
+         </form>",
+    );
+    // Sort-mode toggle, in a slim row under the create bar. The actual
+    // ordering happens client-side (JS reads data-sort-order and
+    // re-shuffles the DOM); the server always emits alphabetical so the
+    // first paint is correct without JS, and the JS pass swaps siblings
+    // into manual order if the admin has chosen that.
     out.push_str(
         "<div class=\"lib-folder-controls\">\
            <label class=\"lib-sort-mode\">\
@@ -2277,18 +2295,9 @@ fn render_library_folder_tree(
            </label>\
          </div>",
     );
-    // Inline "+ New folder" form. Submits via JS-driven fetch so
-    // we can clear the input + trigger the sidebar/cards refresh
-    // without a full page reload. Path goes through the same
-    // normalisation as the snippet save path on the server.
-    out.push_str(
-        "<form class=\"lib-folder-create\" id=\"lib-folder-create-form\">\
-           <input type=\"text\" id=\"lib-folder-create-input\" \
-                  placeholder=\"e.g. Replies/Refunds\" \
-                  autocomplete=\"off\" spellcheck=\"false\" />\
-           <button type=\"submit\" class=\"btn primary\">+ Folder</button>\
-         </form>",
-    );
+    // Scrolling node list: the create bar + sort row stay pinned while
+    // the tree scrolls under them, matching the list pane.
+    out.push_str("<div class=\"lib-tree\">");
     out.push_str(&render_lib_folder_node(FolderNodeArgs {
         path: FOLDER_ALL,
         label: "All snippets",
@@ -2309,15 +2318,6 @@ fn render_library_folder_tree(
         has_children: false,
         sort_order: 0,
     }));
-    // The root drop zone: dropping a folder here lifts it back to
-    // top level. Drawn as a thin band between Unfiled and the
-    // actual folders so it's discoverable without dominating.
-    out.push_str(
-        "<div class=\"lib-folder-root-drop\" data-folder-root-drop=\"1\">\
-           <span class=\"label muted small\">drop here to un-nest</span>\
-         </div>",
-    );
-
     // Tree walk: each path renders at indent = depth (number of '/' segments).
     // BTreeSet iteration is alphabetical, which naturally yields
     // parents before children for any given branch.
@@ -2335,6 +2335,16 @@ fn render_library_folder_tree(
             sort_order: *sort_order.get(path.as_str()).unwrap_or(&0),
         }));
     }
+    // Un-nest drop zone, one slot tall at the very bottom of the tree.
+    // Dropping a nested folder here lifts it to the top level (append).
+    // For positioned un-nesting, dropping between two top-level folders
+    // in manual sort mode places it there directly (handled in JS).
+    out.push_str(
+        "<div class=\"lib-folder-root-drop\" data-folder-root-drop=\"1\">\
+           <span class=\"label muted small\">Drop here to move to top level</span>\
+         </div>",
+    );
+    out.push_str("</div>");
     out
 }
 
@@ -2499,7 +2509,7 @@ pub async fn library_cards(
 ) -> Response {
     let rows = load_library(&state).await.unwrap_or_default();
     let selected = library_selected_folder(&q.folder);
-    let filtered = filter_library_query(filter_library_rows(&rows, &selected), &q.q);
+    let filtered = library_visible_rows(&rows, &selected, &q.q);
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         render_library_cards_inner(&filtered, q.q.as_deref().unwrap_or("")),
@@ -3143,48 +3153,15 @@ pub async fn library_import_confirm(
 fn render_library_cards_inner(rows: &[&LibraryRow], q: &str) -> String {
     if rows.is_empty() {
         return String::from(
-            "<p class=\"muted\">No library snippets in this view. \
-             Add one above or pick a different folder.</p>",
+            "<p class=\"empty\">No snippets in this view. \
+             Hit + to add one, or pick a different folder.</p>",
         );
     }
     let mut out = String::new();
     for r in rows {
-        out.push_str(&render_library_card_highlighted(r, q));
+        out.push_str(&render_library_row_highlighted(r, q));
     }
     out
-}
-
-/// The "Add to library" form at the top of the main area. Pre-fills
-/// the folder field with the currently-selected folder so adding a
-/// snippet while you're in a folder defaults to that folder.
-fn library_create_form(selected: &str) -> String {
-    let prefilled_folder = match selected {
-        FOLDER_ALL | FOLDER_UNFILED => String::new(),
-        other => other.to_string(),
-    };
-    format!(
-        "<form class=\"lib-form stack\" \
-              hx-post=\"/dashboard/library\" \
-              hx-target=\"#library-list\" \
-              hx-swap=\"afterbegin\" \
-              hx-on::after-request=\"if(event.detail.successful) this.reset()\">\
-           <div class=\"row\">\
-             <label>Title<input type=\"text\" name=\"title\" required /></label>\
-             <label>Folder<input type=\"text\" name=\"folder_path\" \
-                placeholder=\"e.g. Replies/Billing\" value=\"{prefill}\" /></label>\
-           </div>\
-           <div class=\"field-block\" role=\"group\" aria-label=\"Body\">\
-             <span>Body</span>\
-             <div class=\"format-toolbar\" data-target=\"lib-create-body\">{toolbar}</div>\
-             <textarea id=\"lib-create-body\" name=\"body\" required></textarea>\
-           </div>\
-           <label>Tags (comma-separated)\
-             <input type=\"text\" name=\"tags\" placeholder=\"billing, refund\" /></label>\
-           <div class=\"actions\"><button class=\"primary\" type=\"submit\">Add to library</button></div>\
-         </form>",
-        prefill = escape_html(&prefilled_folder),
-        toolbar = library_format_toolbar(),
-    )
 }
 
 /// Buttons that wrap the textarea selection with markdown markers.
@@ -3197,76 +3174,158 @@ fn library_format_toolbar() -> &'static str {
      <button type=\"button\" class=\"fmt-btn\" data-prefix=\"[\" data-suffix=\"](https://)\" title=\"Link\">link</button>"
 }
 
-/// Card without an active search: post-mutation fragment responses
-/// (create/edit swaps) render through here since the swap target is
-/// a single card and the search box state lives client-side.
-fn render_library_card(r: &LibraryRow) -> String {
-    render_library_card_highlighted(r, "")
-}
-
-fn render_library_card_highlighted(r: &LibraryRow, q: &str) -> String {
-    let tags_html = if r.tags.trim().trim_matches(',').is_empty() {
-        String::new()
-    } else {
-        let pills: Vec<String> = r
-            .tags
-            .split(',')
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| format!("<span class=\"pill\">{}</span>", escape_html(t.trim())))
-            .collect();
-        format!(" {}", pills.join(" "))
-    };
-    let folder = match &r.folder_path {
-        Some(f) if !f.is_empty() => format!(" | <span class=\"muted\">{}</span>", escape_html(f)),
-        _ => String::new(),
-    };
-    // Usage pill: only shown for snippets that have actually been
-    // pasted. A "0 uses" pill on every brand-new snippet would be
-    // noisy and undermine the signal of the metric.
-    let usage_pill = if r.use_count > 0 {
-        let when = r
-            .last_used
-            .map(|t| format!(", last {when}", when = format_relative(t)))
-            .unwrap_or_default();
+/// A compact selectable list row, mirroring the extension manager's
+/// snippet list. Clicking the row loads the snippet into the editor
+/// pane (`#library-editor`) via htmx. The row keeps `data-snippet-id`
+/// and `draggable` so the existing folder drag-drop still works, and
+/// `id="lib-<id>"` preserves audit-log deep links (#lib-<id>).
+fn render_library_row_highlighted(r: &LibraryRow, q: &str) -> String {
+    // Usage count, right-aligned. Only shown once a snippet has
+    // actually been pasted, so a brand-new row isn't cluttered with
+    // a meaningless "0". The last-used time rides along in the tooltip.
+    let uses = if r.use_count > 0 {
+        let title = match r.last_used {
+            Some(t) => format!("team-wide paste count, last used {}", format_relative(t)),
+            None => "team-wide paste count".to_string(),
+        };
         format!(
-            " <span class=\"pill usage\" title=\"team-wide paste count\">used {count}{when}</span>",
-            count = format_thousands(r.use_count),
+            "<span class=\"uses\" title=\"{}\">{}</span>",
+            escape_html(&title),
+            format_thousands(r.use_count),
         )
     } else {
         String::new()
     };
-    // Version (`r.version`) is the optimistic-concurrency counter the
-    // wire protocol uses to reject stale PUTs. It's plumbed into the
-    // hidden expected_version form input on the edit form (the
-    // mechanism that actually matters), so the admin-facing card
-    // doesn't need to display it - it was leaking an internal
-    // mechanic into the operator's reading task.
+    // Folder + tag meta, mirroring the extension's row. Folder shows
+    // only when set; tags render as pills. The whole strip is omitted
+    // when a snippet has neither so plain rows stay compact.
+    let folder_html = match &r.folder_path {
+        Some(f) if !f.is_empty() => format!(
+            "<span class=\"folder\">&#x1F4C1; {}</span>",
+            highlight_matches(f, q),
+        ),
+        _ => String::new(),
+    };
+    let tag_pills: Vec<String> = r
+        .tags
+        .split(',')
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| format!("<span class=\"tag\">{}</span>", escape_html(t.trim())))
+        .collect();
+    let tags_html = if tag_pills.is_empty() {
+        String::new()
+    } else {
+        format!("<span class=\"tags\">{}</span>", tag_pills.join(""))
+    };
+    let meta_html = if folder_html.is_empty() && tags_html.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=\"row-meta\">{folder_html}{tags_html}</div>")
+    };
     format!(
-        "<div class=\"library-card\" id=\"lib-{id_attr}\" \
-             draggable=\"true\" data-snippet-id=\"{id_attr}\">\
-           <div class=\"card-head\">\
-             <span class=\"title\">{title}</span>{folder}{tags}{usage_pill}\
-             <span class=\"meta\">updated {when}</span>\
-           </div>\
-           <pre class=\"body\">{body}</pre>\
-           <div class=\"card-actions\">\
-             <button class=\"btn\" \
-                hx-get=\"/dashboard/library/{id_attr}/edit\" \
-                hx-target=\"closest .library-card\" hx-swap=\"outerHTML\">Edit</button>\
-             <button class=\"btn danger\" \
-                hx-delete=\"/dashboard/library/{id_attr}\" \
-                hx-confirm=\"Delete library snippet '{title_attr}'?\" \
-                hx-target=\"closest .library-card\" hx-swap=\"outerHTML\">Delete</button>\
-           </div>\
+        "<div class=\"library-row\" id=\"lib-{id_attr}\" \
+             draggable=\"true\" data-snippet-id=\"{id_attr}\" \
+             hx-get=\"/dashboard/library/{id_attr}/edit\" \
+             hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
+           <div class=\"t\"><span class=\"t-text\">{title}</span>\
+             <span class=\"t-right\">{uses}</span></div>\
+           <div class=\"body\">{body}</div>\
+           {meta_html}\
          </div>",
         id_attr = escape_html(&r.id),
         title = highlight_matches(&r.title, q),
-        title_attr = escape_html(&r.title),
         body = render_body_with_vars(&r.body, q),
+        uses = uses,
+        meta_html = meta_html,
+    )
+}
+
+/// Empty state for the editor pane before any snippet is selected.
+fn render_library_editor_placeholder() -> &'static str {
+    "<p class=\"placeholder\">Select a snippet, or create a new one.</p>"
+}
+
+/// The editor pane for a selected snippet: the same fields as the
+/// create form, pre-filled, plus Save + Delete. Save PUTs and swaps
+/// the pane back to the saved snippet; Delete clears the pane to the
+/// placeholder. Both fire `libraryChanged` (via the handlers' HX-Trigger)
+/// so the list + sidebar refresh. The `.lib-edit-form` class gates the
+/// list/sidebar polling so an open editor isn't wiped mid-edit. The
+/// hidden expected_version carries optimistic-concurrency parity with
+/// the JSON PUT handler.
+fn render_library_editor(r: &LibraryRow) -> String {
+    format!(
+        "<form class=\"lib-edit-form editor-form stack\" id=\"library-editor-form\" \
+              hx-put=\"/dashboard/library/{id_attr}\" \
+              hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
+           <input type=\"hidden\" name=\"expected_version\" value=\"{ver}\" />\
+           <div class=\"editor-fields\">\
+             <label class=\"f-title\">Title<input type=\"text\" name=\"title\" value=\"{title_attr}\" required /></label>\
+             <label class=\"f-folder\">Folder<input type=\"text\" name=\"folder_path\" \
+                placeholder=\"e.g. Replies/Billing\" value=\"{folder_attr}\" /></label>\
+             <label class=\"f-tags\">Tags<input type=\"text\" name=\"tags\" value=\"{tags_attr}\" \
+                placeholder=\"billing, refund\" /></label>\
+           </div>\
+           <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
+             <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+             <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
+           </div>\
+           <div class=\"editor-preview-wrap\">\
+             <div class=\"preview-label\">Preview</div>\
+             <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+           </div>\
+           <div class=\"actions\">\
+             <button class=\"primary\" type=\"submit\">Save changes</button>\
+             <button type=\"button\" class=\"btn danger\" \
+                hx-delete=\"/dashboard/library/{id_attr}\" \
+                hx-confirm=\"Delete library snippet '{title_attr}'?\" \
+                hx-target=\"#library-editor\" hx-swap=\"innerHTML\">Delete</button>\
+             <span class=\"editor-meta\">updated {when}</span>\
+           </div>\
+         </form>",
+        id_attr = escape_html(&r.id),
+        title_attr = escape_html(&r.title),
+        folder_attr = escape_html(r.folder_path.as_deref().unwrap_or("")),
+        body_text = escape_html(&r.body),
+        tags_attr = escape_html(&decode_tags_for_form(&r.tags)),
+        ver = r.version,
         when = format_relative(r.updated_at),
-        tags = tags_html,
-        folder = folder,
-        usage_pill = usage_pill,
+        toolbar = library_format_toolbar(),
+    )
+}
+
+/// Blank editor pane for a new snippet. Pre-fills the folder field
+/// with the currently-selected folder so adding while inside a folder
+/// defaults to that folder. POSTs into the same `#library-editor`
+/// target; on success the handler swaps in the saved snippet's editor.
+fn render_library_editor_create(selected: &str) -> String {
+    let prefilled_folder = match selected {
+        FOLDER_ALL | FOLDER_UNFILED => String::new(),
+        other => other.to_string(),
+    };
+    format!(
+        "<form class=\"lib-edit-form editor-form stack\" id=\"library-editor-form\" \
+              hx-post=\"/dashboard/library\" \
+              hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
+           <div class=\"editor-fields\">\
+             <label class=\"f-title\">Title<input type=\"text\" name=\"title\" required /></label>\
+             <label class=\"f-folder\">Folder<input type=\"text\" name=\"folder_path\" \
+                placeholder=\"e.g. Replies/Billing\" value=\"{prefill}\" /></label>\
+             <label class=\"f-tags\">Tags<input type=\"text\" name=\"tags\" \
+                placeholder=\"billing, refund\" /></label>\
+           </div>\
+           <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
+             <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+             <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
+           </div>\
+           <div class=\"editor-preview-wrap\">\
+             <div class=\"preview-label\">Preview</div>\
+             <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+           </div>\
+           <div class=\"actions\"><button class=\"primary\" type=\"submit\">Add to library</button></div>\
+         </form>",
+        prefill = escape_html(&prefilled_folder),
+        toolbar = library_format_toolbar(),
     )
 }
 
@@ -3316,86 +3375,131 @@ fn highlight_matches(text: &str, q: &str) -> String {
     out
 }
 
-/// HTML-escape a snippet body and wrap `{variable_name}` tokens in
-/// the same chip styling the desktop client's preview uses, so
-/// template placeholders read identically on both surfaces. The
-/// token pattern mirrors the client's extractVarNames regex
-/// (`[A-Za-z0-9_-]+` between braces). Plain segments between tokens
-/// additionally pick up `.search-match` highlighting for the active
-/// library search query. Escaping happens per-piece BEFORE markup is
-/// added, so body content can't inject HTML.
+/// Render a snippet body as safe inline HTML for the list preview:
+/// `{variable}` chips plus the same inline marks the desktop app and
+/// extension use - `**bold**`, `*italic*`, `` `code` ``, and
+/// `[text](url)` links - so a snippet reads as formatted text instead
+/// of raw markers. Mirrors the extension's shared/format.js precedence
+/// (var, link, bold, italic, code) so both surfaces agree. Plain
+/// segments pick up `.search-match` highlighting for the active query.
+/// Everything is HTML-escaped per piece BEFORE markup is added, so body
+/// content can't inject HTML. Marks aren't nested (inner text is just
+/// escaped/highlighted), which is plenty for a list preview.
 fn render_body_with_vars(body: &str, q: &str) -> String {
     let mut out = String::with_capacity(body.len() + 32);
     let bytes = body.as_bytes();
     let mut plain_start = 0;
     let mut i = 0;
+    // Flush the pending plain run [plain_start, i) with highlighting.
+    macro_rules! flush {
+        () => {
+            out.push_str(&highlight_matches(&body[plain_start..i], q));
+        };
+    }
     while i < bytes.len() {
-        if bytes[i] == b'{' {
-            // Find a closing brace with a valid token between.
-            if let Some(rel_end) = body[i + 1..].find('}') {
-                let token = &body[i + 1..i + 1 + rel_end];
+        let c = bytes[i];
+        // {variable}
+        if c == b'{' {
+            if let Some(rel) = body[i + 1..].find('}') {
+                let token = &body[i + 1..i + 1 + rel];
                 let valid = !token.is_empty()
                     && token
                         .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.');
                 if valid {
-                    out.push_str(&highlight_matches(&body[plain_start..i], q));
+                    flush!();
                     out.push_str(&format!(
                         "<span class=\"preview-var\">{{{}}}</span>",
                         escape_html(token)
                     ));
-                    i += rel_end + 2;
+                    i += rel + 2;
                     plain_start = i;
                     continue;
                 }
             }
         }
+        // **bold**
+        if c == b'*' && bytes.get(i + 1) == Some(&b'*') {
+            if let Some(rel) = body[i + 2..].find("**") {
+                if rel > 0 {
+                    let inner = &body[i + 2..i + 2 + rel];
+                    flush!();
+                    out.push_str("<strong>");
+                    out.push_str(&highlight_matches(inner, q));
+                    out.push_str("</strong>");
+                    i += 2 + rel + 2;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
+        // *italic* (single asterisk; bold is handled above)
+        if c == b'*' {
+            if let Some(rel) = body[i + 1..].find('*') {
+                let inner = &body[i + 1..i + 1 + rel];
+                if !inner.is_empty() && !inner.contains('\n') && !inner.starts_with('*') {
+                    flush!();
+                    out.push_str("<em>");
+                    out.push_str(&highlight_matches(inner, q));
+                    out.push_str("</em>");
+                    i += 1 + rel + 1;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
+        // `code`
+        if c == b'`' {
+            if let Some(rel) = body[i + 1..].find('`') {
+                if rel > 0 {
+                    let inner = &body[i + 1..i + 1 + rel];
+                    flush!();
+                    out.push_str("<code>");
+                    out.push_str(&escape_html(inner));
+                    out.push_str("</code>");
+                    i += 1 + rel + 2;
+                    plain_start = i;
+                    continue;
+                }
+            }
+        }
+        // [text](url) - only http(s)/mailto land as real links.
+        if c == b'[' {
+            if let Some(close_rel) = body[i + 1..].find(']') {
+                let text_part = &body[i + 1..i + 1 + close_rel];
+                let after = i + 1 + close_rel + 1;
+                if !text_part.contains('[')
+                    && body.as_bytes().get(after) == Some(&b'(')
+                    && !text_part.is_empty()
+                {
+                    if let Some(paren_rel) = body[after + 1..].find(')') {
+                        let url = &body[after + 1..after + 1 + paren_rel];
+                        if !url.contains(char::is_whitespace) && !url.is_empty() {
+                            flush!();
+                            let safe = url.starts_with("http://")
+                                || url.starts_with("https://")
+                                || url.starts_with("mailto:");
+                            if safe {
+                                out.push_str(&format!(
+                                    "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{}</a>",
+                                    escape_html(url),
+                                    highlight_matches(text_part, q),
+                                ));
+                            } else {
+                                out.push_str(&highlight_matches(text_part, q));
+                            }
+                            i = after + 1 + paren_rel + 1;
+                            plain_start = i;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         i += 1;
     }
-    out.push_str(&highlight_matches(&body[plain_start..], q));
+    flush!();
     out
-}
-
-/// The inline edit form, rendered into the slot where a library card
-/// used to be. Same shape as the create form but with the existing
-/// row's values pre-filled and a hidden expected_version for
-/// optimistic-concurrency parity with the JSON PUT handler.
-fn render_library_edit_form(r: &LibraryRow) -> String {
-    format!(
-        "<form class=\"library-card lib-edit-form stack\" id=\"lib-{id_attr}\" \
-              hx-put=\"/dashboard/library/{id_attr}\" \
-              hx-target=\"closest .library-card\" hx-swap=\"outerHTML\">\
-           <input type=\"hidden\" name=\"expected_version\" value=\"{ver}\" />\
-           <div class=\"row\">\
-             <label>Title<input type=\"text\" name=\"title\" value=\"{title_attr}\" required /></label>\
-             <label>Folder<input type=\"text\" name=\"folder_path\" \
-                placeholder=\"e.g. Replies/Billing\" value=\"{folder_attr}\" /></label>\
-           </div>\
-           <div class=\"field-block\" role=\"group\" aria-label=\"Body\">\
-             <span>Body</span>\
-             <div class=\"format-toolbar\" data-target=\"lib-edit-body-{id_attr}\">{toolbar}</div>\
-             <textarea id=\"lib-edit-body-{id_attr}\" name=\"body\" required>{body_text}</textarea>\
-           </div>\
-           <label>Tags (comma-separated)\
-             <input type=\"text\" name=\"tags\" value=\"{tags_attr}\" placeholder=\"billing, refund\" /></label>\
-           <div class=\"actions\">\
-             <button type=\"button\" class=\"btn\" \
-                hx-get=\"/dashboard/library/{id_attr}/card\" \
-                hx-target=\"closest .library-card\" hx-swap=\"outerHTML\">Cancel</button>\
-             <button class=\"primary\" type=\"submit\">Save changes</button>\
-           </div>\
-         </form>",
-        id_attr = escape_html(&r.id),
-        title_attr = escape_html(&r.title),
-        folder_attr = escape_html(r.folder_path.as_deref().unwrap_or("")),
-        // Reuse escape_html for textarea content - same set works for
-        // body context and textarea content (textarea is special only
-        // for `</textarea>` which our escape catches via <).
-        body_text = escape_html(&r.body),
-        tags_attr = escape_html(&decode_tags_for_form(&r.tags)),
-        ver = r.version,
-        toolbar = library_format_toolbar(),
-    )
 }
 
 /// `,billing,refund,` -> `billing, refund`. The DB format is bracket-
@@ -3486,11 +3590,44 @@ fn filter_library_query<'a>(rows: Vec<&'a LibraryRow>, q: &Option<String>) -> Ve
         .collect()
 }
 
+/// Rows to show in the list for the current view. An active search
+/// spans the whole library (matching the extension: searching ignores
+/// the folder filter); otherwise the view is scoped to the selected
+/// folder.
+fn library_visible_rows<'a>(
+    rows: &'a [LibraryRow],
+    selected: &str,
+    q: &Option<String>,
+) -> Vec<&'a LibraryRow> {
+    let searching = q.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let base = if searching {
+        rows.iter().collect()
+    } else {
+        filter_library_rows(rows, selected)
+    };
+    filter_library_query(base, q)
+}
+
 /// Inline drag-drop + formatting-toolbar wiring for the library page.
 /// Scoped via `data-*` attributes on the library DOM so a stray
 /// global keypress can't trigger formatting on an unrelated input.
 const LIBRARY_PAGE_JS: &str = r##"<script>
 (function () {
+  // ---- Full-height fit ----
+  //
+  // The three panes fill the viewport below the nav. The nav height
+  // isn't a fixed constant (it can wrap, and the update banner adds a
+  // strip), so measure whatever sits above the panes and expose it as
+  // --nav-h for the height: calc() to subtract. Re-measure on resize.
+  function fitPanes() {
+    var panes = document.querySelector(".library-three-pane");
+    if (!panes) return;
+    var top = panes.getBoundingClientRect().top + window.scrollY;
+    document.documentElement.style.setProperty("--nav-h", top + "px");
+  }
+  fitPanes();
+  window.addEventListener("resize", fitPanes);
+
   // ---- Selection-tree modal (shared by export picker + import
   // preview). Fragments are inserted into #library-modal-body, so
   // every behaviour below is delegated - inserted markup carries no
@@ -3709,12 +3846,295 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
       ta.setSelectionRange(start + prefix.length, start + prefix.length + sel.length);
     }
     ta.focus();
+    // Toolbar edits set .value directly, which doesn't fire "input";
+    // nudge the live preview so it reflects the inserted markers.
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   });
+
+  // ---- Editor live preview ----
+  //
+  // Mirrors the extension manager's editor: renders the body textarea
+  // as formatted text (markdown blocks + the same inline marks the
+  // desktop app inserts) with {variables} highlighted. The rules are
+  // fixed to match the dashboard's format toolbar. Ported from the
+  // extension's shared/format.js so both surfaces read identically.
+  var FMT_RULES = [
+    { label: "Bold", prefix: "**", suffix: "**" },
+    { label: "Italic", prefix: "*", suffix: "*" },
+    { label: "Code", prefix: "`", suffix: "`" },
+    { label: "Link", prefix: "[", suffix: "](https://)" }
+  ];
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  function isLinkRule(r) { return /\]\s*\([^)]*\)\s*$/.test(r.suffix || ""); }
+  function fmtTag(r) {
+    var l = (r.label || "").toLowerCase();
+    if (l.indexOf("bold") !== -1) return "strong";
+    if (l.indexOf("italic") !== -1) return "em";
+    if (l.indexOf("code") !== -1) return "code";
+    if (l.indexOf("underline") !== -1) return "u";
+    if (l.indexOf("strike") !== -1) return "s";
+    return "strong";
+  }
+  function buildMatchers(rules) {
+    var m = [{ kind: "var", re: /\{[A-Za-z0-9_.-]+\}/ }];
+    if (rules.some(isLinkRule)) m.push({ kind: "link", re: /\[([^[\]]+)\]\(([^)\s]+)\)/ });
+    rules.filter(function (r) { return r.prefix && r.suffix && !isLinkRule(r); })
+      .sort(function (a, b) { return b.prefix.length - a.prefix.length; })
+      .forEach(function (r) {
+        m.push({
+          kind: "wrap",
+          tag: fmtTag(r),
+          re: new RegExp(escapeRe(r.prefix) + "([\\s\\S]+?)" + escapeRe(r.suffix))
+        });
+      });
+    m.push({ kind: "url", re: /https?:\/\/[^\s)]+/ });
+    return m;
+  }
+  function appendInline(parent, text, matchers) {
+    var rest = text;
+    while (rest) {
+      var best = null;
+      for (var i = 0; i < matchers.length; i++) {
+        var mm = matchers[i].re.exec(rest);
+        if (mm && (!best || mm.index < best.m.index)) best = { p: matchers[i], m: mm };
+      }
+      if (!best) { parent.appendChild(document.createTextNode(rest)); break; }
+      var p = best.p, m = best.m;
+      if (m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, m.index)));
+      if (p.kind === "var") {
+        var v = document.createElement("var");
+        v.textContent = m[0];
+        parent.appendChild(v);
+      } else if (p.kind === "link" || p.kind === "url") {
+        var url = p.kind === "link" ? m[2] : m[0];
+        var a = document.createElement("a");
+        if (p.kind === "link") appendInline(a, m[1], matchers); else a.textContent = m[0];
+        if (/^(https?:|mailto:)/i.test(url)) { a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+        parent.appendChild(a);
+      } else {
+        var node = document.createElement(p.tag);
+        if (p.tag === "code") node.textContent = m[1]; else appendInline(node, m[1], matchers);
+        parent.appendChild(node);
+      }
+      rest = rest.slice(m.index + m[0].length);
+    }
+  }
+  function renderFormatted(container, text, rules) {
+    var matchers = buildMatchers(rules);
+    container.replaceChildren();
+    var list = null;
+    var lines = (text || "").split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+      var num = /^\s*\d+\.\s+(.*)$/.exec(line);
+      var head = /^(#{1,3})\s+(.*)$/.exec(line);
+      if (bullet) {
+        if (!list || list.tagName !== "UL") {
+          list = document.createElement("ul"); list.className = "md-list"; container.appendChild(list);
+        }
+        var li = document.createElement("li"); appendInline(li, bullet[1], matchers); list.appendChild(li);
+        continue;
+      }
+      if (num) {
+        if (!list || list.tagName !== "OL") {
+          list = document.createElement("ol"); list.className = "md-list"; container.appendChild(list);
+        }
+        var lin = document.createElement("li"); appendInline(lin, num[1], matchers); list.appendChild(lin);
+        continue;
+      }
+      list = null;
+      if (head) {
+        var h = document.createElement("div");
+        h.className = "md-h md-h" + head[1].length;
+        appendInline(h, head[2], matchers);
+        container.appendChild(h);
+        continue;
+      }
+      var div = document.createElement("div");
+      div.className = "md-line";
+      appendInline(div, line, matchers);
+      container.appendChild(div);
+    }
+  }
+  function refreshEditorPreview() {
+    var ta = document.getElementById("library-editor-body");
+    var pv = document.getElementById("library-editor-preview");
+    if (ta && pv) renderFormatted(pv, ta.value, FMT_RULES);
+  }
+  // The textarea is swapped in dynamically, so delegate the input.
+  document.body.addEventListener("input", function (e) {
+    if (e.target && e.target.id === "library-editor-body") refreshEditorPreview();
+  });
+
+  // ---- List selection ----
+  //
+  // Clicking a row loads its editor into #library-editor (the row's
+  // hx-get does the fetch). We track the selected id in a variable so
+  // the active highlight survives the 5s list re-swap. After the
+  // editor swaps we re-derive the selection from the form htmx put
+  // back: an edit/save returns a form with hx-put="/dashboard/library/<id>"
+  // (highlight that row); a delete or "+ new" returns a form with no
+  // hx-put (clear the highlight).
+  var selectedSnippetId = null;
+  function applyRowSelection() {
+    var list = document.getElementById("library-list");
+    if (!list) return;
+    Array.prototype.forEach.call(
+      list.querySelectorAll(".library-row"),
+      function (row) {
+        row.classList.toggle(
+          "active",
+          row.getAttribute("data-snippet-id") === selectedSnippetId
+        );
+      }
+    );
+  }
+  var listEl = document.getElementById("library-list");
+  if (listEl) {
+    listEl.addEventListener("click", function (e) {
+      var row = e.target.closest && e.target.closest(".library-row[data-snippet-id]");
+      if (!row) return;
+      selectedSnippetId = row.getAttribute("data-snippet-id");
+      applyRowSelection();
+    });
+  }
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    if (!e.target) return;
+    if (e.target.id === "library-list") {
+      applyRowSelection();
+    } else if (e.target.id === "library-editor") {
+      var form = e.target.querySelector(".editor-form[hx-put]");
+      selectedSnippetId = form
+        ? (form.getAttribute("hx-put") || "").split("/").pop()
+        : null;
+      applyRowSelection();
+      refreshEditorPreview();
+    }
+  });
+
+  // ---- Global arrow-key navigation ----
+  //
+  // Mirrors the desktop app + extension: Up/Down move the active
+  // section's selection, Left/Right switch which section the arrows
+  // drive (tree vs list), Enter expands/collapses the active folder.
+  // The folder tree turns accent-blue (.lib-tree.nav-active) while it's
+  // the driven section. Real text fields keep their own arrow behaviour;
+  // the search box is the one field arrows escape from. Folder moves are
+  // SPA-style here (update the hidden folder input + refresh the list via
+  // htmx) so each keypress doesn't trigger a full page reload.
+  var navPane = "list";
+  function modalOpen() {
+    var m = document.getElementById("library-modal");
+    return m && !m.hidden;
+  }
+  function applyNavActive() {
+    var tree = document.querySelector("#library-sidebar .lib-tree");
+    if (tree) tree.classList.toggle("nav-active", navPane === "tree");
+  }
+  function currentFolder() {
+    var inp = document.getElementById("library-folder-input");
+    return inp ? inp.value : "__all__";
+  }
+  function navFolderRows() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll("#library-sidebar .lib-folder-row[data-folder-path]"),
+      function (r) { return r.offsetParent !== null; } // skip collapsed/hidden
+    );
+  }
+  function navListRows() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll("#library-list .library-row")
+    );
+  }
+  function selectFolder(path) {
+    var inp = document.getElementById("library-folder-input");
+    if (inp) inp.value = path;
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#library-sidebar .lib-folder-row"),
+      function (r) { r.classList.toggle("active", r.getAttribute("data-folder-path") === path); }
+    );
+    if (window.htmx) {
+      var list = document.getElementById("library-list");
+      if (list) window.htmx.trigger(list, "refresh-now");
+    }
+  }
+  function moveTreeSel(dir) {
+    var rows = navFolderRows();
+    if (!rows.length) return;
+    var cur = currentFolder();
+    var idx = rows.findIndex(function (r) { return r.getAttribute("data-folder-path") === cur; });
+    if (idx < 0) idx = 0;
+    idx = dir === "down" ? Math.min(rows.length - 1, idx + 1) : Math.max(0, idx - 1);
+    selectFolder(rows[idx].getAttribute("data-folder-path"));
+    rows[idx].scrollIntoView({ block: "nearest" });
+  }
+  function moveListSel(dir) {
+    var rows = navListRows();
+    if (!rows.length) return;
+    var idx = rows.findIndex(function (r) { return r.getAttribute("data-snippet-id") === selectedSnippetId; });
+    idx = dir === "down"
+      ? (idx < 0 ? 0 : Math.min(rows.length - 1, idx + 1))
+      : (idx <= 0 ? 0 : idx - 1);
+    var row = rows[idx] || rows[0];
+    row.click(); // reuses the row's hx-get (loads editor) + selection
+    row.scrollIntoView({ block: "nearest" });
+  }
+  function onGlobalNavKey(e) {
+    if (e.key.indexOf("Arrow") !== 0 && e.key !== "Enter") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (modalOpen()) return;
+    var a = document.activeElement;
+    var search = document.getElementById("library-search-input");
+    if (a && a !== search &&
+        (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) {
+      return;
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      navPane = "tree";
+      applyNavActive();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      var rows = navListRows();
+      if (!rows.length) return;
+      navPane = "list";
+      applyNavActive();
+      if (!rows.some(function (r) { return r.getAttribute("data-snippet-id") === selectedSnippetId; })) {
+        rows[0].click();
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navPane === "tree" ? moveTreeSel("up") : moveListSel("up");
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navPane === "tree" ? moveTreeSel("down") : moveListSel("down");
+    } else if (e.key === "Enter" && navPane === "tree") {
+      e.preventDefault();
+      toggleFolderCollapsed(currentFolder());
+      applyFolderCollapse();
+    }
+  }
+  document.addEventListener("keydown", onGlobalNavKey);
+  // Type-to-search: a printable key with no modifier, when focus isn't in
+  // a field and no modal is open, jumps to the search box so the char
+  // lands there and the arrows then walk the results.
+  document.addEventListener("keydown", function (e) {
+    if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
+    var a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+    if (modalOpen()) return;
+    navPane = "list";
+    applyNavActive();
+    var s = document.getElementById("library-search-input");
+    if (s) s.focus();
+  });
+  applyNavActive();
 
   // ---- Drag-drop: snippets into folders, AND folders onto folders ----
   //
   // Two independent drag types coexist on this page:
-  //   1. A library-card being dragged onto a folder node = snippet move.
+  //   1. A library-row being dragged onto a folder node = snippet move.
   //   2. A folder node being dragged onto another folder node OR the
   //      root drop zone = folder rename / nest / unnest.
   //
@@ -3741,7 +4161,7 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
       folderSrc.classList.add("dragging");
       return;
     }
-    var card = e.target.closest && e.target.closest(".library-card[data-snippet-id]");
+    var card = e.target.closest && e.target.closest(".library-row[data-snippet-id]");
     if (card) {
       draggingKind = "snippet";
       draggingId = card.getAttribute("data-snippet-id");
@@ -3752,7 +4172,7 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   });
   document.body.addEventListener("dragend", function (e) {
     var dragged = e.target.closest &&
-      e.target.closest(".library-card, .lib-folder-row");
+      e.target.closest(".library-row, .lib-folder-row");
     if (dragged) dragged.classList.remove("dragging");
     draggingKind = null;
     draggingId = null;
@@ -3844,7 +4264,15 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
       }
       if (node.hasAttribute("data-unfiled")) return;
       if (position === "above" || position === "below") {
-        submitFolderReorder(target, position);
+        if (parentOf(target) === parentOf(draggingId)) {
+          // Same parent: pure reorder.
+          submitFolderReorder(target, position);
+        } else {
+          // Different parent + a top-level target (classifyFolderDrop
+          // only yields above/below here when the target is top-level):
+          // un-nest the dragged folder and drop it at this slot.
+          submitFolderUnnestToPosition(target, position);
+        }
       } else {
         var leaf = draggingId.split("/").pop();
         submitFolderMove(draggingId, target + "/" + leaf);
@@ -4001,7 +4429,11 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     // fetch, making a mode switch look like it needs a refresh.
     var sidebar = document.getElementById("library-sidebar");
     if (!sidebar) return;
-    var all = Array.from(sidebar.querySelectorAll(
+    // Nodes live inside the scrolling .lib-tree container; re-inserts
+    // must target it (not the aside) or they'd land outside the scroll
+    // area, next to the pinned create bar.
+    var tree = sidebar.querySelector(".lib-tree") || sidebar;
+    var all = Array.from(tree.querySelectorAll(
       ".lib-folder-row[data-folder-source]"
     ));
     if (all.length === 0) return;
@@ -4029,13 +4461,16 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     // folders. We append the rebuilt tree right after it so the
     // pseudo-nodes (All, Unfiled, drop zone) keep their leading
     // position.
-    var anchor = sidebar.querySelector(".lib-folder-root-drop") ||
-                 sidebar.querySelector(".lib-folder-row");
+    // Anchor real folders right after the Unfiled pseudo-node so the
+    // pseudo-nodes keep their lead and the bottom un-nest zone stays
+    // last (the root-drop zone moved to the bottom of the tree).
+    var anchor = tree.querySelector('.lib-folder-row[data-folder-path="__unfiled__"]') ||
+                 tree.querySelector(".lib-folder-row");
     if (!anchor) return;
     function emitChildrenOf(par) {
       var kids = byParent[par] || [];
       kids.forEach(function (n) {
-        sidebar.insertBefore(n, anchor.nextSibling);
+        tree.insertBefore(n, anchor.nextSibling);
         anchor = n;
         emitChildrenOf(n.getAttribute("data-folder-path"));
       });
@@ -4092,17 +4527,57 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     });
   }
   function classifyFolderDrop(node, clientY) {
-    // Only attempt reorder in manual mode + same-parent target.
-    // Anything else collapses to nest (drop-target).
+    // Above/below slots only make sense in manual mode. They apply when
+    // the dragged + target share a parent (a pure reorder) OR when the
+    // target is top-level (dropping a nested folder between top-level
+    // folders un-nests it into that slot). Anything else collapses to
+    // nest (drop-target).
     if (loadSortMode() !== "manual") return "into";
     if (!node.hasAttribute("data-folder-source")) return "into";
     var targetPath = node.getAttribute("data-folder-path") || "";
-    if (parentOf(targetPath) !== parentOf(draggingId || "")) return "into";
+    var sameParent = parentOf(targetPath) === parentOf(draggingId || "");
+    var targetTopLevel = parentOf(targetPath) === "";
+    if (!sameParent && !targetTopLevel) return "into";
     var rect = node.getBoundingClientRect();
     var ratio = (clientY - rect.top) / Math.max(rect.height, 1);
     if (ratio < 0.30) return "above";
     if (ratio > 0.70) return "below";
     return "into";
+  }
+  // Un-nest the dragged folder to the top level and drop it into a
+  // specific slot (relative to a top-level target). Move first (rewrites
+  // the folder's path to its leaf name), then reorder the top-level set
+  // with the new path placed above/below the target.
+  function submitFolderUnnestToPosition(targetTopPath, position) {
+    var newPath = draggingId.split("/").pop() || draggingId;
+    var tops = Array.prototype.map.call(
+      document.querySelectorAll("#library-sidebar .lib-folder-row[data-folder-source]"),
+      function (n) { return n.getAttribute("data-folder-path") || ""; }
+    ).filter(function (p) { return p && parentOf(p) === ""; });
+    var order = tops.filter(function (p) { return p !== newPath; });
+    var idx = order.indexOf(targetTopPath);
+    if (idx === -1) order.push(newPath);
+    else if (position === "above") order.splice(idx, 0, newPath);
+    else order.splice(idx + 1, 0, newPath);
+    var mv = new URLSearchParams();
+    mv.append("old", draggingId);
+    mv.append("new", newPath);
+    fetch("/dashboard/library/folders/move", { method: "POST", body: mv }).then(function (r) {
+      if (!r.ok) {
+        r.text().then(function (m) { console.warn("un-nest move failed", r.status, m); });
+        return;
+      }
+      fetch("/dashboard/library/folders/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent: "", paths: order }),
+      }).then(function (r2) {
+        if (!r2.ok) {
+          r2.text().then(function (m) { console.warn("un-nest reorder failed", r2.status, m); });
+        }
+        refreshLibrary();
+      });
+    });
   }
   function submitFolderReorder(targetPath, position) {
     var siblings = siblingsOf(draggingId).map(function (n) {
@@ -4136,32 +4611,37 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   }
 
   // ---- "+ New folder" form ----
-  var createForm = document.getElementById("lib-folder-create-form");
-  if (createForm) {
-    createForm.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var input = document.getElementById("lib-folder-create-input");
-      if (!input) return;
-      var path = input.value.trim();
-      if (!path) return;
-      var params = new URLSearchParams();
-      params.append("path", path);
-      fetch("/dashboard/library/folders/create", {
-        method: "POST",
-        body: params,
-      }).then(function (r) {
-        if (!r.ok) {
-          r.text().then(function (msg) {
-            console.warn("folder create failed", r.status, msg);
-            alert("Couldn't create folder: " + msg);
-          });
-          return;
-        }
-        input.value = "";
-        refreshLibrary();
-      });
+  //
+  // Delegated on document.body, not bound to the form element: the
+  // sidebar is htmx-swapped (10s poll + libraryChanged), which replaces
+  // the form node. An element-bound listener would die on the first
+  // swap, so the second folder-create would fall through to a default
+  // GET submit ("nothing happens until you refresh"). Delegation
+  // survives every swap.
+  document.body.addEventListener("submit", function (e) {
+    if (!e.target || e.target.id !== "lib-folder-create-form") return;
+    e.preventDefault();
+    var input = document.getElementById("lib-folder-create-input");
+    if (!input) return;
+    var path = input.value.trim();
+    if (!path) return;
+    var params = new URLSearchParams();
+    params.append("path", path);
+    fetch("/dashboard/library/folders/create", {
+      method: "POST",
+      body: params,
+    }).then(function (r) {
+      if (!r.ok) {
+        r.text().then(function (msg) {
+          console.warn("folder create failed", r.status, msg);
+          alert("Couldn't create folder: " + msg);
+        });
+        return;
+      }
+      input.value = "";
+      refreshLibrary();
     });
-  }
+  });
 
   // The sidebar polls every 10s and may swap in a fresh tree; the
   // sidebar fragment also re-renders after libraryChanged events
@@ -4171,6 +4651,7 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     if (e.target && e.target.id === "library-sidebar") {
       applySortMode();
       applyFolderCollapse();
+      applyNavActive();
     }
   });
 
@@ -4267,7 +4748,7 @@ pub async fn library_create(
                     "libraryChanged",
                 ),
             ],
-            render_library_card(&LibraryRow {
+            render_library_editor(&LibraryRow {
                 id: write.id,
                 title: title.to_string(),
                 body: body.body,
@@ -4403,7 +4884,7 @@ pub async fn library_update(
                         "libraryChanged",
                     ),
                 ],
-                render_library_card(&row),
+                render_library_editor(&row),
             )
                 .into_response()
         }
@@ -4419,8 +4900,9 @@ pub async fn library_update(
     }
 }
 
-/// GET endpoint that returns the inline edit form for a single
-/// library row. Used when the user clicks the Edit button on a card.
+/// GET endpoint that returns the editor pane for a single library
+/// row. The row-click target: clicking a list row swaps this into
+/// `#library-editor`.
 pub async fn library_edit_form(
     State(state): State<AppState>,
     _admin: DashboardAdmin,
@@ -4437,7 +4919,7 @@ pub async fn library_edit_form(
     {
         Ok(Some(row)) => (
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            render_library_edit_form(&row),
+            render_library_editor(&row),
         )
             .into_response(),
         _ => (
@@ -4449,9 +4931,8 @@ pub async fn library_edit_form(
     }
 }
 
-/// GET endpoint mirroring `library_edit_form` but returning the
-/// read-only card view. Used by the Cancel button on the edit form
-/// so it can swap back without losing the row.
+/// GET endpoint mirroring `library_edit_form`; returns the editor
+/// pane for a single row. Kept as a stable alias for `/:id/card`.
 pub async fn library_card_fragment(
     State(state): State<AppState>,
     _admin: DashboardAdmin,
@@ -4468,7 +4949,7 @@ pub async fn library_card_fragment(
     {
         Ok(Some(row)) => (
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            render_library_card(&row),
+            render_library_editor(&row),
         )
             .into_response(),
         _ => (
@@ -4478,6 +4959,22 @@ pub async fn library_card_fragment(
         )
             .into_response(),
     }
+}
+
+/// GET /dashboard/library/new - blank create form for the editor pane.
+/// The list pane's "+" button swaps this into `#library-editor`. The
+/// folder query param (carried via hx-include of the hidden folder
+/// input) pre-fills the folder field with the current view.
+pub async fn library_new_editor(
+    _admin: DashboardAdmin,
+    Query(q): Query<LibraryPageQuery>,
+) -> Response {
+    let selected = library_selected_folder(&q.folder);
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        render_library_editor_create(&selected),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -5219,6 +5716,9 @@ pub async fn library_delete(
         // for it ("libraryChanged from:body"), so the folder list
         // refreshes immediately instead of waiting for the 10s
         // poll tick.
+        // The delete swaps the editor pane back to its empty state.
+        // libraryChanged refreshes the list (the deleted row drops
+        // out) and the sidebar counts.
         Ok(_) => (
             [
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
@@ -5227,7 +5727,7 @@ pub async fn library_delete(
                     "libraryChanged",
                 ),
             ],
-            "",
+            render_library_editor_placeholder(),
         )
             .into_response(),
         Err(err) => (

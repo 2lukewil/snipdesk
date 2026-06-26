@@ -24,7 +24,8 @@ main { padding: 14px; }
 .muted { color: var(--text-dim); font-size: 12px; }
 .hint { color: var(--text-dim); font-size: 12px; margin: 6px 0; }
 .status { font-size: 12px; color: var(--text-dim); }
-#sync-status { margin-bottom: 8px; }
+#identity { border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 12px; }
+#sync-status { margin-bottom: 0; }
 #sync-status.err { color: var(--danger); }
 .status.ok { color: var(--accent); }
 .error { color: var(--danger); font-size: 13px; margin-top: 10px; }

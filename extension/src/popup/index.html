@@ -10,6 +10,13 @@
     <header><span class="title">SnipDesk</span><span id="status" class="status">Loading...</span></header>
     <main>
 
+      <!-- Signed-in identity sits at the top, under the header. Toggled
+           alongside #signed-in by refresh(). -->
+      <section id="identity" class="hidden">
+        <div class="who-id"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
+        <div id="sync-status" class="muted"></div>
+      </section>
+
       <!-- Always available: local snippets work without an account -->
       <section id="core">
         <div class="who">
@@ -20,10 +27,8 @@
         <button id="open-manager">Open manager</button>
       </section>
 
-      <!-- Signed-in: identity + sync + sign out -->
+      <!-- Signed-in account actions; identity moved to #identity up top. -->
       <section id="signed-in" class="hidden">
-        <div class="who-id"><strong id="who-name"></strong><span id="who-email" class="muted"></span></div>
-        <div id="sync-status" class="muted"></div>
         <button id="btn-sync">Sync now</button>
         <button id="btn-logout" class="ghost">Sign out</button>
       </section>

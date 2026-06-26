@@ -6,6 +6,7 @@ const statusEl = $("status");
 const errorEl = $("error");
 const signedOut = $("signed-out");
 const signedIn = $("signed-in");
+const identity = $("identity");
 
 function showError(msg) {
   errorEl.textContent = msg;
@@ -31,6 +32,7 @@ async function refresh() {
     statusEl.classList.add("ok");
     signedOut.classList.add("hidden");
     signedIn.classList.remove("hidden");
+    identity.classList.remove("hidden");
     $("who-name").textContent = user?.display_name || "";
     $("who-email").textContent = user?.email || "";
     renderSyncStatus(res.data.lastSync, res.data.pending);
@@ -38,6 +40,7 @@ async function refresh() {
     statusEl.textContent = "Local only";
     statusEl.classList.remove("ok");
     signedIn.classList.add("hidden");
+    identity.classList.add("hidden");
     signedOut.classList.remove("hidden");
     // A policy-pinned URL locks the field; agents just pick a method.
     const pinned = ((await getManaged()).server_url || "").trim();

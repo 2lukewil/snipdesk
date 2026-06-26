@@ -7,6 +7,9 @@
 # into it without our syncs touching them.
 #
 # Each run:
+#   0. realigns the mirror onto the latest origin/main, so the sync
+#      lands on top of whatever ops merged/committed there (.gitlab-ci.yml,
+#      Helm charts) and the dev -> main merge request never conflicts,
 #   1. wipes the mirror worktree (except .git and PRESERVE paths),
 #   2. extracts this repo's tracked files (git archive HEAD - never
 #      untracked or ignored files),
@@ -47,6 +50,15 @@ $Preserve = @(
 if (-not (Test-Path (Join-Path $Mirror ".git"))) {
     throw "$Mirror is not a git repository - clone or init it first"
 }
+
+# 0. Realign the mirror onto the latest deploy main. Ops commit
+#    .gitlab-ci.yml / Helm charts straight to origin/main, and each
+#    dev -> main merge advances it; without resetting to it here the
+#    mirror drifts and the next sync's dev branch conflicts. Everything
+#    tracked is regenerated below, so discarding local-only sync commits
+#    and any stray working changes (checkout -f -B) is safe.
+git -C $Mirror fetch origin
+git -C $Mirror checkout -f -B main origin/main
 
 $upstreamSha = (git -C $Source rev-parse --short HEAD).Trim()
 $upstreamDesc = (git -C $Source describe --tags --always HEAD).Trim()

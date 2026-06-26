@@ -45,13 +45,17 @@ async function refresh() {
     // A policy-pinned URL locks the field; agents just pick a method.
     const pinned = ((await getManaged()).server_url || "").trim();
     const url = pinned || serverUrl;
-    $("auth-options").classList.toggle("hidden", !url);
-    if (url) {
-      $("server-url").value = url;
-      $("server-url").disabled = !!pinned;
-      loadMethods(url);
-    }
+    $("server-url").value = url || "";
+    $("server-url").disabled = !!pinned;
+    // Options stay hidden until loadMethods confirms the server answers;
+    // an empty or unreachable URL shows no sign-in options at all.
+    if (url) loadMethods(url);
+    else hideAuthOptions();
   }
+}
+
+function hideAuthOptions() {
+  $("auth-options").classList.add("hidden");
 }
 
 function relTime(ms) {
@@ -118,11 +122,31 @@ function renderSavings(all, settings) {
 async function loadMethods(serverUrl) {
   const providers = $("providers");
   providers.replaceChildren();
-  if (!serverUrl) return;
+  if (!serverUrl) {
+    hideAuthOptions();
+    return;
+  }
   const res = await send(MSG.AUTH_METHODS, { serverUrl });
-  if (!res.ok) return; // unreachable server; leave password form as-is
+  if (!res.ok) {
+    // Unreachable / not a SnipDesk server: show no sign-in options.
+    hideAuthOptions();
+    return;
+  }
   const methods = res.data || {};
-  $("password-section").classList.toggle("hidden", !(methods.password?.enabled));
+  const hasPassword = !!methods.password?.enabled;
+  const hasProviders = (methods.providers || []).length > 0;
+  // A reachable server with no configured methods has nothing to offer.
+  if (!hasPassword && !hasProviders) {
+    hideAuthOptions();
+    return;
+  }
+  // Reachable: reveal the options and render only what the server offers.
+  $("auth-options").classList.remove("hidden");
+  $("password-section").classList.toggle("hidden", !hasPassword);
+  // Token paste only applies when the server has SSO providers (the token
+  // comes from completing one). Collapse it whenever it isn't shown.
+  $("sso-token").classList.toggle("hidden", !hasProviders);
+  if (!hasProviders) $("token-section").classList.add("hidden");
   for (const p of methods.providers || []) {
     const btn = document.createElement("button");
     btn.textContent = p.display_name || `Sign in with ${p.id}`;
@@ -141,10 +165,27 @@ async function loadMethods(serverUrl) {
   }
 }
 
+// Re-check the server as the URL is typed (debounced) and on blur. The
+// options only appear once the server actually answers, so a half-typed
+// or unreachable URL shows nothing.
+let methodsTimer;
 $("server-url").addEventListener("input", () => {
-  $("auth-options").classList.toggle("hidden", !$("server-url").value.trim());
+  const v = $("server-url").value.trim();
+  if (!v) {
+    hideAuthOptions();
+    return;
+  }
+  clearTimeout(methodsTimer);
+  methodsTimer = setTimeout(() => loadMethods($("server-url").value.trim()), 400);
 });
-$("server-url").addEventListener("blur", () => loadMethods($("server-url").value.trim()));
+$("server-url").addEventListener("blur", () => {
+  clearTimeout(methodsTimer);
+  loadMethods($("server-url").value.trim());
+});
+
+$("toggle-token").addEventListener("click", () => {
+  $("token-section").classList.toggle("hidden");
+});
 
 $("btn-login").addEventListener("click", async () => {
   clearError();

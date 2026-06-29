@@ -537,39 +537,41 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   /* Tree fixed; list caps at 520 but yields space; editor takes the
      rest of the now full-width row. */
   grid-template-columns: 260px minmax(360px, 520px) minmax(360px, 1fr);
-  /* A gutter + gaps let the page background show around the panes, so the
-     library reads like the rest of the site (cards on the page bg) rather
-     than edge-to-edge panels. */
-  gap: 12px;
-  padding: 14px;
-  box-sizing: border-box;
+  gap: 0;
   /* Fill the viewport below the nav (set via --nav-h, measured at
      runtime by LIBRARY_PAGE_JS so a wrapped/banner nav can't clip it). */
   height: calc(100vh - var(--nav-h, 47px));
 }
 .library-three-pane > * { min-width: 0; min-height: 0; }
-/* Each pane is a rounded, bordered card floating on the page background. */
-.library-sidebar.tree-pane,
-.list-pane,
-.library-editor.editor {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
+/* Full-bleed, edge-to-edge: the panes use the page background (--bg) so
+   the library matches the site's base surface; only the list pane's
+   left/right edges divide the columns. */
 .library-sidebar.tree-pane {
   position: static;
   top: auto;
   max-height: none;
   padding: 0;
+  border: 0;
+  border-radius: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
 }
 .list-pane {
+  background: var(--bg);
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .library-editor.editor {
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
   padding: 16px;
   overflow-y: auto;
 }

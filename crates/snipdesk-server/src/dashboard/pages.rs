@@ -1175,9 +1175,9 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     let mut body = String::new();
     body.push_str("<h1>Server stats</h1>");
     body.push_str(
-        "<p class=\"muted\">Activity snapshot. Click the &times; on any card to hide it; \
-         use <strong>+ Add card</strong> to show ones you've hidden. Choices remember per browser; \
-         <a href=\"#\" id=\"stats-reset\">Reset to defaults</a>.</p>",
+        "<p class=\"muted\">Activity across your team. Hover a card and click &times; to hide it, \
+         or use <strong>+ Add card</strong> to bring hidden ones back; choices save per browser. \
+         <a href=\"#\" id=\"stats-reset\">Reset</a>.</p>",
     );
     // Toolbar: + Add picker on the left + currency dropdown on the
     // right. The Add menu is populated by JS from cards currently
@@ -1254,13 +1254,13 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         &library_new_30d.to_string(),
         "new shared snippets in the last 30 days",
     ));
-    body.push_str(&stat_card(
+    body.push_str(&stat_card_featured(
         "adoption",
         "Adoption",
         &format!("{adoption_pct}%"),
         "users who've pasted at least once",
     ));
-    body.push_str(&stat_card(
+    body.push_str(&stat_card_featured(
         "pastes",
         "Total pastes",
         &format_thousands(total_snippets_pasted),
@@ -1273,7 +1273,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         "characters users didn't have to type",
     ));
     let curr = &state.stats.currency;
-    body.push_str(&stat_card(
+    body.push_str(&stat_card_featured(
         "hours",
         "Hours saved",
         &format!("{hours_saved:.1}"),
@@ -1285,7 +1285,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     // currency so operators understand the "raw" value before
     // they pick a different display code.
     body.push_str(&format!(
-        "<div class=\"stat-card stat-card-money\" data-card-id=\"money\" data-aud=\"{aud}\">\
+        "<div class=\"stat-card featured stat-card-money\" data-card-id=\"money\" data-aud=\"{aud}\">\
            <button type=\"button\" class=\"stat-close\" aria-label=\"Hide card\">&times;</button>\
            <div class=\"stat-value\" id=\"stat-money-value\">A${val}</div>\
            <div class=\"stat-label\">Money saved</div>\
@@ -1298,56 +1298,60 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     ));
     body.push_str("</div>");
 
-    // Two narrow lists: top contributors + top library snippets.
-    // Sized like the recent-grid so they sit on the same row.
-    if !top_users.is_empty() || !top_library.is_empty() {
-        body.push_str("<div class=\"recent-grid\">");
-        body.push_str("<div><h2>Top users</h2>");
-        if top_users.is_empty() {
-            body.push_str("<p class=\"muted\">No paste activity reported yet.</p>");
-        } else {
-            body.push_str("<ul class=\"recent-list\">");
-            for (name, chars) in &top_users {
-                body.push_str(&format!(
-                    "<li><strong>{name}</strong><br />\
-                     <span class=\"muted small\">{chars} chars pasted</span></li>",
-                    name = escape_html(name),
-                    chars = format_thousands(*chars),
-                ));
-            }
-            body.push_str("</ul>");
-        }
-        body.push_str("</div>");
+    // Activity panels: the two "top" lists and the two recent feeds in
+    // one responsive grid so they fill the row on wide screens and
+    // stack when narrow. Each panel renders its own empty state so the
+    // layout stays consistent with no data.
+    body.push_str("<div class=\"stats-panels\">");
 
-        body.push_str("<div><h2>Top library snippets</h2>");
-        if top_library.is_empty() {
-            body.push_str("<p class=\"muted\">No library paste activity reported yet.</p>");
-        } else {
-            body.push_str("<ul class=\"recent-list\">");
-            for (title, total) in &top_library {
-                body.push_str(&format!(
-                    "<li><strong>{title}</strong><br />\
-                     <span class=\"muted small\">used {total} times across team</span></li>",
-                    title = escape_html(title),
-                    total = format_thousands(*total),
-                ));
-            }
-            body.push_str("</ul>");
+    body.push_str("<div class=\"stats-panel\"><h2>Top users</h2>");
+    if top_users.is_empty() {
+        body.push_str("<p class=\"panel-empty\">No paste activity reported yet.</p>");
+    } else {
+        body.push_str("<ul class=\"recent-list\">");
+        for (i, (name, chars)) in top_users.iter().enumerate() {
+            body.push_str(&format!(
+                "<li class=\"ti\"><span class=\"ti-rank\">{rank}</span>\
+                 <span class=\"ti-name\">{name}</span>\
+                 <span class=\"ti-val\">{chars} chars</span></li>",
+                rank = i + 1,
+                name = escape_html(name),
+                chars = format_thousands(*chars),
+            ));
         }
-        body.push_str("</div>");
-        body.push_str("</div>");
+        body.push_str("</ul>");
     }
+    body.push_str("</div>");
 
-    body.push_str("<div class=\"recent-grid\">");
-    body.push_str("<div><h2>Recent signups</h2>");
+    body.push_str("<div class=\"stats-panel\"><h2>Top library snippets</h2>");
+    if top_library.is_empty() {
+        body.push_str("<p class=\"panel-empty\">No library paste activity reported yet.</p>");
+    } else {
+        body.push_str("<ul class=\"recent-list\">");
+        for (i, (title, total)) in top_library.iter().enumerate() {
+            body.push_str(&format!(
+                "<li class=\"ti\"><span class=\"ti-rank\">{rank}</span>\
+                 <span class=\"ti-name\">{title}</span>\
+                 <span class=\"ti-val\">{total} uses</span></li>",
+                rank = i + 1,
+                title = escape_html(title),
+                total = format_thousands(*total),
+            ));
+        }
+        body.push_str("</ul>");
+    }
+    body.push_str("</div>");
+
+    body.push_str("<div class=\"stats-panel\"><h2>Recent signups</h2>");
     if recent_users.is_empty() {
-        body.push_str("<p class=\"muted\">No users yet.</p>");
+        body.push_str("<p class=\"panel-empty\">No users yet.</p>");
     } else {
         body.push_str("<ul class=\"recent-list\">");
         for u in &recent_users {
             body.push_str(&format!(
-                "<li><strong>{name}</strong> <span class=\"pill role-{role}\">{role}</span> \
-                 <span class=\"muted small\">{when}</span><br />\
+                "<li><div class=\"li-top\"><span class=\"li-name\">{name}</span> \
+                 <span class=\"pill role-{role}\">{role}</span>\
+                 <span class=\"muted small li-when\">{when}</span></div>\
                  <span class=\"muted small\">{email}</span></li>",
                 name = escape_html(&u.display_name),
                 role = escape_html(&u.role),
@@ -1359,9 +1363,9 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     }
     body.push_str("</div>");
 
-    body.push_str("<div><h2>Recent library snippets</h2>");
+    body.push_str("<div class=\"stats-panel\"><h2>Recent library snippets</h2>");
     if recent_library.is_empty() {
-        body.push_str("<p class=\"muted\">No library snippets yet. Add one from the <a href=\"/dashboard/library\">library page</a>.</p>");
+        body.push_str("<p class=\"panel-empty\">No library snippets yet. Add one from the <a href=\"/dashboard/library\">library page</a>.</p>");
     } else {
         body.push_str("<ul class=\"recent-list\">");
         for s in &recent_library {
@@ -1372,7 +1376,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
                 .map(|p| format!(" <span class=\"muted small\">in {}</span>", escape_html(p)))
                 .unwrap_or_default();
             body.push_str(&format!(
-                "<li><strong>{title}</strong>{folder}<br />\
+                "<li><div class=\"li-top\"><span class=\"li-name\">{title}</span>{folder}</div>\
                  <span class=\"muted small\">updated {when}</span></li>",
                 title = escape_html(&s.title),
                 when = format_relative(s.updated_at),
@@ -1381,6 +1385,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         body.push_str("</ul>");
     }
     body.push_str("</div>");
+
     body.push_str("</div>");
     // Embed the rate table so the dropdown's JS can convert
     // money_saved_aud into any code locally. Kept inline rather
@@ -1414,6 +1419,14 @@ fn stat_card(id: &str, label: &str, value: &str, hint: &str) -> String {
         label_safe = escape_html(label),
         hint_safe = escape_html(hint),
     )
+}
+
+/// A featured stat card: same contract as `stat_card` (the hide/show
+/// and Add-menu JS keys off `data-card-id` + `.stat-close`, both
+/// unchanged), with an extra class that gives outcome metrics a wider
+/// tile and a gradient numeral.
+fn stat_card_featured(id: &str, label: &str, value: &str, hint: &str) -> String {
+    stat_card(id, label, value, hint).replacen("\"stat-card\"", "\"stat-card featured\"", 1)
 }
 
 /// Per-user row used by the stats-page money/time aggregator.

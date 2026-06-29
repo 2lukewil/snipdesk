@@ -1002,18 +1002,30 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   font-size: 12px;
   color: var(--fg-dim);
 }
+/* Metric deck. auto-fill keeps tiles a sensible width and fills the
+   row; dense flow lets featured (2-wide) tiles slot in without leaving
+   holes when others are hidden. */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
-  margin: 12px 0 28px;
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  grid-auto-flow: dense;
+  gap: 12px;
+  margin: 12px 0 26px;
 }
 .stat-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 15px 16px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.stat-card:hover {
+  border-color: var(--accent-line);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px -14px rgba(0, 0, 0, 0.55);
 }
 .stat-card.hidden {
   display: none;
@@ -1027,41 +1039,90 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--fg-dim);
+  color: var(--fg-faint);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
+  opacity: 0;
   border-radius: var(--radius);
+  transition: opacity 0.15s ease;
 }
+.stat-card:hover .stat-close { opacity: 1; }
 .stat-card .stat-close:hover {
   background: var(--bg);
   color: var(--fg);
   border-color: transparent;
 }
 .stat-value {
-  font-size: 26px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 .stat-label {
   color: var(--fg);
   font-size: 13px;
-  font-weight: 500;
-  margin-top: 2px;
+  font-weight: 600;
+  margin-top: 7px;
 }
 .stat-hint {
   color: var(--fg-dim);
   font-size: 11px;
-  margin-top: 4px;
+  margin-top: 3px;
+  line-height: 1.4;
 }
-.recent-grid {
+/* Featured: outcome metrics get a wider tile and a gradient numeral. */
+.stat-card.featured { grid-column: span 2; }
+.stat-card.featured .stat-value {
+  font-size: 40px;
+  background: var(--grad-accent);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+@media (max-width: 520px) {
+  .stat-card.featured { grid-column: span 1; }
+}
+
+/* Activity panels: top lists + recent feeds in one responsive row that
+   fills the width on wide screens and stacks when narrow. */
+.stats-panels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+  gap: 16px;
+  margin: 8px 0 28px;
+  align-items: start;
 }
-@media (max-width: 720px) {
-  .recent-grid { grid-template-columns: 1fr; }
+.stats-panel {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* Let the grid track shrink to its share instead of being held wide
+     by a long unbreakable token (e.g. an email); the rows wrap such
+     tokens rather than forcing fewer columns. */
+  min-width: 0;
 }
+.stats-panel .recent-list li { overflow-wrap: anywhere; }
+.stats-panel > h2 {
+  margin: 0;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.panel-empty { color: var(--fg-dim); font-size: 12px; margin: 0; padding: 14px 16px; }
+/* Ranked rows for the "top" panels. */
+.recent-list li.ti { display: flex; align-items: center; gap: 10px; }
+.ti-rank { color: var(--fg-faint); font-size: 11px; min-width: 1.1em; text-align: right; font-variant-numeric: tabular-nums; }
+.ti-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ti-val { margin-left: auto; padding-left: 8px; color: var(--fg-dim); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Recent-feed rows: name + role/meta on one line, detail beneath. */
+.recent-list .li-top { display: flex; align-items: center; gap: 8px; }
+.recent-list .li-name { font-weight: 500; }
+.recent-list .li-when { margin-left: auto; }
 .recent-list {
   list-style: none;
   margin: 0;
@@ -1075,6 +1136,10 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   border-bottom: 1px solid var(--border);
 }
 .recent-list li:last-child { border-bottom: none; }
+/* Inside a panel the panel supplies the card chrome; the list is just
+   rows, and its dividers follow the softer panel rhythm. */
+.stats-panel .recent-list { border: 0; border-radius: 0; background: transparent; }
+.stats-panel .recent-list li { border-color: var(--border-soft); }
 .muted.small { font-size: 11px; color: var(--fg-dim); }
 
 /* "Newer release available" banner under the top nav. Rendered by
@@ -1211,7 +1276,6 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
    the funnel and roster centred as blocks while keeping their rows
    left-aligned internally. */
 .ob-page { max-width: 760px; margin: 0 auto; }
-.ob-page h1, .ob-page > .muted, .ob-page .ob-h2 { text-align: center; }
 .ob-page .stats-grid { justify-content: center; }
 .ob-page .funnel, .ob-page .ob-nudge, .ob-page > .muted.small { margin-left: auto; margin-right: auto; }
 .ob-h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }

@@ -9,6 +9,17 @@
   <link rel="stylesheet" href="/static/dashboard.css" />
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/idiomorph-ext.min.js" defer></script>
+  <!-- Apply the saved accent option before paint so Nebula doesn't flash
+       in from the Aurora default. Aurora needs no attribute. -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("snipdesk-dashboard-grad") === "nebula") {
+          document.documentElement.dataset.grad = "nebula";
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <nav class="nav">
@@ -21,12 +32,32 @@
       <a href="/dashboard/audit" class="{{AUDIT_ACTIVE}}">Audit</a>
     </span>
     <span class="nav-right">
+      <label class="nav-appearance" title="Accent theme">
+        <span class="sr-only">Accent theme</span>
+        <select id="grad-select" aria-label="Accent theme">
+          <option value="aurora">Aurora</option>
+          <option value="nebula">Nebula</option>
+        </select>
+      </label>
       <span class="nav-user">{{NAV_USER}} <span class="pill role-{{NAV_ROLE}}">{{NAV_ROLE}}</span></span>
       <form method="post" action="/dashboard/logout" class="nav-form">
         <button type="submit" class="ghost">Sign out</button>
       </form>
     </span>
   </nav>
+  <script>
+    (function () {
+      var sel = document.getElementById("grad-select");
+      if (!sel) return;
+      sel.value = document.documentElement.dataset.grad === "nebula" ? "nebula" : "aurora";
+      sel.addEventListener("change", function () {
+        var v = sel.value === "nebula" ? "nebula" : "aurora";
+        if (v === "nebula") document.documentElement.dataset.grad = "nebula";
+        else document.documentElement.removeAttribute("data-grad");
+        try { localStorage.setItem("snipdesk-dashboard-grad", v); } catch (e) {}
+      });
+    })();
+  </script>
   {{UPDATE_BANNER}}
   <main>
     {{CONTENT}}

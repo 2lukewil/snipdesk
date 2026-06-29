@@ -34,6 +34,15 @@
   --scroll-thumb: #00000026;
   --scroll-thumb-hover: #00000045;
   --radius: 8px;
+
+  /* Gradient layer. Aurora is the default (company blue, gradient on
+     accents + a faint top glow); [data-grad="nebula"] below swaps in the
+     bolder blue-violet option. --grad-accent paints buttons / the brand
+     glyph / active edges; --accent-ink is the text that sits on them;
+     --glow is the ambient page wash. */
+  --accent-ink: #ffffff;
+  --grad-accent: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #19c8f5));
+  --glow: radial-gradient(760px 340px at 50% -10%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%);
 }
 
 /* Dark values, shared by both activation paths below. */
@@ -50,6 +59,7 @@
     --border-soft: #272c32;
     --accent: #4c9aff;
     --accent-fg: #06203f;
+    --accent-ink: #06203f;
     --danger: #e06b6b;
     --danger-bg: #2c1d1f;
     --ok: #5fc27e;
@@ -71,6 +81,7 @@
     --border-soft: #e4e7ec;
     --accent: #2c6fd8;
     --accent-fg: #ffffff;
+    --accent-ink: #ffffff;
     --danger: #c03535;
     --danger-bg: #f7e3e3;
     --ok: #2f9e6e;
@@ -94,6 +105,7 @@
   --border-soft: #272c32;
   --accent: #4c9aff;
   --accent-fg: #06203f;
+  --accent-ink: #06203f;
   --danger: #e06b6b;
   --danger-bg: #2c1d1f;
   --ok: #5fc27e;
@@ -101,4 +113,16 @@
   --warn-fg: #ffcf5c;
   --scroll-thumb: #ffffff22;
   --scroll-thumb-hover: #ffffff3d;
+}
+
+/* Nebula: the bolder opt-in. Blue-violet accent + twin corner auroras.
+   Overrides --accent (so --accent-weak / --accent-line follow), the
+   gradient, the ink, and the glow; works over light or dark. */
+:root[data-grad="nebula"] {
+  --accent: #8090ff;
+  --accent-ink: #0b0a26;
+  --grad-accent: linear-gradient(135deg, #5b8cff, #9b6dff);
+  --glow:
+    radial-gradient(640px 300px at 6% -6%, color-mix(in srgb, #4c9aff 16%, transparent), transparent 66%),
+    radial-gradient(640px 320px at 100% 108%, color-mix(in srgb, #8b5cf6 15%, transparent), transparent 66%);
 }

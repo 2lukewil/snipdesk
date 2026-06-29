@@ -19,6 +19,17 @@ html, body {
   font-size: 15px;
   line-height: 1.5;
 }
+/* Ambient accent glow behind the page (Aurora: faint top wash; Nebula:
+   twin corner auroras). Fixed and behind content; opaque panels cover it
+   where they sit, so it reads as atmosphere in the open areas. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--glow);
+  pointer-events: none;
+}
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -39,8 +50,8 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .nav-glyph {
   width: 22px; height: 22px; border-radius: 6px;
   display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff));
-  color: var(--accent-fg);
+  background: var(--grad-accent);
+  color: var(--accent-ink);
   font-weight: 800; font-size: 13px; line-height: 1;
 }
 .nav-links { display: flex; gap: 14px; }
@@ -49,10 +60,26 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   border-radius: var(--radius);
   color: var(--fg);
 }
-.nav-links a.active { background: var(--accent); color: var(--accent-fg); }
+.nav-links a.active { background: var(--grad-accent); color: var(--accent-ink); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .nav-user { color: var(--fg-dim); }
 .nav-form { display: inline; }
+.nav-appearance select {
+  font: inherit;
+  font-size: 12.5px;
+  background: var(--bg-3);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.nav-appearance select:hover { color: var(--fg); border-color: var(--fg-faint); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 
 /* --- Page --- */
 
@@ -129,7 +156,7 @@ button, .btn {
   cursor: pointer;
 }
 button:hover, .btn:hover { border-color: var(--fg-dim); }
-button.primary, .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.primary, .btn.primary { background: var(--grad-accent); color: var(--accent-ink); border-color: transparent; }
 button.danger, .btn.danger { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
 button.ghost, .btn.ghost { background: transparent; border-color: transparent; color: var(--fg-dim); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }

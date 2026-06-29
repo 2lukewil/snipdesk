@@ -1199,7 +1199,21 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 .insights-table .insight-stale td { opacity: 0.62; }
 
 /* ---- Onboarding funnel ---- */
-.funnel { display: flex; flex-direction: column; gap: 10px; max-width: 720px; margin-top: 18px; }
+.ob-h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+.funnel { display: flex; flex-direction: column; gap: 10px; max-width: 720px; margin-top: 4px; }
+/* "Awaiting activation" roster: name, furthest milestone, join time. */
+.ob-nudge { max-width: 720px; }
+.ob-nudge li { display: flex; align-items: center; gap: 12px; }
+.ob-nudge .ob-name { font-weight: 500; }
+.ob-nudge .ob-stage {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.ob-nudge .ob-stage-warm { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
+.ob-nudge .ob-stage-cold { color: var(--fg-dim); }
+.ob-nudge .muted.small { margin-left: auto; }
 .frow { display: grid; grid-template-columns: 160px 1fr 110px; align-items: center; gap: 12px; }
 .frow .flab { font-size: 14px; }
 .fbar-track { background: var(--bg-3); border-radius: 5px; height: 26px; overflow: hidden; }
@@ -1444,7 +1458,6 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   font-size: 11px;
   color: var(--fg-dim);
 }
-.lib-sort-label { text-transform: uppercase; letter-spacing: 0.06em; }
 /* Segmented A-Z / Manual toggle, mirroring the mockup's sort control. */
 .seg {
   display: inline-flex;
@@ -1463,6 +1476,19 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); }
+/* The library sort toggle fills its row: two equal halves, taller hit
+   area, uppercased labels so it reads as a clean control rather than a
+   pair of small buttons. */
+.lib-sort-seg { display: flex; flex: 1; }
+.lib-sort-seg button {
+  flex: 1;
+  padding: 6px 0;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.lib-sort-seg button[aria-pressed="true"] { background: var(--grad-accent); color: var(--accent-ink); }
 /* Scrolling node list under the pinned bars. */
 .lib-tree {
   flex: 1;

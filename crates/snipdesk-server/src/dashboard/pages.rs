@@ -2417,7 +2417,6 @@ fn render_library_folder_tree(
     // into manual order if the admin has chosen that.
     out.push_str(
         "<div class=\"lib-folder-controls\">\
-           <span class=\"lib-sort-label\">Sort</span>\
            <div class=\"seg lib-sort-seg\" role=\"group\" aria-label=\"Sort order\">\
              <button type=\"button\" data-sort=\"alpha\" aria-pressed=\"true\">A-Z</button>\
              <button type=\"button\" data-sort=\"manual\" aria-pressed=\"false\">Manual</button>\
@@ -6588,6 +6587,39 @@ pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmi
     )
     .await;
     let pasted = scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted > 0").await;
+    // Active members who haven't pasted yet: the slice an operator can
+    // actually act on (disabled accounts are excluded so the count
+    // matches the nudge list below).
+    let awaiting =
+        scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted = 0 AND is_disabled = 0").await;
+
+    let week_ago = Utc::now().timestamp() - 7 * 86_400;
+    let new_7d = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE created_at >= ?")
+        .bind(week_ago)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    // The actionable list: members yet to paste, newest first, each
+    // tagged with the furthest milestone they've reached so an operator
+    // knows whether they're fully cold or nearly there.
+    let nudge: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT u.display_name, u.created_at, \
+           EXISTS(SELECT 1 FROM personal_snippets ps WHERE ps.owner_id = u.id AND ps.is_deleted = 0), \
+           EXISTS(SELECT 1 FROM onboarding_events oe WHERE oe.user_id = u.id AND oe.event = 'shortcut_tried') \
+         FROM users u \
+         WHERE u.snippets_pasted = 0 AND u.is_disabled = 0 \
+         ORDER BY u.created_at DESC LIMIT 16",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let activation_pct = if signed_up > 0 {
+        (pasted as f64 / signed_up as f64 * 100.0).round() as i64
+    } else {
+        0
+    };
 
     let stages = [
         ("Signed up", signed_up),
@@ -6596,43 +6628,128 @@ pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmi
         ("Made a paste", pasted),
     ];
 
+    let card = |value: String, label: &str, hint: &str| {
+        format!(
+            "<div class=\"stat-card\">\
+               <div class=\"stat-value\">{value}</div>\
+               <div class=\"stat-label\">{label}</div>\
+               <div class=\"stat-hint\">{hint}</div>\
+             </div>",
+            value = value,
+            label = escape_html(label),
+            hint = escape_html(hint),
+        )
+    };
+
     let mut body = String::new();
     body.push_str("<h1>Onboarding</h1>");
     body.push_str(
-        "<p class=\"muted\">How far new users get. Counts are cumulative milestones, not a strict \
-         sequence (someone can paste a library snippet without saving their own). \
-         \"Tried the shortcut\" is reported by the client, so it stays at zero until everyone is on \
-         a build that reports it.</p>",
+        "<p class=\"muted\">How far new users get, from first sign-in to a daily habit. Use the \
+         funnel to spot where people stall and the list below to see exactly who hasn't pasted \
+         yet.</p>",
     );
 
     if signed_up == 0 {
         body.push_str("<p class=\"muted\">No users yet.</p>");
+        return render_page(&state, &session, "Onboarding", NavTab::Onboarding, &body)
+            .await
+            .into_response();
+    }
+
+    body.push_str("<div class=\"stats-grid\">");
+    body.push_str(&card(
+        format_thousands(signed_up),
+        "Users",
+        "total accounts",
+    ));
+    body.push_str(&card(
+        format_thousands(pasted),
+        "Activated",
+        "made at least one paste",
+    ));
+    body.push_str(&card(
+        format!("{activation_pct}%"),
+        "Activation rate",
+        "of all users",
+    ));
+    body.push_str(&card(
+        format_thousands(awaiting),
+        "Awaiting activation",
+        "members yet to paste",
+    ));
+    body.push_str(&card(
+        format_thousands(new_7d),
+        "New this week",
+        "signed up in the last 7 days",
+    ));
+    body.push_str("</div>");
+
+    // Cumulative milestone funnel. Counts aren't a strict sequence
+    // (someone can paste a library snippet without ever saving their
+    // own), and "Tried the shortcut" stays at zero until everyone is on
+    // a client build that reports it.
+    body.push_str("<h2 class=\"ob-h2\">Milestone funnel</h2>");
+    body.push_str("<div class=\"funnel\">");
+    let mut prev: Option<i64> = None;
+    for (label, count) in stages {
+        let pct = (count as f64 / signed_up as f64 * 100.0).round() as i64;
+        let drop = match prev {
+            Some(p) if p > 0 && count < p => format!(
+                "<span class=\"fdrop\">-{}%</span>",
+                ((p - count) as f64 / p as f64 * 100.0).round() as i64
+            ),
+            _ => String::new(),
+        };
+        body.push_str(&format!(
+            "<div class=\"frow\">\
+               <span class=\"flab\">{label}</span>\
+               <div class=\"fbar-track\"><div class=\"fbar\" style=\"width:{pct}%\"></div></div>\
+               <span class=\"fnum\">{count} {drop}</span>\
+             </div>",
+            label = escape_html(label),
+            pct = pct.clamp(0, 100),
+            count = format_thousands(count),
+            drop = drop,
+        ));
+        prev = Some(count);
+    }
+    body.push_str("</div>");
+
+    // Who hasn't pasted yet. An empty list is the happy path - say so
+    // rather than render an empty box.
+    body.push_str("<h2 class=\"ob-h2\">Awaiting activation</h2>");
+    if nudge.is_empty() {
+        body.push_str("<p class=\"muted\">Everyone's pasted at least once. Nothing to chase.</p>");
     } else {
-        body.push_str("<div class=\"funnel\">");
-        let mut prev: Option<i64> = None;
-        for (label, count) in stages {
-            let pct = (count as f64 / signed_up as f64 * 100.0).round() as i64;
-            let drop = match prev {
-                Some(p) if p > 0 && count < p => format!(
-                    "<span class=\"fdrop\">-{}%</span>",
-                    ((p - count) as f64 / p as f64 * 100.0).round() as i64
-                ),
-                _ => String::new(),
+        body.push_str("<ul class=\"recent-list ob-nudge\">");
+        for (name, created_at, has_saved, has_tried) in &nudge {
+            let (stage, stage_cls) = if *has_tried != 0 {
+                ("Tried the shortcut", "warm")
+            } else if *has_saved != 0 {
+                ("Saved a snippet", "warm")
+            } else {
+                ("Just signed up", "cold")
             };
             body.push_str(&format!(
-                "<div class=\"frow\">\
-                   <span class=\"flab\">{label}</span>\
-                   <div class=\"fbar-track\"><div class=\"fbar\" style=\"width:{pct}%\"></div></div>\
-                   <span class=\"fnum\">{count} {drop}</span>\
-                 </div>",
-                label = escape_html(label),
-                pct = pct.clamp(0, 100),
-                count = format_thousands(count),
-                drop = drop,
+                "<li>\
+                   <span class=\"ob-name\">{name}</span>\
+                   <span class=\"ob-stage ob-stage-{cls}\">{stage}</span>\
+                   <span class=\"muted small\">joined {joined}</span>\
+                 </li>",
+                name = escape_html(name),
+                cls = stage_cls,
+                stage = stage,
+                joined = format_relative(*created_at),
             ));
-            prev = Some(count);
         }
-        body.push_str("</div>");
+        body.push_str("</ul>");
+        if awaiting > nudge.len() as i64 {
+            body.push_str(&format!(
+                "<p class=\"muted small\">Showing the {shown} most recent of {total}.</p>",
+                shown = nudge.len(),
+                total = format_thousands(awaiting),
+            ));
+        }
     }
 
     render_page(&state, &session, "Onboarding", NavTab::Onboarding, &body)

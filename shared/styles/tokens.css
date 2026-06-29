@@ -22,6 +22,7 @@
   --accent: #2c6fd8;
   --accent-fg: #ffffff;
   --accent-weak: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
   --danger: #c03535;
   --danger-bg: #f7e3e3;
   --ok: #2f9e6e;
@@ -133,5 +134,5 @@
   --grad-accent: linear-gradient(135deg, #5b8cff, #9b6dff);
   --glow:
     radial-gradient(640px 300px at 6% -6%, color-mix(in srgb, #4c9aff 16%, transparent), transparent 66%),
-    radial-gradient(640px 320px at 100% 108%, color-mix(in srgb, #8b5cf6 15%, transparent), transparent 66%);
+    radial-gradient(460px 220px at 100% 112%, color-mix(in srgb, #8b5cf6 7%, transparent), transparent 70%);
 }

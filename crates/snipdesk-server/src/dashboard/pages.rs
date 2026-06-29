@@ -4141,19 +4141,119 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     deleteIds([id]);
   });
 
-  // Optimistic save: paint the new title onto the row immediately; the
-  // hx-put still runs and the libraryChanged refresh confirms it.
+  // Build a stand-in row matching render_library_row_highlighted's shape
+  // (minus the htmx attrs + id - it carries no data-snippet-id, so it's
+  // inert until the real row swaps in over it).
+  function pendingRowMarkup(title, body, folder) {
+    var row = document.createElement("div");
+    row.className = "library-row pending";
+    row.setAttribute("data-pending", "1");
+    var t = document.createElement("div");
+    t.className = "t";
+    var tt = document.createElement("span");
+    tt.className = "t-text";
+    tt.textContent = title;
+    t.appendChild(tt);
+    t.appendChild(Object.assign(document.createElement("span"), { className: "t-right" }));
+    row.appendChild(t);
+    var b = document.createElement("div");
+    b.className = "body";
+    b.textContent = body;
+    row.appendChild(b);
+    if (folder) {
+      var meta = document.createElement("div");
+      meta.className = "row-meta";
+      var f = document.createElement("span");
+      f.className = "folder";
+      f.textContent = "📁 " + folder;
+      meta.appendChild(f);
+      row.appendChild(meta);
+    }
+    return row;
+  }
+  function insertPendingRow(title, body, folder) {
+    var list = document.getElementById("library-list");
+    if (!list) return;
+    var empty = list.querySelector(".empty");
+    if (empty) empty.remove();
+    list.insertBefore(pendingRowMarkup(title, body, folder), list.firstChild);
+  }
+  function removePendingRows() {
+    var list = document.getElementById("library-list");
+    if (!list) return;
+    Array.prototype.slice.call(list.querySelectorAll(".library-row.pending"))
+      .forEach(function (r) { r.remove(); });
+  }
+
   document.body.addEventListener("submit", function (e) {
     var form = e.target;
     if (!form || form.id !== "library-editor-form") return;
     var put = form.getAttribute("hx-put");
-    if (!put) return; // the create form has no hx-put yet
-    var id = put.split("/").pop();
-    var titleInput = form.querySelector('input[name="title"]');
-    var row = document.querySelector('#library-list .library-row[data-snippet-id="' + id + '"]');
-    if (row && titleInput) {
-      var t = row.querySelector(".t-text");
-      if (t) t.textContent = titleInput.value;
+    if (put) {
+      // Optimistic save: paint the edited title, body and folder onto the
+      // row immediately; the hx-put still runs and the libraryChanged
+      // refresh confirms it.
+      var id = put.split("/").pop();
+      var row = document.querySelector('#library-list .library-row[data-snippet-id="' + id + '"]');
+      if (row) {
+        var titleInput = form.querySelector('input[name="title"]');
+        var bodyInput = form.querySelector('textarea[name="body"]');
+        var folderInput = form.querySelector('input[name="folder_path"]');
+        var t = row.querySelector(".t-text");
+        if (t && titleInput) t.textContent = titleInput.value;
+        var b = row.querySelector(".body");
+        if (b && bodyInput) renderFormatted(b, bodyInput.value, FMT_RULES);
+        if (folderInput) {
+          var folder = folderInput.value.trim();
+          var meta = row.querySelector(".row-meta");
+          var fol = meta && meta.querySelector(".folder");
+          if (folder) {
+            if (!meta) {
+              meta = document.createElement("div");
+              meta.className = "row-meta";
+              row.appendChild(meta);
+            }
+            if (!fol) {
+              fol = document.createElement("span");
+              fol.className = "folder";
+              meta.insertBefore(fol, meta.firstChild);
+            }
+            fol.textContent = "📁 " + folder;
+          } else if (fol) {
+            fol.remove();
+          }
+        }
+      }
+      return;
+    }
+    if (!form.getAttribute("hx-post")) return;
+    // Optimistic create: drop a pending row in now so the snippet shows the
+    // instant you hit save. htmx still POSTs; the libraryChanged list
+    // refresh swaps the real row in over the pending one. A failed POST
+    // clears it (htmx:afterRequest below).
+    var titleEl = form.querySelector('input[name="title"]');
+    var bodyEl = form.querySelector('textarea[name="body"]');
+    var folderEl = form.querySelector('input[name="folder_path"]');
+    if (!titleEl || !bodyEl) return;
+    if (!titleEl.value.trim() || !bodyEl.value.trim()) return; // let the server reject empties
+    var folder = folderEl ? folderEl.value.trim() : "";
+    // Only show it if it'd actually land in the current folder view.
+    var view = (document.getElementById("library-folder-input") || {}).value || "__all__";
+    var inView = view === "__all__"
+      ? true
+      : view === "__unfiled__"
+        ? folder === ""
+        : (folder === view || folder.indexOf(view + "/") === 0);
+    if (inView) insertPendingRow(titleEl.value.trim(), bodyEl.value, folder);
+  });
+
+  // A failed create never fires libraryChanged, so the pending row would
+  // linger - clear it and let the editor's error banner stand.
+  document.body.addEventListener("htmx:afterRequest", function (e) {
+    var form = e.target;
+    if (!form || form.id !== "library-editor-form") return;
+    if (form.getAttribute("hx-post") && e.detail && !e.detail.successful) {
+      removePendingRows();
     }
   });
 

@@ -422,6 +422,11 @@ input[type="search"]::-webkit-search-cancel-button:hover { background-color: var
   border-left-color: var(--accent);
 }
 .library-row.dragging { opacity: 0.5; }
+/* Optimistic stand-in row, shown the instant a create is submitted and
+   replaced when the real row swaps in. Inert (no data-snippet-id) and
+   gently pulsing so it reads as in-flight. */
+.library-row.pending { pointer-events: none; animation: library-row-pending 1.1s ease-in-out infinite; }
+@keyframes library-row-pending { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.75; } }
 
 /* Bulk-action bar shown in the editor pane when 2+ rows are selected. */
 .bulk-bar { padding: 4px 2px; }

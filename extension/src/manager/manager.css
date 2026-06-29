@@ -20,11 +20,21 @@ header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 7px 20px;
+  /* Fixed height matches the admin panel's nav (53px) regardless of which
+     auth control is showing. */
+  height: 53px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }
-header .brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+/* Brand mark matches the admin panel: a gradient "S" glyph + wordmark. */
+.nav-brand { font-weight: 600; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 9px; }
+.nav-glyph {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: var(--grad-accent); color: var(--accent-ink);
+  font-weight: 800; font-size: 13px; line-height: 1;
+}
 header .spacer { flex: 1; }
 header .savings { font-size: 12px; color: var(--accent); }
 header .identity { font-size: 16px; color: var(--text-dim); line-height: 1; }
@@ -120,13 +130,13 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .list { outline: none; }
 /* Snippet-list create bar: search + a "+" new-snippet button, mirroring
    the folder-create bar so the two panes' tops line up. */
-.list-create { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+.list-create { display: flex; align-items: center; gap: 6px; height: 54px; padding: 0 8px; border-bottom: 1px solid var(--border); }
 .list-create input { flex: 1; min-width: 0; padding: 6px 8px; }
 .list-create button { flex: none; padding: 6px 11px; }
 
 /* Folder tree pane: fixed create form on top, scrolling tree below. */
 .tree-pane { display: flex; flex-direction: column; overflow: hidden; }
-.folder-create { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+.folder-create { display: flex; align-items: center; gap: 6px; height: 54px; padding: 0 8px; border-bottom: 1px solid var(--border); }
 .folder-create input { flex: 1; min-width: 0; padding: 6px 8px; }
 .folder-create button { flex: none; padding: 6px 11px; }
 .tree { padding: 6px; overflow-y: auto; flex: 1; }

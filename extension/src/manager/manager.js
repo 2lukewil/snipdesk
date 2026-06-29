@@ -62,6 +62,11 @@ let selectedIds = new Set();
 let anchorIndex = null;
 let visibleItems = [];
 let selectedFolder = ALL;
+// What the editor pane is currently showing: a saved snippet, a new
+// (unsaved) compose form, or the empty placeholder. Drives auto-select
+// so the preview is never left blank while leaving a half-typed new
+// snippet alone.
+let editorMode = "empty";
 let draggingFolderPath = null;
 const expanded = new Set();
 let treeKeys = []; // [{ key, hasKids }] in display order, for arrow-key nav
@@ -73,6 +78,7 @@ async function applyAuthUi() {
   const status = (await send(MSG.AUTH_STATUS)).data || {};
   const signedIn = !!status.signedIn;
   const isAdmin = signedIn && status.user?.role === "admin";
+  $("btn-login").classList.toggle("hidden", signedIn);
   $("btn-logout").classList.toggle("hidden", !signedIn);
   $("identity").textContent = signedIn
     ? status.user?.display_name || status.user?.email || ""
@@ -896,6 +902,7 @@ function renderList() {
       ),
     );
     visibleItems = [];
+    maybeAutoSelect();
     return;
   }
   // Cap rendered rows so a multi-thousand library stays snappy; the cap
@@ -957,6 +964,7 @@ function renderList() {
   if (all.length > items.length) {
     list.appendChild(el("div", "empty", `Showing first ${items.length} of ${all.length}. Refine your search.`));
   }
+  maybeAutoSelect();
 }
 
 // Explorer-style selection: plain click opens the snippet; Ctrl/Cmd
@@ -994,7 +1002,21 @@ function handleRowClick(s, index, e) {
 
 function clearEditor() {
   selectedId = null;
+  editorMode = "empty";
   $("editor").replaceChildren(el("p", "placeholder", "Select a snippet, or create a new one."));
+}
+
+// Keep the editor in sync with the visible list: never leave a blank
+// preview. If the current selection scrolled out of view (folder switch,
+// search, delete), open the highest visible snippet; an empty list shows
+// the placeholder. A half-typed new snippet (editorMode "new") and an
+// active multi-select are left alone.
+function maybeAutoSelect() {
+  if (editorMode === "new") return;
+  if (selectedIds.size > 1) return;
+  if (visibleItems.some((s) => s.id === selectedId)) return;
+  if (visibleItems.length) openEditor(visibleItems[0]);
+  else clearEditor();
 }
 
 function optionEl(value, label) {
@@ -1102,6 +1124,7 @@ function formatRules() {
 function openEditor(snippet, prefill) {
   selectedId = snippet ? snippet.id : null;
   selectedIds = snippet ? new Set([snippet.id]) : new Set();
+  editorMode = snippet ? "snippet" : "new";
   renderList();
   // Apply the persisted editor text size (shared --editor-font-size token).
   try {
@@ -1910,6 +1933,18 @@ function wire() {
   $("btn-logout").addEventListener("click", async () => {
     await send(MSG.AUTH_LOGOUT);
     location.reload();
+  });
+  // Sign-in lives in the action popup (server URL + method picker); open
+  // it from here, falling back to the popup page in a tab where
+  // openPopup isn't available.
+  $("btn-login").addEventListener("click", async () => {
+    try {
+      if (chrome.action?.openPopup) {
+        await chrome.action.openPopup();
+        return;
+      }
+    } catch (e) {}
+    window.open(chrome.runtime.getURL("src/popup/index.html"), "_blank", "noopener");
   });
 }
 

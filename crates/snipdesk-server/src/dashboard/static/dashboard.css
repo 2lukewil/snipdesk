@@ -35,7 +35,14 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
 }
-.nav-brand { font-weight: 600; letter-spacing: 0.02em; }
+.nav-brand { font-weight: 600; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 9px; }
+.nav-glyph {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #fff));
+  color: var(--accent-fg);
+  font-weight: 800; font-size: 13px; line-height: 1;
+}
 .nav-links { display: flex; gap: 14px; }
 .nav-links a {
   padding: 4px 10px;
@@ -142,6 +149,7 @@ input[type="text"], input[type="email"], input[type="password"], textarea, selec
 input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
 }
 textarea {
   min-height: 120px;
@@ -354,27 +362,37 @@ input[type="search"]::-webkit-search-cancel-button:hover { background-color: var
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Card rows: small gutter + gaps instead of full-bleed dividers. */
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   /* Shift-click row selection shouldn't paint text selection. */
   user-select: none;
 }
 .library-list.list .empty { padding: 14px; color: var(--fg-dim); }
 .library-row {
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid transparent;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
   /* Audit-log links land on #lib-<id>; keep the row clear of the
      pane's top edge when scrolled into view. */
   scroll-margin-top: 12px;
 }
-.library-row:last-child { border-bottom: 0; }
-.library-row:hover { background: var(--bg-hover); }
-.library-row.active { background: var(--bg-3); border-left-color: var(--accent); }
-/* Multi-selection (ctrl/shift click): a clear accent wash distinct from
-   the single-active row. */
+.library-row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+/* Active (single) row reads as a raised card lifted off the recessed list. */
+.library-row.active {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  box-shadow: 0 1px 2px #00000033;
+}
+/* Multi-selection (ctrl/shift click): a clear accent wash + border,
+   distinct from the neutral active card. */
 .library-row.selected {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-left-color: var(--accent);
+  background: var(--accent-weak);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: none;
 }
 .library-row.dragging { opacity: 0.5; }
 /* Optimistic stand-in row, shown the instant a create is submitted and
@@ -496,9 +514,13 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Raised panel, like the editor. The list sits recessed between them
+     so the eye lands on the active column. */
+  background: var(--bg-elev);
 }
 .list-pane {
-  background: var(--bg-elev);
+  /* Recessed relative to the tree + editor: cards in the list pop. */
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0;
   display: flex;
@@ -535,14 +557,28 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   color: var(--fg-dim);
   margin: 0;
 }
-.editor-form .f-body textarea { flex: 1; min-height: 90px; resize: none; margin: 0; }
-.editor-form .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
+.editor-form .f-body textarea { flex: 1; min-height: 150px; resize: none; margin: 0; }
+/* Body + live preview sit side by side when the editor pane is wide,
+   and fall back to stacked when it's narrow (auto-fit + a min column). */
+.editor-body-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+.editor-body-grid textarea { min-height: 150px; height: 100%; }
+.editor-form .actions {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
 .editor-form .actions button { white-space: nowrap; }
-.editor-form .editor-meta { margin-left: auto; color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
+.editor-form .editor-meta { margin-left: auto; color: var(--fg-faint); font-size: 12px; white-space: nowrap; }
 
-/* Live preview below the body, mirroring the extension editor. Values
+/* Live preview beside the body, mirroring the extension editor. Values
    match the extension's .editor-preview so both surfaces read alike. */
-.editor-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.editor-preview-wrap { min-height: 0; display: flex; flex-direction: column; }
 .editor-preview-wrap .preview-label { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px; }
 .editor-preview {
   flex: 1;
@@ -679,23 +715,31 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .lib-folder-node:hover { background: var(--bg-hover); }
 
-/* Formatting toolbar above each body textarea. */
+/* Formatting toolbar above each body textarea: a segmented control -
+   one inset track holding ghost buttons - rather than separate boxes. */
 .format-toolbar {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-.format-toolbar .fmt-btn {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 6px;
+  width: max-content;
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: 3px;
+}
+.format-toolbar .fmt-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
   cursor: pointer;
   min-width: 28px;
 }
 .format-toolbar .fmt-btn:hover {
-  border-color: var(--fg-dim);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  color: var(--fg);
 }
 
 /* --- User detail page --- */

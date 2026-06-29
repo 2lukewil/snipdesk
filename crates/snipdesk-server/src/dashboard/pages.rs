@@ -110,11 +110,19 @@ async fn render_page(
 ) -> Html<String> {
     let (display, role) = fetch_nav_user(state, &session.claims).await;
     let update_banner = render_update_banner(state).await;
+    // First letter of the brand for the nav glyph badge; uppercased.
+    let brand_initial = state
+        .brand_name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
     Html(render(
         LAYOUT,
         &[
             ("TITLE", title),
             ("BRAND_NAME", &escape_html(&state.brand_name)),
+            ("BRAND_INITIAL", &escape_html(&brand_initial)),
             ("UPDATE_BANNER", &update_banner),
             (
                 "USERS_ACTIVE",
@@ -3279,11 +3287,13 @@ fn render_library_editor(r: &LibraryRow) -> String {
            </div>\
            <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
              <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
-             <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
-           </div>\
-           <div class=\"editor-preview-wrap\">\
-             <div class=\"preview-label\">Preview</div>\
-             <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+             <div class=\"editor-body-grid\">\
+               <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
+               <div class=\"editor-preview-wrap\">\
+                 <div class=\"preview-label\">Preview</div>\
+                 <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+               </div>\
+             </div>\
            </div>\
            <div class=\"actions\">\
              <button class=\"primary\" type=\"submit\">Save changes</button>\
@@ -3325,11 +3335,13 @@ fn render_library_editor_create(selected: &str) -> String {
            </div>\
            <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
              <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
-             <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
-           </div>\
-           <div class=\"editor-preview-wrap\">\
-             <div class=\"preview-label\">Preview</div>\
-             <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+             <div class=\"editor-body-grid\">\
+               <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
+               <div class=\"editor-preview-wrap\">\
+                 <div class=\"preview-label\">Preview</div>\
+                 <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+               </div>\
+             </div>\
            </div>\
            <div class=\"actions\"><button class=\"primary\" type=\"submit\">Add to library</button></div>\
          </form>",

@@ -3397,6 +3397,24 @@ fn render_body_with_vars(body: &str, q: &str) -> String {
     }
     while i < bytes.len() {
         let c = bytes[i];
+        // Line break -> a visible separator, so a multi-line body reads as
+        // "line one | line two" at a glance instead of spending the clamped
+        // preview on a greeting and a blank paragraph line. Matches the
+        // desktop client's row preview. Runs of blank lines and the spaces
+        // around them collapse to one separator.
+        if c == b'\n' || c == b'\r' {
+            flush!();
+            let mut j = i + 1;
+            while j < bytes.len() && matches!(bytes[j], b'\n' | b'\r' | b' ' | b'\t') {
+                j += 1;
+            }
+            if !out.is_empty() {
+                out.push_str("<span class=\"lib-sep\">|</span>");
+            }
+            i = j;
+            plain_start = i;
+            continue;
+        }
         // {variable}
         if c == b'{' {
             if let Some(rel) = body[i + 1..].find('}') {
@@ -3498,6 +3516,11 @@ fn render_body_with_vars(body: &str, q: &str) -> String {
         i += 1;
     }
     flush!();
+    // A body that ended on a newline leaves a dangling separator; drop it.
+    const SEP: &str = "<span class=\"lib-sep\">|</span>";
+    if out.ends_with(SEP) {
+        out.truncate(out.len() - SEP.len());
+    }
     out
 }
 
@@ -6946,5 +6969,16 @@ mod highlight_tests {
         let html = render_body_with_vars("Hi {name}, your order shipped", "order");
         assert!(html.contains("<span class=\"preview-var\">{name}</span>"));
         assert!(html.contains("<strong class=\"search-match\">order</strong>"));
+    }
+
+    #[test]
+    fn newlines_collapse_to_a_single_separator() {
+        let sep = "<span class=\"lib-sep\">|</span>";
+        // A blank-line paragraph break and the spaces around it collapse to
+        // one separator, with none dangling at either end.
+        let html = render_body_with_vars("\n\nHi,\n\n  Thanks.\n\n", "");
+        assert_eq!(html, format!("Hi,{sep}Thanks."));
+        // No line breaks -> no separators at all.
+        assert!(!render_body_with_vars("one line", "").contains(sep));
     }
 }

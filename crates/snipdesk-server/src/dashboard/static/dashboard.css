@@ -566,9 +566,9 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   height: calc(100vh - var(--nav-h, 47px));
 }
 .library-three-pane > * { min-width: 0; min-height: 0; }
-/* Full-bleed, edge-to-edge: the panes use the page background (--bg) so
-   the library matches the site's base surface; only the list pane's
-   left/right edges divide the columns. */
+/* Full-bleed, edge-to-edge: the panes use the elevated surface (--bg-elev)
+   so the columns read as solid working surfaces; only the list pane's
+   left/right edges divide them. */
 .library-sidebar.tree-pane {
   position: static;
   top: auto;
@@ -579,10 +579,10 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-elev);
 }
 .list-pane {
-  background: var(--bg);
+  background: var(--bg-elev);
   border: 0;
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
@@ -592,7 +592,7 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   overflow: hidden;
 }
 .library-editor.editor {
-  background: var(--bg);
+  background: var(--bg-elev);
   border: 0;
   border-radius: 0;
   /* Fill the pane edge-to-edge like the other two columns, rather than
@@ -1221,7 +1221,7 @@ main:has(.stats-page) {
 /* ---- Onboarding sections (in the stats bottom region) ---- */
 /* Compact funnel sized for a panel column: label sizes to content, the
    bar takes the slack, count trails. */
-.funnel { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; }
+.funnel { display: flex; flex-direction: column; gap: 7px; padding: 11px 14px; justify-content: space-between; height: 100%; }
 /* Fixed label/count columns so every row's bar spans the same extent
    (each .frow is its own grid, so shared track sizing isn't automatic). */
 .frow { display: grid; grid-template-columns: 100px 1fr 72px; align-items: center; gap: 10px; }

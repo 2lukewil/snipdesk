@@ -1129,7 +1129,7 @@ pub async fn stats_page(
     body.push_str(&stat_card_featured(
         "Total pastes",
         &format_thousands(total_snippets_pasted),
-        "snippet expansions across the team",
+        "every snippet paste, team-wide",
     ));
     body.push_str(&stat_card_featured(
         "Adoption",
@@ -1328,8 +1328,33 @@ const STATS_PAGE_JS: &str = r#"<script>
   var moneyCard = moneyEl ? moneyEl.closest(".stat-card") : null;
 
   function localeCurrency() {
-    // Best-effort from navigator.language: "en-US" -> USD, "de-DE" ->
-    // EUR, "ja-JP" -> JPY, etc. Falls back to AUD (the canonical base).
+    var ok = function (c) { return c && rates[c]; };
+    // Prefer geography (where the viewer actually is) over the OS
+    // language: someone in Tokyo running an en-GB browser wants JPY, not
+    // GBP. The IANA timezone is the best location signal we get without
+    // a permission prompt.
+    try {
+      var tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || "");
+      var tzMap = {
+        "Asia/Tokyo": "JPY", "Asia/Shanghai": "CNY", "Asia/Hong_Kong": "HKD",
+        "Asia/Singapore": "SGD", "Asia/Kolkata": "INR", "Asia/Calcutta": "INR",
+        "Asia/Seoul": "KRW", "Asia/Bangkok": "THB", "Asia/Jakarta": "IDR",
+        "Asia/Manila": "PHP", "Asia/Dubai": "AED",
+        "Pacific/Auckland": "NZD",
+        "Europe/London": "GBP", "Europe/Dublin": "EUR", "Europe/Zurich": "CHF",
+        "Europe/Stockholm": "SEK", "Europe/Oslo": "NOK", "Europe/Copenhagen": "DKK",
+        "Europe/Warsaw": "PLN", "Europe/Prague": "CZK", "Europe/Istanbul": "TRY",
+        "America/Toronto": "CAD", "America/Vancouver": "CAD", "America/Edmonton": "CAD",
+        "America/Winnipeg": "CAD", "America/Mexico_City": "MXN",
+        "America/Sao_Paulo": "BRL", "Africa/Johannesburg": "ZAR",
+      };
+      if (ok(tzMap[tz])) return tzMap[tz];
+      // Broad regional defaults for zones not named above.
+      if (/^Australia\//.test(tz) && ok("AUD")) return "AUD";
+      if (/^America\//.test(tz) && ok("USD")) return "USD";
+      if (/^Europe\//.test(tz) && ok("EUR")) return "EUR";
+    } catch (_e) {}
+    // Fallback: navigator.language region. "en-US" -> USD, "ja-JP" -> JPY.
     var localeMap = {
       "AU": "AUD", "US": "USD", "GB": "GBP", "DE": "EUR", "FR": "EUR",
       "IT": "EUR", "ES": "EUR", "NL": "EUR", "AT": "EUR", "BE": "EUR",
@@ -1343,9 +1368,7 @@ const STATS_PAGE_JS: &str = r#"<script>
     var lang = (navigator.language || "").toUpperCase();
     var parts = lang.split(/[-_]/);
     var region = parts.length > 1 ? parts[1] : "";
-    if (region && localeMap[region] && rates[localeMap[region]]) {
-      return localeMap[region];
-    }
+    if (region && ok(localeMap[region])) return localeMap[region];
     return "AUD";
   }
 
@@ -6258,6 +6281,10 @@ async fn onboarding_sections(state: &AppState) -> (String, String) {
     )
     .await;
     let pasted = scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted > 0").await;
+    // Engagement depth: nested subsets of "made a paste" that keep the
+    // tail of the funnel descending and show who's formed a habit.
+    let regular = scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted >= 10").await;
+    let power = scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted >= 50").await;
     // Active members who haven't pasted yet: the slice an operator can
     // act on (disabled accounts excluded so it matches the roster).
     let awaiting =
@@ -6288,6 +6315,8 @@ async fn onboarding_sections(state: &AppState) -> (String, String) {
             ("Saved a snippet", saved),
             ("Tried shortcut", tried),
             ("Made a paste", pasted),
+            ("10+ pastes", regular),
+            ("50+ pastes", power),
         ];
         funnel.push_str("<div class=\"panel-scroll\"><div class=\"funnel\">");
         let mut prev: Option<i64> = None;

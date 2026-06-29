@@ -13,5 +13,8 @@ export default defineConfig({
     port: 5180,
     strictPort: true,
     hmr: { port: 5181 },
+    // theme.css pulls the shared token layer from the repo root (one
+    // level above this package), so let the dev server read it.
+    fs: { allow: [".."] },
   },
 });

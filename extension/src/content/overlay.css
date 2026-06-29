@@ -8,12 +8,14 @@
   /* Drives native scrollbars / form controls inside the shadow root so
      they match the launcher theme instead of the page's. */
   color-scheme: dark;
-  --bg-2: #222529;
-  --bg-3: #2a2e34;
-  --bg-hover: #2f343b;
-  --border: #3a3f46;
-  --text: #e7e9ec;
-  --text-dim: #9aa1aa;
+  /* Mirrors shared/styles/tokens.css (dark); kept in sync by hand since
+     the shadow root can't inherit the document's custom properties. */
+  --bg-2: #1d2024;
+  --bg-3: #23272c;
+  --bg-hover: #2a2f36;
+  --border: #31363d;
+  --text: #e8eaed;
+  --text-dim: #9aa1ab;
   --accent: #4c9aff;
   --radius: 8px;
 }

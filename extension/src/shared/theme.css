@@ -1,31 +1,18 @@
-/* Design tokens copied from the desktop app (src/styles.css), the
-   canonical SnipDesk look. Shared by the popup and manager; the
-   overlay inlines the same values on :host since shadow DOM doesn't
-   inherit them. */
-:root,
-:root[data-theme="dark"] {
-  --bg: #1a1c20;
-  --bg-2: #222529;
-  --bg-3: #2a2e34;
-  --bg-hover: #2f343b;
-  --border: #3a3f46;
-  --text: #e7e9ec;
-  --text-dim: #9aa1aa;
-  --accent: #4c9aff;
+/* The extension's palette now comes from the repo's shared token layer
+   (shared/styles/tokens.css) - the exact same file the admin dashboard
+   serves - so the extension and dashboard never drift. tokens.css
+   themes via prefers-color-scheme AND [data-theme] (light/dark), which
+   matches how the popup/manager set data-theme from settings.
+
+   The block below bridges the extension's legacy variable names to the
+   shared ones so the existing component CSS keeps working unchanged.
+   The overlay can't @import this (shadow DOM doesn't inherit :root
+   custom properties), so it mirrors these values on :host. */
+@import "../../../shared/styles/tokens.css";
+
+:root {
+  --bg-2: var(--bg-elev);
+  --text: var(--fg);
+  --text-dim: var(--fg-dim);
   --accent-2: color-mix(in srgb, var(--accent) 72%, #000 28%);
-  --danger: #e06b6b;
-  --radius: 8px;
-}
-:root[data-theme="light"] {
-  --bg: #f5f6f8;
-  --bg-2: #ffffff;
-  --bg-3: #eef0f3;
-  --bg-hover: #e2e6eb;
-  --border: #d1d5db;
-  --text: #1a1c20;
-  --text-dim: #5a6270;
-  --accent: #2c6fd8;
-  --accent-2: color-mix(in srgb, var(--accent) 72%, #000 28%);
-  --danger: #c03535;
-  --radius: 8px;
 }

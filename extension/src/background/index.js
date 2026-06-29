@@ -314,6 +314,22 @@ async function pruneTombstones() {
   if (changed) await store.setCache("personal", cache);
 }
 
+// Pull deployment config the clients act on (currently the ticket-link
+// settings the content script scrapes with). Best-effort: a failure
+// leaves the last-known config in place, retried next sync.
+async function refreshClientConfig(serverUrl, token) {
+  try {
+    const cfg = await api.clientConfig(serverUrl, token);
+    const tl = cfg?.ticket_link || {};
+    await store.setTicketLink({
+      enabled: Boolean(tl.enabled),
+      url_pattern: typeof tl.url_pattern === "string" ? tl.url_pattern : "",
+    });
+  } catch (_e) {
+    // non-critical; ignore
+  }
+}
+
 async function syncNow() {
   const serverUrl = await store.getServerUrl();
   let token = await store.getToken();
@@ -325,6 +341,7 @@ async function syncNow() {
       token = meRes.refreshed_token;
     }
     if (meRes?.user) await store.setUser(meRes.user);
+    await refreshClientConfig(serverUrl, token);
     await flushOutbox(); // push local writes up before pulling
     await pullStream("personal", (since) => api.listSnippets(serverUrl, token, since));
     await pullStream("library", (since) => api.listLibrary(serverUrl, token, since));

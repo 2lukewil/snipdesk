@@ -65,6 +65,7 @@ export const signup = (s, email, password, display_name) =>
 export const login = (s, email, password) =>
   request(s, "/api/auth/login", { method: "POST", body: { email, password } });
 export const me = (s, token) => request(s, "/api/me", { token });
+export const clientConfig = (s, token) => request(s, "/api/client-config", { token });
 export const updateMe = (s, token, patch) =>
   request(s, "/api/me", { method: "PATCH", token, body: patch });
 

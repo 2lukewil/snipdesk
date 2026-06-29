@@ -138,8 +138,21 @@ export async function clearSession() {
   // cached identity, and the team library (which only exists while signed
   // in) are dropped. cache_personal keeps its sync high-water mark so the
   // same user re-signing in resumes a delta sync and any edits made while
-  // signed out still push up.
-  await remove(["token", "user", "cache_library"]);
+  // signed out still push up. ticket_link is server-provided config; drop
+  // it so a stale pattern can't outlive the session (or a server switch).
+  await remove(["token", "user", "cache_library", "ticket_link"]);
+}
+
+// Server-provided ticket-link config (from GET /api/client-config),
+// refreshed by the worker on sign-in and each sync. The content script
+// reads it to decide whether to scrape a ticket reference from the page.
+// Defaults to disabled so nothing happens until a server opts in.
+export async function getTicketLink() {
+  const v = (await get("ticket_link")).ticket_link;
+  return { enabled: false, url_pattern: "", ...(v ?? {}) };
+}
+export async function setTicketLink(config) {
+  await set({ ticket_link: config });
 }
 
 // Admin-managed config from enterprise policy (chrome.storage.managed).

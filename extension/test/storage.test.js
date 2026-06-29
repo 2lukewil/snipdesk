@@ -45,3 +45,23 @@ test("clearSession keeps personal snippets, drops auth + team library", async ()
   // extension stays usable offline / signed out.
   assert.deepEqual(store.cache_personal, { items: { a: { id: "a", title: "mine" } }, hwm: 5 });
 });
+
+test("ticket-link config defaults to disabled and round-trips", async () => {
+  delete store.ticket_link;
+  // Unset -> safe default: feature off, no pattern.
+  assert.deepEqual(await storage.getTicketLink(), { enabled: false, url_pattern: "" });
+
+  await storage.setTicketLink({ enabled: true, url_pattern: "id=(\\d+)" });
+  assert.deepEqual(await storage.getTicketLink(), { enabled: true, url_pattern: "id=(\\d+)" });
+});
+
+test("clearSession drops server-provided ticket-link config", async () => {
+  store.token = "jwt";
+  store.ticket_link = { enabled: true, url_pattern: "id=(\\d+)" };
+
+  await storage.clearSession();
+
+  // Server config must not outlive the session (or a server switch).
+  assert.equal(store.ticket_link, undefined);
+  assert.deepEqual(await storage.getTicketLink(), { enabled: false, url_pattern: "" });
+});

@@ -2,7 +2,7 @@ import { MSG, send } from "../shared/messages.js";
 import { filterSnippets, sortSnippets } from "../shared/search.js";
 import { extractVarNames, substitute } from "../shared/variables.js";
 import { renderFormatted } from "../shared/format.js";
-import { DEFAULT_FORMAT_RULES } from "../shared/storage.js";
+import { DEFAULT_FORMAT_RULES, getTicketLink } from "../shared/storage.js";
 import overlayCss from "./overlay.css?inline";
 
 // Insertion target. `savedTarget` continuously tracks the last editable
@@ -441,19 +441,43 @@ function setSelected(i) {
   renderPreview();
 }
 
+// Apply the server-provided ticket-link pattern to this page's URL.
+// Capture group 1 is the ticket reference. Returns null when the
+// feature is off, no pattern is set, the regex is bad, or it doesn't
+// match - so a non-ticket page contributes nothing.
+function scrapeTicketRef(config) {
+  if (!config || !config.enabled || !config.url_pattern) return null;
+  let re;
+  try {
+    re = new RegExp(config.url_pattern);
+  } catch (_e) {
+    return null; // a malformed pattern shouldn't break pasting
+  }
+  const m = re.exec(location.href);
+  return m && m[1] ? m[1] : null;
+}
+
 // Best-effort usage telemetry: bumps the local count (drives savings)
-// and folds into the server totals. Fire-and-forget.
-function reportUse(s, text) {
+// and folds into the server totals. When the page is a configured
+// support ticket, the paste is also tagged with the ticket reference.
+// Fire-and-forget.
+async function reportUse(s, text) {
   const isLib = s.source === "library";
-  const delta = { id: s.id, delta: 1, last_used: Math.floor(Date.now() / 1000) };
-  send(MSG.USAGE_REPORT, {
-    body: {
-      chars_pasted_delta: (text || "").length,
-      snippets_pasted_delta: 1,
-      personal: isLib ? [] : [delta],
-      library: isLib ? [delta] : [],
-    },
-  });
+  const at = Math.floor(Date.now() / 1000);
+  const delta = { id: s.id, delta: 1, last_used: at };
+  const body = {
+    chars_pasted_delta: (text || "").length,
+    snippets_pasted_delta: 1,
+    personal: isLib ? [] : [delta],
+    library: isLib ? [delta] : [],
+  };
+  try {
+    const ref = scrapeTicketRef(await getTicketLink());
+    if (ref) body.tickets = [{ snippet_id: s.id, ticket_ref: ref, at }];
+  } catch (_e) {
+    // ticket tagging is optional; never block the paste telemetry
+  }
+  send(MSG.USAGE_REPORT, { body });
 }
 
 async function choose() {

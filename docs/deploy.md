@@ -684,14 +684,14 @@ the feature is enabled and a pattern is set.
 
 ```jsonc
 // GET /api/client-config (after sign-in)
-{ "ticket_link": { "enabled": true, "url_pattern": "supporttickets\\.php\\?[^#]*[?&]id=(\\d+)" } }
+{ "ticket_link": { "enabled": true, "url_pattern": "supporttickets\\.php\\?(?:[^#]*&)?id=(\\d+)" } }
 ```
 
 Pattern examples (set as `SNIPDESK_TICKET_URL_PATTERN`):
 
 | Ticketing tool | URL looks like | Pattern |
 | --- | --- | --- |
-| WHMCS (admin) | `…/admin/supporttickets.php?action=view&id=12345` | `supporttickets\.php\?[^#]*[?&]id=(\d+)` |
+| WHMCS (admin) | `…/admin/supporttickets.php?action=view&id=12345` | `supporttickets\.php\?(?:[^#]*&)?id=(\d+)` |
 | Zendesk | `…/agent/tickets/9876` | `/agent/tickets/(\d+)` |
 | Generic `?ticket=` | `…/desk?ticket=ABC-42` | `[?&]ticket=([A-Za-z0-9-]+)` |
 

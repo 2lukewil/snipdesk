@@ -376,3 +376,42 @@ async fn ticket_events_stored_only_when_enabled() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn onboarding_events_dedupe_and_allowlist() {
+    let (app, pool) = make_state().await;
+    let (token, id) = signup(&app, "alice@example.com").await;
+
+    // A known milestone is recorded once even if reported repeatedly.
+    for _ in 0..2 {
+        let s = post_json(
+            &app,
+            "/api/usage/report",
+            &token,
+            serde_json::json!({ "onboarding": ["shortcut_tried"] }),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+    }
+    // An unknown key is silently dropped (no row, still 204).
+    let s = post_json(
+        &app,
+        "/api/usage/report",
+        &token,
+        serde_json::json!({ "onboarding": ["hack_the_planet"] }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM onboarding_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let ev: String = sqlx::query_scalar("SELECT event FROM onboarding_events WHERE user_id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ev, "shortcut_tried");
+}

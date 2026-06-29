@@ -148,6 +148,14 @@ async fn render_page(
                     ""
                 },
             ),
+            (
+                "ONBOARDING_ACTIVE",
+                if matches!(active, NavTab::Onboarding) {
+                    "active"
+                } else {
+                    ""
+                },
+            ),
             ("NAV_USER", &escape_html(&display)),
             ("NAV_ROLE", &escape_html(&role)),
             ("CONTENT", content),
@@ -191,6 +199,7 @@ enum NavTab {
     Library,
     Stats,
     Audit,
+    Onboarding,
     None,
 }
 
@@ -6367,6 +6376,83 @@ pub async fn library_snippet_tickets_page(
     }
 
     render_page(&state, &session, "Snippet tickets", NavTab::Library, &body)
+        .await
+        .into_response()
+}
+
+// ---- /dashboard/onboarding (activation funnel) ----
+
+/// Activation funnel: how far new users get. Stages are derived from
+/// existing data where the server can (signed up, saved a snippet, made
+/// a paste); "tried the shortcut" comes from client-reported onboarding
+/// milestones, so it stays 0 until clients on a recent build report it.
+pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmin) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+    let pool = &state.pool;
+    let scalar = |sql: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(sql)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0)
+    };
+    let signed_up = scalar("SELECT COUNT(*) FROM users").await;
+    let saved =
+        scalar("SELECT COUNT(DISTINCT owner_id) FROM personal_snippets WHERE is_deleted = 0").await;
+    let tried = scalar(
+        "SELECT COUNT(DISTINCT user_id) FROM onboarding_events WHERE event = 'shortcut_tried'",
+    )
+    .await;
+    let pasted = scalar("SELECT COUNT(*) FROM users WHERE snippets_pasted > 0").await;
+
+    let stages = [
+        ("Signed up", signed_up),
+        ("Saved a snippet", saved),
+        ("Tried the shortcut", tried),
+        ("Made a paste", pasted),
+    ];
+
+    let mut body = String::new();
+    body.push_str("<h1>Onboarding</h1>");
+    body.push_str(
+        "<p class=\"muted\">How far new users get. Counts are cumulative milestones, not a strict \
+         sequence (someone can paste a library snippet without saving their own). \
+         \"Tried the shortcut\" is reported by the client, so it stays at zero until everyone is on \
+         a build that reports it.</p>",
+    );
+
+    if signed_up == 0 {
+        body.push_str("<p class=\"muted\">No users yet.</p>");
+    } else {
+        body.push_str("<div class=\"funnel\">");
+        let mut prev: Option<i64> = None;
+        for (label, count) in stages {
+            let pct = (count as f64 / signed_up as f64 * 100.0).round() as i64;
+            let drop = match prev {
+                Some(p) if p > 0 && count < p => format!(
+                    "<span class=\"fdrop\">-{}%</span>",
+                    ((p - count) as f64 / p as f64 * 100.0).round() as i64
+                ),
+                _ => String::new(),
+            };
+            body.push_str(&format!(
+                "<div class=\"frow\">\
+                   <span class=\"flab\">{label}</span>\
+                   <div class=\"fbar-track\"><div class=\"fbar\" style=\"width:{pct}%\"></div></div>\
+                   <span class=\"fnum\">{count} {drop}</span>\
+                 </div>",
+                label = escape_html(label),
+                pct = pct.clamp(0, 100),
+                count = format_thousands(count),
+                drop = drop,
+            ));
+            prev = Some(count);
+        }
+        body.push_str("</div>");
+    }
+
+    render_page(&state, &session, "Onboarding", NavTab::Onboarding, &body)
         .await
         .into_response()
 }

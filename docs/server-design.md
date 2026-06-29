@@ -167,6 +167,18 @@ CREATE TABLE ticket_usage (
 Per-snippet usage counters (`library_usage`, `personal_snippets.usage_count`)
 back the dashboard's insights page and the `/metrics` totals.
 
+```sql
+-- Client-reported onboarding milestones (the dashboard funnel's
+-- non-derivable steps, e.g. "shortcut_tried"). One row per (user,
+-- event) via INSERT OR IGNORE, so it counts "users who reached a step".
+CREATE TABLE onboarding_events (
+  user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event    TEXT NOT NULL,
+  at       INTEGER NOT NULL,
+  PRIMARY KEY (user_id, event)
+);
+```
+
 Live migrations live at `crates/snipdesk-server/migrations/`. The
 server applies them at boot and tolerates comment-only edits to
 already-applied migrations via a checksum-repair path.
@@ -389,7 +401,8 @@ All endpoints under `/api`. JSON request/response. JWT in the
 - `DELETE /api/admin/users/:id` - soft-delete account (cascades to snippets)
 
 ### Telemetry
-- `POST /api/usage/report` - clients flush paste deltas: total chars/pastes, per-snippet counters, and (when `ticket_link_enabled`) an optional `tickets[]` array of `{ snippet_id, ticket_ref, at }` recorded into `ticket_usage`. Returns 204.
+- `POST /api/usage/report` - clients flush paste deltas: total chars/pastes, per-snippet counters, (when `ticket_link_enabled`) an optional `tickets[]` array of `{ snippet_id, ticket_ref, at }` recorded into `ticket_usage`, and an optional `onboarding[]` array of milestone keys (allowlisted, deduped into `onboarding_events`). Returns 204.
+- `GET /api/client-config` - deployment config the clients act on: `{ ticket_link: { enabled, url_pattern } }`. Fetched after sign-in.
 
 ### Health and metrics
 - `GET  /api/health` - liveness probe. 200 with `{ "status": "ok", "db": true }` when alive; 503 when the DB ping fails.
@@ -478,6 +491,10 @@ Server-rendered HTML with htmx for interactivity. Routes:
   actor / action / time-window filters, paginated newest first.
 - `/dashboard/stats` - server-wide and per-user time-and-money-saved
   estimates derived from paste telemetry.
+- `/dashboard/onboarding` - activation funnel: signed up, saved a
+  snippet, tried the shortcut, made a paste. Derived from existing data
+  except "tried the shortcut", which clients report as an onboarding
+  milestone (`onboarding_events`).
 
 Auth is cookie-based: a successful POST to `/dashboard/login` issues
 the same HS256 JWT the JSON API uses, delivered via an `HttpOnly`,

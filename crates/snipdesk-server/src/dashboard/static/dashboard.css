@@ -1046,6 +1046,21 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 .insights-table .fold { color: var(--fg-dim); }
 .insights-table .insight-stale td { opacity: 0.62; }
 
+/* ---- Onboarding funnel ---- */
+.funnel { display: flex; flex-direction: column; gap: 10px; max-width: 720px; margin-top: 18px; }
+.frow { display: grid; grid-template-columns: 160px 1fr 110px; align-items: center; gap: 12px; }
+.frow .flab { font-size: 14px; }
+.fbar-track { background: var(--bg-3); border-radius: 5px; height: 26px; overflow: hidden; }
+.fbar {
+  height: 100%;
+  min-width: 2px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 80%, #000), var(--accent));
+  border-radius: 5px;
+}
+.frow .fnum { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.frow .fdrop { color: var(--danger); font-size: 11px; }
+@media (max-width: 640px) { .frow { grid-template-columns: 110px 1fr 84px; } }
+
 /* Filter bar above the audit table: search box stretches, selects and
    the search button sit on one wrapping row. */
 .audit-filters {

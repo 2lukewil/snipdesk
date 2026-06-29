@@ -62,7 +62,16 @@ pub struct UsageReport {
     /// may always send them.
     #[serde(default)]
     pub tickets: Vec<TicketEvent>,
+    /// Onboarding milestones reached since the last flush, e.g.
+    /// `["shortcut_tried"]`. Recorded once per user; unknown keys are
+    /// dropped. Cheap to send every flush - the server dedupes.
+    #[serde(default)]
+    pub onboarding: Vec<String>,
 }
+
+/// Milestones the client may report. Server-derivable steps (signed up,
+/// saved a snippet, first paste) are intentionally absent.
+const ONBOARDING_EVENTS: &[&str] = &["shortcut_tried"];
 
 #[derive(Debug, Deserialize)]
 pub struct SnippetDelta {
@@ -223,6 +232,25 @@ pub async fn report(
             .await
             .map_err(|e| ApiError::internal(format!("ticket usage: {e}")))?;
         }
+    }
+
+    // Onboarding milestones: first occurrence per (user, event) wins.
+    // Unknown keys are silently dropped so a future client can't seed
+    // arbitrary rows. Timestamped at receipt (the client sends no time).
+    let now = chrono::Utc::now().timestamp();
+    for event in &body.onboarding {
+        if !ONBOARDING_EVENTS.contains(&event.as_str()) {
+            continue;
+        }
+        sqlx::query(
+            "INSERT OR IGNORE INTO onboarding_events (user_id, event, at) VALUES (?1, ?2, ?3)",
+        )
+        .bind(user_id)
+        .bind(event)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::internal(format!("onboarding event: {e}")))?;
     }
 
     tx.commit()

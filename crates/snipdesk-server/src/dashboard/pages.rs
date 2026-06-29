@@ -979,10 +979,7 @@ fn detail_pair(label: &str, value: &str) -> String {
 struct StatsCounts {
     total_users: i64,
     active_users: i64,
-    admin_users: i64,
-    disabled_users: i64,
     total_snippets: i64,
-    tombstoned_snippets: i64,
     library_snippets: i64,
 }
 
@@ -1015,10 +1012,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         "SELECT \
             (SELECT COUNT(*) FROM users) AS total_users, \
             (SELECT COUNT(*) FROM users WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?) AS active_users, \
-            (SELECT COUNT(*) FROM users WHERE role = 'admin') AS admin_users, \
-            (SELECT COUNT(*) FROM users WHERE is_disabled = 1) AS disabled_users, \
             (SELECT COUNT(*) FROM personal_snippets WHERE is_deleted = 0) AS total_snippets, \
-            (SELECT COUNT(*) FROM personal_snippets WHERE is_deleted = 1) AS tombstoned_snippets, \
             (SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0) AS library_snippets",
     )
     .bind(cutoff_30d)
@@ -1027,10 +1021,7 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     .unwrap_or(StatsCounts {
         total_users: 0,
         active_users: 0,
-        admin_users: 0,
-        disabled_users: 0,
         total_snippets: 0,
-        tombstoned_snippets: 0,
         library_snippets: 0,
     });
 
@@ -1073,14 +1064,12 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
             .await
             .unwrap_or_default();
 
-    let mut total_chars_pasted: i64 = 0;
     let mut hours_saved = 0.0_f64;
     let mut money_saved_aud = 0.0_f64;
     for (chars, u_wpm, u_wage, u_curr) in &user_rows {
         if *chars <= 0 {
             continue;
         }
-        total_chars_pasted += chars;
         let wpm = u_wpm.map(|v| (v as f64).max(1.0)).unwrap_or(default_wpm);
         let wage = u_wage.unwrap_or(default_wage);
         let rate = match u_curr.as_deref() {
@@ -1124,26 +1113,6 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     .await
     .unwrap_or_default();
 
-    // Activity windows for the library: how many new snippets in
-    // the last 7 / 30 days. Helps spot a stagnant library vs an
-    // actively-growing one.
-    let now = chrono::Utc::now().timestamp();
-    let cutoff_7d = now - 7 * 86_400;
-    let library_new_7d: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0 AND created_at >= ?1",
-    )
-    .bind(cutoff_7d)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(0);
-    let library_new_30d: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM library_snippets WHERE is_deleted = 0 AND created_at >= ?1",
-    )
-    .bind(cutoff_30d)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(0);
-
     // Adoption: percentage of users who've actually pasted at
     // least once. Cheap signal for "is rollout sticking".
     let adopters: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE chars_pasted > 0")
@@ -1175,20 +1144,12 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     let mut body = String::new();
     body.push_str("<h1>Server stats</h1>");
     body.push_str(
-        "<p class=\"muted\">Activity across your team. Hover a card and click &times; to hide it, \
-         or use <strong>+ Add card</strong> to bring hidden ones back; choices save per browser. \
-         <a href=\"#\" id=\"stats-reset\">Reset</a>.</p>",
+        "<p class=\"muted\">Activity across your team. Money saved follows the display currency \
+         on the right.</p>",
     );
-    // Toolbar: + Add picker on the left + currency dropdown on the
-    // right. The Add menu is populated by JS from cards currently
-    // hidden so it reflects whichever ones the admin can bring back.
+    // Toolbar holds only the display-currency selector now; the card set
+    // is fixed so the layout is identical on every load.
     body.push_str("<div class=\"stats-toolbar\">");
-    body.push_str(
-        "<details class=\"stats-add\" id=\"stats-add\">\
-           <summary>+ Add card</summary>\
-           <div class=\"stats-add-menu\" id=\"stats-add-menu\"></div>\
-         </details>",
-    );
     body.push_str("<label class=\"stats-currency\"><span>Display currency:</span>");
     body.push_str("<select id=\"stats-currency-select\">");
     for c in &codes {
@@ -1199,94 +1160,18 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     }
     body.push_str("</select></label></div>");
 
-    body.push_str("<div class=\"stats-grid\" id=\"stats-grid\">");
-    body.push_str(&stat_card(
-        "users",
-        "Users",
-        &counts.total_users.to_string(),
-        "total accounts",
-    ));
-    body.push_str(&stat_card(
-        "active",
-        "Active (30 days)",
-        &counts.active_users.to_string(),
-        "last_seen in the last 30 days",
-    ));
-    body.push_str(&stat_card(
-        "admins",
-        "Admins",
-        &counts.admin_users.to_string(),
-        "users with the admin role",
-    ));
-    body.push_str(&stat_card(
-        "disabled",
-        "Disabled",
-        &counts.disabled_users.to_string(),
-        "blocked from signing in",
-    ));
-    body.push_str(&stat_card(
-        "personal",
-        "Personal snippets",
-        &counts.total_snippets.to_string(),
-        "live rows, encrypted at rest",
-    ));
-    body.push_str(&stat_card(
-        "tombstones",
-        "Tombstones",
-        &counts.tombstoned_snippets.to_string(),
-        "deleted, awaiting purge",
-    ));
-    body.push_str(&stat_card(
-        "library",
-        "Library snippets",
-        &counts.library_snippets.to_string(),
-        "shared with every member",
-    ));
-    body.push_str(&stat_card(
-        "library_new_7d",
-        "Library added (7d)",
-        &library_new_7d.to_string(),
-        "new shared snippets in the last week",
-    ));
-    body.push_str(&stat_card(
-        "library_new_30d",
-        "Library added (30d)",
-        &library_new_30d.to_string(),
-        "new shared snippets in the last 30 days",
-    ));
-    body.push_str(&stat_card_featured(
-        "adoption",
-        "Adoption",
-        &format!("{adoption_pct}%"),
-        "users who've pasted at least once",
-    ));
-    body.push_str(&stat_card_featured(
-        "pastes",
-        "Total pastes",
-        &format_thousands(total_snippets_pasted),
-        "snippet expansions across the team",
-    ));
-    body.push_str(&stat_card(
-        "chars",
-        "Characters pasted",
-        &format_thousands(total_chars_pasted),
-        "characters users didn't have to type",
-    ));
+    // Hero row: the four outcome metrics, given prominence. Money is
+    // built inline because it carries the data-aud value and ids the
+    // currency dropdown reweights; the rest go through the helper.
     let curr = &state.stats.currency;
+    body.push_str("<div class=\"stats-hero\">");
     body.push_str(&stat_card_featured(
-        "hours",
         "Hours saved",
         &format!("{hours_saved:.1}"),
         "computed from each user's wpm + paste totals",
     ));
-    // Money card carries a data-aud attribute so the dropdown JS
-    // can reweight the displayed value into any other code without
-    // a server round-trip. The hint references the default
-    // currency so operators understand the "raw" value before
-    // they pick a different display code.
     body.push_str(&format!(
-        "<div class=\"stat-card featured stat-card-money\" data-card-id=\"money\" data-aud=\"{aud}\">\
-           <button type=\"button\" class=\"stat-close\" aria-label=\"Hide card\">&times;</button>\
+        "<div class=\"stat-card featured stat-card-money\" data-aud=\"{aud}\">\
            <div class=\"stat-value\" id=\"stat-money-value\">A${val}</div>\
            <div class=\"stat-label\">Money saved</div>\
            <div class=\"stat-hint\">each user's wage applied to their own pastes, displayed in {curr_safe} (default {default_safe})</div>\
@@ -1295,6 +1180,40 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         val = format_thousands(money_saved_aud as i64),
         curr_safe = "<span id=\"stat-money-curr\">AUD</span>",
         default_safe = escape_html(curr),
+    ));
+    body.push_str(&stat_card_featured(
+        "Total pastes",
+        &format_thousands(total_snippets_pasted),
+        "snippet expansions across the team",
+    ));
+    body.push_str(&stat_card_featured(
+        "Adoption",
+        &format!("{adoption_pct}%"),
+        "users who've pasted at least once",
+    ));
+    body.push_str("</div>");
+
+    // Secondary row: the standing counts that frame the outcomes above.
+    body.push_str("<div class=\"stats-grid\">");
+    body.push_str(&stat_card(
+        "Users",
+        &counts.total_users.to_string(),
+        "total accounts",
+    ));
+    body.push_str(&stat_card(
+        "Active (30 days)",
+        &counts.active_users.to_string(),
+        "seen in the last 30 days",
+    ));
+    body.push_str(&stat_card(
+        "Personal snippets",
+        &counts.total_snippets.to_string(),
+        "live rows, encrypted at rest",
+    ));
+    body.push_str(&stat_card(
+        "Library snippets",
+        &counts.library_snippets.to_string(),
+        "shared with every member",
     ));
     body.push_str("</div>");
 
@@ -1401,32 +1320,23 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         .into_response()
 }
 
-fn stat_card(id: &str, label: &str, value: &str, hint: &str) -> String {
-    // `data-card-id` lets the per-admin localStorage hide list refer
-    // to cards stably across renders. The close button is wired up
-    // by STATS_PAGE_JS below; on click it toggles the card's hidden
-    // class and persists the id to localStorage so the choice
-    // survives reloads.
+fn stat_card(label: &str, value: &str, hint: &str) -> String {
     format!(
-        "<div class=\"stat-card\" data-card-id=\"{id_safe}\">\
-           <button type=\"button\" class=\"stat-close\" aria-label=\"Hide card\">&times;</button>\
+        "<div class=\"stat-card\">\
            <div class=\"stat-value\">{value_safe}</div>\
            <div class=\"stat-label\">{label_safe}</div>\
            <div class=\"stat-hint\">{hint_safe}</div>\
          </div>",
-        id_safe = escape_html(id),
         value_safe = escape_html(value),
         label_safe = escape_html(label),
         hint_safe = escape_html(hint),
     )
 }
 
-/// A featured stat card: same contract as `stat_card` (the hide/show
-/// and Add-menu JS keys off `data-card-id` + `.stat-close`, both
-/// unchanged), with an extra class that gives outcome metrics a wider
-/// tile and a gradient numeral.
-fn stat_card_featured(id: &str, label: &str, value: &str, hint: &str) -> String {
-    stat_card(id, label, value, hint).replacen("\"stat-card\"", "\"stat-card featured\"", 1)
+/// A featured stat card: same markup as `stat_card` plus the `featured`
+/// class, which gives the outcome metrics the larger gradient numeral.
+fn stat_card_featured(label: &str, value: &str, hint: &str) -> String {
+    stat_card(label, value, hint).replacen("\"stat-card\"", "\"stat-card featured\"", 1)
 }
 
 /// Per-user row used by the stats-page money/time aggregator.
@@ -1478,104 +1388,6 @@ fn format_thousands(n: i64) -> String {
 /// which is overkill for v1.
 const STATS_PAGE_JS: &str = r#"<script>
 (function () {
-  // Switched the storage model from "hidden set" to "shown set".
-  // Default visibility is a curated five (users, admins, hours,
-  // money, adoption); anything else has to be added via the
-  // + Add menu. A first-time admin sees a clean dashboard; power
-  // users can grow it. The shown list lives in localStorage as
-  // a JSON array of card-ids.
-  var KEY = "snipdesk-shown-stat-cards-v2";
-  var DEFAULT_SHOWN = ["users", "admins", "hours", "money", "adoption"];
-
-  function loadShown() {
-    try {
-      var v = localStorage.getItem(KEY);
-      if (v === null) return DEFAULT_SHOWN.slice();
-      var parsed = JSON.parse(v);
-      return Array.isArray(parsed) ? parsed : DEFAULT_SHOWN.slice();
-    } catch (_e) { return DEFAULT_SHOWN.slice(); }
-  }
-  function saveShown(list) {
-    try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (_e) {}
-  }
-
-  // Scan every rendered card once so we know all available ids
-  // and their human labels. The Add menu uses these.
-  var ALL_CARDS = [];
-  document.querySelectorAll(".stat-card[data-card-id]").forEach(function (el) {
-    var id = el.getAttribute("data-card-id");
-    var labelEl = el.querySelector(".stat-label");
-    ALL_CARDS.push({ id: id, label: labelEl ? labelEl.textContent : id });
-  });
-
-  function applyShown() {
-    var shown = loadShown();
-    var shownSet = {};
-    shown.forEach(function (id) { shownSet[id] = true; });
-    document.querySelectorAll(".stat-card[data-card-id]").forEach(function (el) {
-      el.classList.toggle("hidden", !shownSet[el.getAttribute("data-card-id")]);
-    });
-    rebuildAddMenu(shownSet);
-  }
-
-  function rebuildAddMenu(shownSet) {
-    var menu = document.getElementById("stats-add-menu");
-    if (!menu) return;
-    menu.innerHTML = "";
-    var any = false;
-    ALL_CARDS.forEach(function (card) {
-      if (shownSet[card.id]) return;
-      any = true;
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "stats-add-item";
-      btn.setAttribute("data-add-id", card.id);
-      btn.textContent = "+ " + card.label;
-      menu.appendChild(btn);
-    });
-    if (!any) {
-      var empty = document.createElement("div");
-      empty.className = "stats-add-empty";
-      empty.textContent = "All cards are already showing.";
-      menu.appendChild(empty);
-    }
-  }
-
-  applyShown();
-
-  document.body.addEventListener("click", function (e) {
-    var closeBtn = e.target.closest && e.target.closest(".stat-close");
-    if (closeBtn) {
-      var card = closeBtn.closest(".stat-card[data-card-id]");
-      if (card) {
-        var id = card.getAttribute("data-card-id");
-        var shown = loadShown().filter(function (x) { return x !== id; });
-        saveShown(shown);
-        applyShown();
-      }
-      e.preventDefault();
-      return;
-    }
-    var addBtn = e.target.closest && e.target.closest(".stats-add-item");
-    if (addBtn) {
-      var addId = addBtn.getAttribute("data-add-id");
-      var shown = loadShown();
-      if (shown.indexOf(addId) === -1) shown.push(addId);
-      saveShown(shown);
-      // Close the details panel so the menu collapses after a pick.
-      var details = document.getElementById("stats-add");
-      if (details) details.open = false;
-      applyShown();
-      e.preventDefault();
-      return;
-    }
-    if (e.target && e.target.id === "stats-reset") {
-      e.preventDefault();
-      saveShown(DEFAULT_SHOWN.slice());
-      applyShown();
-    }
-  });
-
   // ---- Currency dropdown ----
   // The Money saved card carries its raw value as data-aud="N". The
   // rate table is embedded as JSON in a sibling <script>; we read

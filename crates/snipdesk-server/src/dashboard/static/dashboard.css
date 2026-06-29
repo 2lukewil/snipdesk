@@ -72,7 +72,22 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 .nav-links a.active { background: var(--grad-accent); background-origin: border-box; color: var(--accent-ink); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .nav-user { color: var(--fg-dim); }
-.nav-form { display: inline; }
+.nav-form { display: inline-flex; }
+.nav-signout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.nav-signout:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
+.nav-signout svg { display: block; }
 .nav-appearance select {
   font: inherit;
   font-size: 12.5px;
@@ -931,11 +946,11 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 
 /* --- Stats page --- */
 
-/* Top-of-stats-page toolbar holding the + Add picker and the
-   currency dropdown. Add on the left, currency on the right. */
+/* Top-of-stats-page toolbar: just the display-currency selector,
+   right-aligned. The card set is fixed, so there's no picker. */
 .stats-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   margin: 6px 0 10px;
   gap: 12px;
@@ -950,74 +965,30 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 .stats-currency select {
   font: inherit;
 }
-
-/* + Add card picker. <details>-based so the menu is keyboard
-   accessible without a click handler on the summary. The menu
-   itself absolutely positions so opening it doesn't shove the
-   stats grid down. */
-.stats-add {
-  position: relative;
-}
-.stats-add > summary {
-  list-style: none;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  color: var(--fg);
-  user-select: none;
-}
-.stats-add > summary::-webkit-details-marker { display: none; }
-.stats-add > summary:hover { border-color: var(--fg-dim); }
-.stats-add-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 10;
-  min-width: 220px;
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-}
-.stats-add-item {
-  background: transparent;
-  border: 0;
-  color: var(--fg);
-  text-align: left;
-  padding: 6px 10px;
-  font-size: 12px;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.stats-add-item:hover { background: var(--bg); }
-.stats-add-empty {
-  padding: 8px 10px;
-  font-size: 12px;
-  color: var(--fg-dim);
-}
-/* Metric deck. auto-fill keeps tiles a sensible width and fills the
-   row; dense flow lets featured (2-wide) tiles slot in without leaving
-   holes when others are hidden. */
+/* Two fixed rows: the hero (four outcome metrics) and the secondary
+   deck (four standing counts). Both are four-up on desktop, two-up on
+   tablet, one-up on mobile, so the layout is identical on every load. */
+.stats-hero,
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  grid-auto-flow: dense;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin: 12px 0 26px;
+}
+.stats-hero { margin: 12px 0; }
+.stats-grid { margin: 0 0 26px; }
+@media (max-width: 860px) {
+  .stats-hero,
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 460px) {
+  .stats-hero,
+  .stats-grid { grid-template-columns: 1fr; }
 }
 .stat-card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 15px 16px;
-  position: relative;
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
@@ -1026,32 +997,6 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   border-color: var(--accent-line);
   transform: translateY(-1px);
   box-shadow: 0 8px 22px -14px rgba(0, 0, 0, 0.55);
-}
-.stat-card.hidden {
-  display: none;
-}
-.stat-card .stat-close {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--fg-faint);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  border-radius: var(--radius);
-  transition: opacity 0.15s ease;
-}
-.stat-card:hover .stat-close { opacity: 1; }
-.stat-card .stat-close:hover {
-  background: var(--bg);
-  color: var(--fg);
-  border-color: transparent;
 }
 .stat-value {
   font-size: 28px;
@@ -1072,8 +1017,7 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   margin-top: 3px;
   line-height: 1.4;
 }
-/* Featured: outcome metrics get a wider tile and a gradient numeral. */
-.stat-card.featured { grid-column: span 2; }
+/* Featured (hero) cards get the larger gradient numeral. */
 .stat-card.featured .stat-value {
   font-size: 40px;
   background: var(--grad-accent);
@@ -1081,9 +1025,6 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-}
-@media (max-width: 520px) {
-  .stat-card.featured { grid-column: span 1; }
 }
 
 /* Activity panels: top lists + recent feeds in one responsive row that

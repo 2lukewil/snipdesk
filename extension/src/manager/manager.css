@@ -27,8 +27,12 @@ header {
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }
-/* Brand mark matches the admin panel: a gradient "S" glyph + wordmark. */
-.nav-brand { font-weight: 600; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 9px; }
+/* Brand mark matches the admin panel: a gradient "S" glyph + wordmark
+   at the panel's 15px (the manager body is 14px, so set it explicitly). */
+.nav-brand { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 9px; }
+/* Compact sign-in button so it sits within the header line like the
+   panel's controls instead of bulking the bar out. */
+#btn-login { flex: none; height: 30px; padding: 0 12px; font-size: 13px; line-height: 1; }
 .nav-glyph {
   width: 22px; height: 22px; border-radius: 6px;
   display: grid; place-items: center;

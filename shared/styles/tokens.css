@@ -43,7 +43,16 @@
   --accent-ink: #ffffff;
   --grad-accent: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #19c8f5));
   --glow: radial-gradient(760px 340px at 50% -10%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%);
+
+  /* Snippet editor + preview font size, user-configurable. The default
+     is a touch larger than the old preview for readability; both the
+     textarea and the preview read from this so they stay in lockstep. */
+  --editor-font-size: 14px;
 }
+
+/* Editor text-size choices (set via the dashboard's nav control). */
+:root[data-editor-size="sm"] { --editor-font-size: 13px; }
+:root[data-editor-size="lg"] { --editor-font-size: 16px; }
 
 /* Dark values, shared by both activation paths below. */
 @media (prefers-color-scheme: dark) {

@@ -164,6 +164,14 @@ async fn render_page(
                     ""
                 },
             ),
+            (
+                "INSIGHTS_ACTIVE",
+                if matches!(active, NavTab::Insights) {
+                    "active"
+                } else {
+                    ""
+                },
+            ),
             ("NAV_USER", &escape_html(&display)),
             ("NAV_ROLE", &escape_html(&role)),
             ("CONTENT", content),
@@ -205,6 +213,7 @@ async fn render_update_banner(state: &AppState) -> String {
 enum NavTab {
     Users,
     Library,
+    Insights,
     Stats,
     Audit,
     Onboarding,
@@ -3368,13 +3377,27 @@ fn render_library_editor(r: &LibraryRow) -> String {
              <div class=\"compose-head\">\
                <input class=\"compose-title\" type=\"text\" name=\"title\" value=\"{title_attr}\" \
                   placeholder=\"Title\" required aria-label=\"Title\" />\
-               <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
              </div>\
              <div class=\"editor-body-grid\">\
-               <textarea id=\"library-editor-body\" name=\"body\" required \
-                  placeholder=\"Snippet text...\">{body_text}</textarea>\
-               <div class=\"editor-preview-wrap\">\
-                 <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+               <div class=\"compose-col\">\
+                 <div class=\"col-head\">\
+                   <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+                 </div>\
+                 <textarea id=\"library-editor-body\" name=\"body\" required \
+                    placeholder=\"Snippet text...\">{body_text}</textarea>\
+               </div>\
+               <div class=\"compose-col compose-col-preview\">\
+                 <div class=\"col-head\">\
+                   <span class=\"foot-input\"><span class=\"foot-ic\" aria-hidden=\"true\">📁</span>\
+                     <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
+                        placeholder=\"Folder\" value=\"{folder_attr}\" aria-label=\"Folder\" /></span>\
+                   <span class=\"foot-input\"><span class=\"foot-ic\" aria-hidden=\"true\">🏷️</span>\
+                     <input class=\"foot-field\" type=\"text\" name=\"tags\" value=\"{tags_attr}\" \
+                        placeholder=\"Tags\" aria-label=\"Tags\" /></span>\
+                 </div>\
+                 <div class=\"editor-preview-wrap\">\
+                   <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+                 </div>\
                </div>\
              </div>\
            </div>\
@@ -3382,10 +3405,6 @@ fn render_library_editor(r: &LibraryRow) -> String {
              <button class=\"primary\" type=\"submit\">Save changes</button>\
              <button type=\"button\" class=\"btn danger\" id=\"library-editor-delete\" \
                 data-id=\"{id_attr}\">Delete</button>\
-             <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
-                placeholder=\"Folder, e.g. Replies/Billing\" value=\"{folder_attr}\" aria-label=\"Folder\" />\
-             <input class=\"foot-field\" type=\"text\" name=\"tags\" value=\"{tags_attr}\" \
-                placeholder=\"Tags: billing, refund\" aria-label=\"Tags\" />\
              <span class=\"editor-meta\">updated {when}</span>\
            </div>\
          </form>",
@@ -3417,22 +3436,32 @@ fn render_library_editor_create(selected: &str) -> String {
              <div class=\"compose-head\">\
                <input class=\"compose-title\" type=\"text\" name=\"title\" \
                   placeholder=\"Title\" required aria-label=\"Title\" />\
-               <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
              </div>\
              <div class=\"editor-body-grid\">\
-               <textarea id=\"library-editor-body\" name=\"body\" required \
-                  placeholder=\"Snippet text...\"></textarea>\
-               <div class=\"editor-preview-wrap\">\
-                 <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+               <div class=\"compose-col\">\
+                 <div class=\"col-head\">\
+                   <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+                 </div>\
+                 <textarea id=\"library-editor-body\" name=\"body\" required \
+                    placeholder=\"Snippet text...\"></textarea>\
+               </div>\
+               <div class=\"compose-col compose-col-preview\">\
+                 <div class=\"col-head\">\
+                   <span class=\"foot-input\"><span class=\"foot-ic\" aria-hidden=\"true\">📁</span>\
+                     <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
+                        placeholder=\"Folder\" value=\"{prefill}\" aria-label=\"Folder\" /></span>\
+                   <span class=\"foot-input\"><span class=\"foot-ic\" aria-hidden=\"true\">🏷️</span>\
+                     <input class=\"foot-field\" type=\"text\" name=\"tags\" \
+                        placeholder=\"Tags\" aria-label=\"Tags\" /></span>\
+                 </div>\
+                 <div class=\"editor-preview-wrap\">\
+                   <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
+                 </div>\
                </div>\
              </div>\
            </div>\
            <div class=\"actions\">\
              <button class=\"primary\" type=\"submit\">Add to library</button>\
-             <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
-                placeholder=\"Folder, e.g. Replies/Billing\" value=\"{prefill}\" aria-label=\"Folder\" />\
-             <input class=\"foot-field\" type=\"text\" name=\"tags\" \
-                placeholder=\"Tags: billing, refund\" aria-label=\"Tags\" />\
            </div>\
          </form>",
         prefill = escape_html(&prefilled_folder),
@@ -6399,9 +6428,15 @@ pub async fn library_insights_page(
         body.push_str("</tbody></table></div>");
     }
 
-    render_page(&state, &session, "Library insights", NavTab::Library, &body)
-        .await
-        .into_response()
+    render_page(
+        &state,
+        &session,
+        "Library insights",
+        NavTab::Insights,
+        &body,
+    )
+    .await
+    .into_response()
 }
 
 /// A headline tile for the insights page. Standalone (not the stats
@@ -6489,7 +6524,7 @@ pub async fn library_snippet_tickets_page(
         body.push_str("</tbody></table></div>");
     }
 
-    render_page(&state, &session, "Snippet tickets", NavTab::Library, &body)
+    render_page(&state, &session, "Snippet tickets", NavTab::Insights, &body)
         .await
         .into_response()
 }

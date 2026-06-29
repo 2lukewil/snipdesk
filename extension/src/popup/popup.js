@@ -119,14 +119,25 @@ function renderSavings(all, settings) {
 // Fetch the server's configured sign-in methods and render: password
 // fields when enabled, a button per OIDC provider. Called when the
 // server URL is set.
+//
+// A sequence token guards against overlapping calls (the input-debounce
+// and the blur handler can both fire close together): each call clears
+// and renders only if it's still the latest, so a slower response can't
+// append a second set of provider buttons after a newer one already did.
+let methodsSeq = 0;
 async function loadMethods(serverUrl) {
   const providers = $("providers");
-  providers.replaceChildren();
+  const mySeq = ++methodsSeq;
   if (!serverUrl) {
+    providers.replaceChildren();
     hideAuthOptions();
     return;
   }
   const res = await send(MSG.AUTH_METHODS, { serverUrl });
+  // A newer call started while we were waiting: it owns the UI now.
+  if (mySeq !== methodsSeq) return;
+  // Clear here, just before rendering, so only the winning call repaints.
+  providers.replaceChildren();
   if (!res.ok) {
     // Unreachable / not a SnipDesk server: show no sign-in options.
     hideAuthOptions();

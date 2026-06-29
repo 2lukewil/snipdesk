@@ -53,7 +53,12 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   background: var(--grad-accent);
   color: var(--accent-ink);
   font-weight: 800; font-size: 13px; line-height: 1;
+  /* It's a button (cycles the accent theme): strip the default chrome. */
+  padding: 0; border: 0; cursor: pointer;
+  transition: transform 0.1s ease;
 }
+.nav-glyph:hover { transform: scale(1.08); }
+.nav-glyph:active { transform: scale(0.96); }
 .nav-links { display: flex; gap: 14px; }
 .nav-links a {
   padding: 4px 10px;
@@ -532,49 +537,39 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   /* Tree fixed; list caps at 520 but yields space; editor takes the
      rest of the now full-width row. */
   grid-template-columns: 260px minmax(360px, 520px) minmax(360px, 1fr);
-  gap: 0;
+  /* A gutter + gaps let the page background show around the panes, so the
+     library reads like the rest of the site (cards on the page bg) rather
+     than edge-to-edge panels. */
+  gap: 12px;
+  padding: 14px;
+  box-sizing: border-box;
   /* Fill the viewport below the nav (set via --nav-h, measured at
      runtime by LIBRARY_PAGE_JS so a wrapped/banner nav can't clip it). */
   height: calc(100vh - var(--nav-h, 47px));
 }
 .library-three-pane > * { min-width: 0; min-height: 0; }
-/* Tree + list + editor read as one connected, edge-to-edge unit:
-   shared dividers, no gap, no rounding (the panes meet the screen). */
+/* Each pane is a rounded, bordered card floating on the page background. */
+.library-sidebar.tree-pane,
+.list-pane,
+.library-editor.editor {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
 .library-sidebar.tree-pane {
   position: static;
   top: auto;
   max-height: none;
   padding: 0;
-  border-radius: 0;
-  border-left-width: 0;
-  border-right-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  /* Raised panel, like the editor. The list sits recessed between them
-     so the eye lands on the active column. */
-  background: var(--bg-elev);
 }
 .list-pane {
-  /* Same surface as the tree + editor so the three panes read as one
-     unit. Only left/right borders, which are the column dividers - no
-     top border (that doubled with the nav's bottom edge and dropped the
-     pane 1px below the flush folder pane). */
-  background: var(--bg-elev);
-  border: 0;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-  border-radius: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 .library-editor.editor {
-  background: var(--bg-elev);
-  /* No borders: the list pane's right edge is the list/editor divider,
-     and dropping the top border keeps the editor flush under the nav. */
-  border: 0;
-  border-radius: 0;
   padding: 16px;
   overflow-y: auto;
 }
@@ -658,6 +653,9 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 
 .editor-form .actions {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0;
+  /* Keep the footer (esp. the right-aligned updated-at note) clear of the
+     floating export/import dock in the bottom-right corner. */
+  padding-right: 56px;
 }
 .editor-form .actions button { white-space: nowrap; }
 /* Folder + tags sit in the preview column's header band. Each input
@@ -851,6 +849,41 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   border-color: var(--accent-line);
   color: var(--accent);
 }
+/* The text-size cycle button: two A's of different size as its glyph. */
+.format-toolbar .fmt-size {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 1px;
+  font-weight: 600;
+}
+
+/* Floating bottom-right quick actions (export / import), matching the
+   extension manager's dock. */
+.fab-dock {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 40;
+}
+.fab {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.fab:hover { color: var(--accent); border-color: var(--accent-line); }
+.fab svg { flex: none; }
 
 /* --- User detail page --- */
 

@@ -27,7 +27,7 @@
 </head>
 <body>
   <nav class="nav">
-    <span class="nav-brand"><span class="nav-glyph" aria-hidden="true">{{BRAND_INITIAL}}</span>{{BRAND_NAME}} admin</span>
+    <span class="nav-brand"><button type="button" class="nav-glyph" id="brand-theme" title="Cycle accent theme" aria-label="Cycle accent theme">{{BRAND_INITIAL}}</button>{{BRAND_NAME}} admin</span>
     <span class="nav-links">
       <a href="/dashboard/users" class="{{USERS_ACTIVE}}">Users</a>
       <a href="/dashboard/library" class="{{LIBRARY_ACTIVE}}">Library</a>
@@ -37,21 +37,6 @@
       <a href="/dashboard/audit" class="{{AUDIT_ACTIVE}}">Audit</a>
     </span>
     <span class="nav-right">
-      <label class="nav-appearance" title="Accent theme">
-        <span class="sr-only">Accent theme</span>
-        <select id="grad-select" aria-label="Accent theme">
-          <option value="aurora">Aurora</option>
-          <option value="nebula">Nebula</option>
-        </select>
-      </label>
-      <label class="nav-appearance" title="Editor text size">
-        <span class="sr-only">Editor text size</span>
-        <select id="editor-size-select" aria-label="Editor text size">
-          <option value="sm">Text: S</option>
-          <option value="md">Text: M</option>
-          <option value="lg">Text: L</option>
-        </select>
-      </label>
       <span class="nav-user">{{NAV_USER}} <span class="pill role-{{NAV_ROLE}}">{{NAV_ROLE}}</span></span>
       <form method="post" action="/dashboard/logout" class="nav-form">
         <button type="submit" class="ghost">Sign out</button>
@@ -59,27 +44,19 @@
     </span>
   </nav>
   <script>
+    // Clicking the brand glyph cycles the accent theme (Aurora <-> Nebula),
+    // persisted per browser.
     (function () {
-      var sel = document.getElementById("grad-select");
-      if (!sel) return;
-      sel.value = document.documentElement.dataset.grad === "nebula" ? "nebula" : "aurora";
-      sel.addEventListener("change", function () {
-        var v = sel.value === "nebula" ? "nebula" : "aurora";
-        if (v === "nebula") document.documentElement.dataset.grad = "nebula";
-        else document.documentElement.removeAttribute("data-grad");
-        try { localStorage.setItem("snipdesk-dashboard-grad", v); } catch (e) {}
+      var glyph = document.getElementById("brand-theme");
+      if (!glyph) return;
+      glyph.addEventListener("click", function () {
+        var nebula = document.documentElement.dataset.grad === "nebula";
+        if (nebula) document.documentElement.removeAttribute("data-grad");
+        else document.documentElement.dataset.grad = "nebula";
+        try {
+          localStorage.setItem("snipdesk-dashboard-grad", nebula ? "aurora" : "nebula");
+        } catch (e) {}
       });
-
-      var size = document.getElementById("editor-size-select");
-      if (size) {
-        size.value = document.documentElement.dataset.editorSize || "md";
-        size.addEventListener("change", function () {
-          var v = size.value;
-          if (v === "sm" || v === "lg") document.documentElement.dataset.editorSize = v;
-          else document.documentElement.removeAttribute("data-editor-size");
-          try { localStorage.setItem("snipdesk-dashboard-editor-size", v); } catch (e) {}
-        });
-      }
     })();
   </script>
   {{UPDATE_BANNER}}

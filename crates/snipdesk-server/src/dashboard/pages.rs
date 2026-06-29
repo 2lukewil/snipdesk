@@ -2188,10 +2188,6 @@ pub async fn library_page(
            <button class=\"primary\" id=\"library-new-btn\" type=\"button\" title=\"New snippet\" \
                   hx-get=\"/dashboard/library/new\" hx-target=\"#library-editor\" \
                   hx-swap=\"innerHTML\" hx-include=\"#library-folder-input\">+</button>\
-           <button class=\"btn\" id=\"library-export-btn\" type=\"button\" title=\"Export\">Export</button>\
-           <button class=\"btn\" id=\"library-import-btn\" type=\"button\" title=\"Import\">Import</button>\
-           <input type=\"file\" id=\"library-import-file\" accept=\".json,.csv\" hidden />\
-           <a class=\"btn\" href=\"/dashboard/library/insights\" title=\"Usage insights\">Insights</a>\
          </div>",
         q = escape_html(q_value),
     ));
@@ -2226,6 +2222,28 @@ pub async fn library_page(
     }
     body.push_str("</div>");
     body.push_str("</div>");
+    // Bottom-right quick actions (export / import), mirroring the
+    // extension manager's floating dock. Same button + input ids as the
+    // old toolbar so LIBRARY_PAGE_JS wires them unchanged.
+    body.push_str(
+        "<div class=\"fab-dock\">\
+           <button class=\"fab\" id=\"library-export-btn\" type=\"button\" \
+              title=\"Export the library to a file\" aria-label=\"Export\">\
+             <svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" \
+                stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\
+                <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/>\
+                <polyline points=\"7 9 12 4 17 9\"/><line x1=\"12\" y1=\"4\" x2=\"12\" y2=\"16\"/></svg>\
+           </button>\
+           <button class=\"fab\" id=\"library-import-btn\" type=\"button\" \
+              title=\"Import snippets from a file\" aria-label=\"Import\">\
+             <svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" fill=\"none\" stroke=\"currentColor\" \
+                stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\
+                <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/>\
+                <polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/></svg>\
+           </button>\
+           <input type=\"file\" id=\"library-import-file\" accept=\".json,.csv\" hidden />\
+         </div>",
+    );
     // Selection-tree modal shell, outside the grid (position:fixed).
     // Export and import fragments load into #library-modal-body;
     // behaviour is delegated from LIBRARY_PAGE_JS so inserted markup
@@ -3284,7 +3302,8 @@ fn library_format_toolbar() -> &'static str {
     "<button type=\"button\" class=\"fmt-btn\" data-prefix=\"**\" data-suffix=\"**\" title=\"Bold\"><b>B</b></button>\
      <button type=\"button\" class=\"fmt-btn\" data-prefix=\"*\" data-suffix=\"*\" title=\"Italic\"><i>I</i></button>\
      <button type=\"button\" class=\"fmt-btn\" data-prefix=\"`\" data-suffix=\"`\" title=\"Inline code\"><code>{}</code></button>\
-     <button type=\"button\" class=\"fmt-btn\" data-prefix=\"[\" data-suffix=\"](https://)\" title=\"Link\">link</button>"
+     <button type=\"button\" class=\"fmt-btn\" data-prefix=\"[\" data-suffix=\"](https://)\" title=\"Link\">link</button>\
+     <button type=\"button\" class=\"fmt-btn fmt-size\" title=\"Cycle editor text size\" aria-label=\"Cycle editor text size\"><span style=\"font-size:11px\">A</span><span style=\"font-size:15px\">A</span></button>"
 }
 
 /// A compact selectable list row, mirroring the extension manager's
@@ -3983,10 +4002,25 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     };
     reader.readAsText(f);
   });
+  // ---- Editor text-size cycle button (sits in the format toolbar) ----
+  // Cycles the shared --editor-font-size token (small/medium/large) that
+  // both the textarea and preview read from, persisted per browser.
+  document.body.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".fmt-size");
+    if (!btn) return;
+    e.preventDefault();
+    var order = ["sm", "md", "lg"];
+    var cur = document.documentElement.dataset.editorSize || "md";
+    var next = order[(order.indexOf(cur) + 1) % order.length];
+    if (next === "md") document.documentElement.removeAttribute("data-editor-size");
+    else document.documentElement.dataset.editorSize = next;
+    try { localStorage.setItem("snipdesk-dashboard-editor-size", next); } catch (_e) {}
+  });
+
   // ---- Format toolbar: wraps the textarea selection with markdown markers ----
   document.body.addEventListener("click", function (e) {
     var btn = e.target.closest && e.target.closest(".fmt-btn");
-    if (!btn) return;
+    if (!btn || btn.classList.contains("fmt-size")) return;
     e.preventDefault();
     var toolbar = btn.closest(".format-toolbar");
     if (!toolbar) return;

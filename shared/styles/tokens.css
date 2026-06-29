@@ -1,0 +1,104 @@
+/* SnipDesk shared design tokens. Single source of truth for the
+   palette, consumed by the admin dashboard (served by the server via
+   include_str!), the browser extension, and the desktop app (both
+   import it through their bundlers). Edit colors here only.
+
+   Light is the default (:root). Dark applies two ways so every surface
+   is covered: prefers-color-scheme for surfaces that follow the OS (the
+   dashboard), and [data-theme="dark"] for surfaces with an explicit
+   theme switch (the extension + desktop). [data-theme="light"] forces
+   light back on regardless of the OS. */
+
+:root {
+  --bg: #f5f6f8;
+  --bg-elev: #ffffff;
+  --bg-3: #eef0f3;
+  --bg-hover: #e2e6eb;
+  --fg: #1a1c20;
+  --fg-dim: #5a6270;
+  --fg-faint: #8b929c;
+  --border: #d1d5db;
+  --border-soft: #e4e7ec;
+  --accent: #2c6fd8;
+  --accent-fg: #ffffff;
+  --accent-weak: color-mix(in srgb, var(--accent) 12%, transparent);
+  --danger: #c03535;
+  --danger-bg: #f7e3e3;
+  --ok: #2f9e6e;
+  --warn-bg: #fdf0d5;
+  --warn-fg: #8a5a12;
+  --pill-admin-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  --pill-admin-fg: var(--accent);
+  --pill-member-bg: color-mix(in srgb, var(--fg-dim) 16%, transparent);
+  --pill-member-fg: var(--fg);
+  --scroll-thumb: #00000026;
+  --scroll-thumb-hover: #00000045;
+  --radius: 8px;
+}
+
+/* Dark values, shared by both activation paths below. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a;
+    --bg-elev: #1d2024;
+    --bg-3: #23272c;
+    --bg-hover: #2a2f36;
+    --fg: #e8eaed;
+    --fg-dim: #9aa1ab;
+    --fg-faint: #6b727c;
+    --border: #31363d;
+    --border-soft: #272c32;
+    --accent: #4c9aff;
+    --accent-fg: #06203f;
+    --danger: #e06b6b;
+    --danger-bg: #2c1d1f;
+    --ok: #5fc27e;
+    --warn-bg: #2c2614;
+    --warn-fg: #ffcf5c;
+    --scroll-thumb: #ffffff22;
+    --scroll-thumb-hover: #ffffff3d;
+  }
+  /* An explicit light choice wins over the OS preference. */
+  :root[data-theme="light"] {
+    --bg: #f5f6f8;
+    --bg-elev: #ffffff;
+    --bg-3: #eef0f3;
+    --bg-hover: #e2e6eb;
+    --fg: #1a1c20;
+    --fg-dim: #5a6270;
+    --fg-faint: #8b929c;
+    --border: #d1d5db;
+    --border-soft: #e4e7ec;
+    --accent: #2c6fd8;
+    --accent-fg: #ffffff;
+    --danger: #c03535;
+    --danger-bg: #f7e3e3;
+    --ok: #2f9e6e;
+    --warn-bg: #fdf0d5;
+    --warn-fg: #8a5a12;
+    --scroll-thumb: #00000026;
+    --scroll-thumb-hover: #00000045;
+  }
+}
+
+/* Explicit dark choice, regardless of OS preference. */
+:root[data-theme="dark"] {
+  --bg: #15171a;
+  --bg-elev: #1d2024;
+  --bg-3: #23272c;
+  --bg-hover: #2a2f36;
+  --fg: #e8eaed;
+  --fg-dim: #9aa1ab;
+  --fg-faint: #6b727c;
+  --border: #31363d;
+  --border-soft: #272c32;
+  --accent: #4c9aff;
+  --accent-fg: #06203f;
+  --danger: #e06b6b;
+  --danger-bg: #2c1d1f;
+  --ok: #5fc27e;
+  --warn-bg: #2c2614;
+  --warn-fg: #ffcf5c;
+  --scroll-thumb: #ffffff22;
+  --scroll-thumb-hover: #ffffff3d;
+}

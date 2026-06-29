@@ -1,53 +1,8 @@
-/* SnipDesk admin dashboard - minimal, light/dark-respecting,
-   monospaced for table data so columns line up at a glance. */
-
-/* Palette shared with the desktop client and browser extension: the
-   canonical SnipDesk look. --bg is the page, --bg-elev cards/nav,
-   --bg-3 recessed surfaces (inputs, thead), --bg-hover row hovers. */
-:root {
-  --bg: #f5f6f8;
-  --bg-elev: #ffffff;
-  --bg-3: #eef0f3;
-  --bg-hover: #e2e6eb;
-  --fg: #1a1c20;
-  --fg-dim: #5a6270;
-  --border: #d1d5db;
-  --accent: #2c6fd8;
-  --accent-fg: #ffffff;
-  --danger: #c03535;
-  --danger-bg: #f7e3e3;
-  --ok: #2f9e6e;
-  --warn-bg: #fdf0d5;
-  --warn-fg: #8a5a12;
-  --pill-admin-bg: color-mix(in srgb, var(--accent) 16%, transparent);
-  --pill-admin-fg: var(--accent);
-  --pill-member-bg: color-mix(in srgb, var(--fg-dim) 16%, transparent);
-  --pill-member-fg: var(--fg);
-  --radius: 8px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1c20;
-    --bg-elev: #222529;
-    --bg-3: #2a2e34;
-    --bg-hover: #2f343b;
-    --fg: #e7e9ec;
-    --fg-dim: #9aa1aa;
-    --border: #3a3f46;
-    --accent: #4c9aff;
-    --accent-fg: #ffffff;
-    --danger: #e06b6b;
-    --danger-bg: #2c1d1f;
-    --ok: #5fc27e;
-    --warn-bg: #2c2614;
-    --warn-fg: #ffcf5c;
-    --pill-admin-bg: color-mix(in srgb, var(--accent) 22%, transparent);
-    --pill-admin-fg: var(--accent);
-    --pill-member-bg: color-mix(in srgb, var(--fg-dim) 22%, transparent);
-    --pill-member-fg: var(--fg);
-  }
-}
+/* SnipDesk admin dashboard - layout + components. The palette (light +
+   dark) and the scrollbar treatment now live in the shared token layer
+   (shared/styles/tokens.css + scrollbars.css), linked ahead of this
+   file and consumed by the extension and desktop too. Use the --bg /
+   --fg / --accent / etc. variables defined there. */
 
 * { box-sizing: border-box; }
 

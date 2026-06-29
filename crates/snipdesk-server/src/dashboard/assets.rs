@@ -18,10 +18,15 @@ const HTMX_JS: &str = include_str!("static/htmx.min.js");
 /// as htmx: replace the file with a pinned release.
 const IDIOMORPH_JS: &str = include_str!("static/idiomorph-ext.min.js");
 
-/// Inline dashboard CSS. Small enough that a separate file would be
-/// over-engineering; bumping it into a real stylesheet is a refactor
-/// the day we add a third theme or designer feedback. For now the
-/// goal is "looks like a serious tool, not a Bootstrap reskin."
+/// Shared design tokens + scrollbar treatment, the single source of
+/// truth the extension and desktop also consume. Pulled from the
+/// repo-root `shared/styles/` tree at compile time, so the dashboard
+/// stays one self-contained binary while the source lives in one place.
+const TOKENS_CSS: &str = include_str!("../../../../shared/styles/tokens.css");
+const SCROLLBARS_CSS: &str = include_str!("../../../../shared/styles/scrollbars.css");
+
+/// Dashboard-specific CSS. Layout and components live here; the palette
+/// now comes from the shared tokens above (linked first in the layout).
 const DASHBOARD_CSS: &str = include_str!("static/dashboard.css");
 
 pub async fn htmx() -> impl IntoResponse {
@@ -41,6 +46,20 @@ pub async fn idiomorph() -> impl IntoResponse {
             "application/javascript; charset=utf-8",
         )],
         IDIOMORPH_JS,
+    )
+}
+
+pub async fn tokens_css() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        TOKENS_CSS,
+    )
+}
+
+pub async fn scrollbars_css() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        SCROLLBARS_CSS,
     )
 }
 

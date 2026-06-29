@@ -167,5 +167,7 @@ pub fn routes() -> Router<AppState> {
         // bytes are baked into the binary by include_str!).
         .route("/static/htmx.min.js", get(assets::htmx))
         .route("/static/idiomorph-ext.min.js", get(assets::idiomorph))
+        .route("/static/tokens.css", get(assets::tokens_css))
+        .route("/static/scrollbars.css", get(assets::scrollbars_css))
         .route("/static/dashboard.css", get(assets::css))
 }

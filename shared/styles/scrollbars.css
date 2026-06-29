@@ -1,0 +1,38 @@
+/* Sleek scrollbars, shared across all SnipDesk surfaces. Thin,
+   transparent track, translucent thumb that firms up on hover, with no
+   reserved gutter so content keeps the full width and the thumb floats
+   at the edge. Depends on --scroll-thumb / --scroll-thumb-hover from
+   tokens.css. Firefox uses scrollbar-width/color; Chromium and the
+   Tauri WebView use ::-webkit-scrollbar.
+
+   True OS-overlay scrollbars (zero width, painted over content) are not
+   reliably controllable in CSS on Windows Chromium, so this is the
+   robust cross-platform approximation: a thin floating thumb. */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 100px;
+  /* A transparent border + padding-box clip insets the thumb so it
+     reads as a thin floating bar instead of a chunky gutter fill. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

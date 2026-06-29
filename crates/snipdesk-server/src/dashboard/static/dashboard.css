@@ -142,40 +142,38 @@ table.data tbody tr:hover td { background: var(--bg-hover); }
 table.data tbody tr.disabled td { opacity: 0.55; }
 table.data .col-actions { text-align: right; white-space: nowrap; }
 
-/* --- Users page (full-height) --- */
-main:has(.users-page) {
-  max-width: none;
-  padding: 0;
-  height: calc(100vh - var(--nav-h, 47px));
-  overflow: hidden;
-}
+/* --- Users page --- */
+/* Not forced full-height: with a handful of users a viewport-filling
+   table just leaves dead space, so the page sizes to content and the
+   table caps its own height (scrolling internally) only once the list
+   gets long. */
 .users-page {
-  height: 100%;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  padding: 16px 22px;
   gap: 12px;
 }
-.users-toolbar { display: flex; align-items: center; gap: 12px; flex: none; flex-wrap: wrap; }
+.users-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .users-search {
   flex: 0 1 260px;
   font: inherit;
+  height: 34px;
   background: var(--bg-elev);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 7px 11px;
+  padding: 0 11px;
 }
 .users-search:focus { outline: none; border-color: var(--accent-line); }
+/* Match the segmented filter's height to the search box so the toolbar
+   row reads as one tidy band rather than three mismatched controls. */
+.users-seg { height: 34px; }
+.users-seg button { padding: 0 14px; font-size: 12px; }
+.users-seg button[aria-pressed="true"] { font-weight: 500; }
 .users-count { color: var(--fg-dim); font-size: 12px; }
 .users-count b { color: var(--fg); font-weight: 600; }
 .users-spacer { flex: 1; }
-/* The table fills the remaining height and scrolls inside its own
-   bordered surface; the header stays put. */
 .users-tablewrap {
-  flex: 1;
-  min-height: 0;
+  max-height: calc(100vh - 200px);
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1231,11 +1229,8 @@ main:has(.audit-page) {
 .audit-tablewrap .audit-table { border: 0; border-radius: 0; }
 .audit-tablewrap .audit-table thead th { position: sticky; top: 0; z-index: 1; }
 @media (max-width: 860px) {
-  main:has(.users-page),
   main:has(.audit-page) { height: auto; overflow: visible; }
-  .users-page,
   .audit-page { height: auto; }
-  .users-tablewrap,
   .audit-tablewrap { max-height: 62vh; }
 }
 .audit-table th,

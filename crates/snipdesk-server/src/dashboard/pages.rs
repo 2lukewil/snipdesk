@@ -745,19 +745,11 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         .into_response()
 }
 
-/// Inline JS for the users page: full-height fit, client-side filtering
-/// (search + role/status segment) re-applied after the 5s poll swap,
-/// and the add-user modal open/close.
+/// Inline JS for the users page: client-side filtering (search +
+/// role/status segment) re-applied after the 5s poll swap, and the
+/// add-user modal open/close.
 const USERS_PAGE_JS: &str = r##"<script>
 (function () {
-  function fit() {
-    var p = document.querySelector(".users-page");
-    if (!p) return;
-    document.documentElement.style.setProperty("--nav-h", (p.getBoundingClientRect().top + window.scrollY) + "px");
-  }
-  fit();
-  window.addEventListener("resize", fit);
-
   var search = document.getElementById("users-filter");
   var seg = document.querySelector(".users-seg");
   function mode() {

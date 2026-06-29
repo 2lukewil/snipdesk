@@ -129,6 +129,15 @@ table.data .col-actions { text-align: right; white-space: nowrap; }
   padding: 2px 7px;
   border-radius: 99px;
 }
+/* Per-user onboarding progress pips in the Users table. */
+.ob-cell { white-space: nowrap; }
+.ob-pips { display: inline-flex; gap: 4px; align-items: center; }
+.ob-pip {
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1px solid var(--border); background: transparent;
+}
+.ob-pip.on { background: var(--accent); border-color: transparent; }
+
 .pill.role-admin { background: var(--pill-admin-bg); color: var(--pill-admin-fg); }
 .pill.role-member { background: var(--pill-member-bg); color: var(--pill-member-fg); }
 .pill.disabled { background: var(--warn-bg); color: var(--warn-fg); }

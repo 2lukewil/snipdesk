@@ -679,6 +679,7 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         }
     };
     let my_id = admin.user_id().to_string();
+    let ob = load_onboarding_signals(&state).await;
     let mut body = String::new();
     body.push_str("<h1>Users</h1>");
     body.push_str(&new_user_form());
@@ -690,14 +691,15 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     // htmx re-binds attributes after every swap.
     body.push_str(
         "<table class=\"data\"><thead><tr>\
-         <th>Name</th><th>Email</th><th>Role</th><th>Snippets</th><th>Last seen</th><th>Status</th><th class=\"col-actions\"></th>\
+         <th>Name</th><th>Email</th><th>Role</th><th>Snippets</th>\
+         <th>Onboarding</th><th>Last seen</th><th>Status</th><th class=\"col-actions\"></th>\
          </tr></thead><tbody id=\"users-tbody\" \
             hx-get=\"/dashboard/users/rows\" \
             hx-trigger=\"every 5s\" \
             hx-swap=\"innerHTML\">",
     );
     for u in &rows {
-        body.push_str(&render_user_row(u, &my_id));
+        body.push_str(&render_user_row(u, &my_id, &onboarding_cell(&ob, &u.id)));
     }
     body.push_str("</tbody></table>");
 
@@ -715,15 +717,16 @@ pub async fn users_rows(State(state): State<AppState>, admin: DashboardAdmin) ->
         Err(_) => {
             return (
                 [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                "<tr><td colspan=\"7\" class=\"banner error\">Failed to load users.</td></tr>",
+                "<tr><td colspan=\"8\" class=\"banner error\">Failed to load users.</td></tr>",
             )
                 .into_response();
         }
     };
     let my_id = admin.user_id().to_string();
+    let ob = load_onboarding_signals(&state).await;
     let mut body = String::new();
     for u in &rows {
-        body.push_str(&render_user_row(u, &my_id));
+        body.push_str(&render_user_row(u, &my_id, &onboarding_cell(&ob, &u.id)));
     }
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], body).into_response()
 }
@@ -1688,6 +1691,53 @@ async fn load_users(state: &AppState) -> Result<Vec<crate::handlers::admin::Admi
         .collect())
 }
 
+/// Per-user onboarding signals for the Users-table pips: saved a
+/// personal snippet, tried the shortcut, pasted. "Signed up" is implicit
+/// (a row exists). One query for the whole table.
+async fn load_onboarding_signals(
+    state: &AppState,
+) -> std::collections::HashMap<String, (bool, bool, bool)> {
+    let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT u.id, \
+            EXISTS(SELECT 1 FROM personal_snippets ps WHERE ps.owner_id = u.id AND ps.is_deleted = 0), \
+            EXISTS(SELECT 1 FROM onboarding_events oe WHERE oe.user_id = u.id AND oe.event = 'shortcut_tried'), \
+            (u.snippets_pasted > 0) \
+         FROM users u",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    rows.into_iter()
+        .map(|(id, s, t, p)| (id, (s != 0, t != 0, p != 0)))
+        .collect()
+}
+
+/// Same signals for a single user (after a row mutation re-renders it).
+async fn onboarding_signal_one(state: &AppState, id: &str) -> (bool, bool, bool) {
+    let row: Option<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT \
+            EXISTS(SELECT 1 FROM personal_snippets ps WHERE ps.owner_id = ?1 AND ps.is_deleted = 0), \
+            EXISTS(SELECT 1 FROM onboarding_events oe WHERE oe.user_id = ?1 AND oe.event = 'shortcut_tried'), \
+            COALESCE((SELECT snippets_pasted FROM users WHERE id = ?1), 0) > 0",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    row.map(|(s, t, p)| (s != 0, t != 0, p != 0))
+        .unwrap_or((false, false, false))
+}
+
+/// Render the pips cell for `id` from a preloaded signal map.
+fn onboarding_cell(
+    map: &std::collections::HashMap<String, (bool, bool, bool)>,
+    id: &str,
+) -> String {
+    let (s, t, p) = map.get(id).copied().unwrap_or((false, false, false));
+    onboarding_pips(s, t, p)
+}
+
 #[derive(sqlx::FromRow)]
 struct UserRow {
     id: String,
@@ -1703,7 +1753,34 @@ struct UserRow {
 /// Render one user row. Pure function so it can be returned alone (for
 /// htmx out-of-band swaps) or composed into the full table. `me_id`
 /// suppresses self-targeted action buttons.
-fn render_user_row(u: &crate::handlers::admin::AdminUserView, me_id: &str) -> String {
+/// Render the four onboarding pips (signed up / saved a snippet / tried
+/// the shortcut / pasted), filled for each milestone the user reached.
+/// "Signed up" is always reached. Compact and per-step tooltipped so the
+/// Users table shows where everyone is at a glance.
+fn onboarding_pips(saved: bool, tried: bool, pasted: bool) -> String {
+    let steps = [
+        ("Signed up", true),
+        ("Saved a snippet", saved),
+        ("Tried the shortcut", tried),
+        ("Pasted a snippet", pasted),
+    ];
+    let reached = steps.iter().filter(|(_, ok)| *ok).count();
+    let mut pips = String::new();
+    for (label, ok) in steps {
+        pips.push_str(&format!(
+            "<span class=\"ob-pip{}\" title=\"{}\"></span>",
+            if ok { " on" } else { "" },
+            label,
+        ));
+    }
+    format!("<span class=\"ob-pips\" aria-label=\"{reached} of 4 onboarding steps\">{pips}</span>")
+}
+
+fn render_user_row(
+    u: &crate::handlers::admin::AdminUserView,
+    me_id: &str,
+    onboarding: &str,
+) -> String {
     let last_seen = match u.last_seen_at {
         None => "never".to_string(),
         Some(ts) => format_relative(ts),
@@ -1765,6 +1842,7 @@ fn render_user_row(u: &crate::handlers::admin::AdminUserView, me_id: &str) -> St
          <td class=\"mono muted\">{email}</td>\
          <td>{role_pill}</td>\
          <td>{count}</td>\
+         <td class=\"ob-cell\">{onboarding}</td>\
          <td class=\"muted\">{last_seen}</td>\
          <td>{status_pill}</td>\
          <td class=\"col-actions\">{actions}</td>\
@@ -1902,7 +1980,7 @@ pub async fn user_create_row(
     (
         StatusCode::CREATED,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        render_user_row(&view, "irrelevant"),
+        render_user_row(&view, "irrelevant", &onboarding_pips(false, false, false)),
     )
         .into_response()
 }
@@ -1963,11 +2041,14 @@ pub async fn user_update_row(
     .await;
     let me_id = admin.user_id().to_string();
     match res {
-        Ok(Json(view)) => (
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            render_user_row(&view, &me_id),
-        )
-            .into_response(),
+        Ok(Json(view)) => {
+            let sig = onboarding_signal_one(&state, &view.id).await;
+            (
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                render_user_row(&view, &me_id, &onboarding_pips(sig.0, sig.1, sig.2)),
+            )
+                .into_response()
+        }
         Err(err) => (
             err.status,
             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

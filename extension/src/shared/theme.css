@@ -9,6 +9,7 @@
    The overlay can't @import this (shadow DOM doesn't inherit :root
    custom properties), so it mirrors these values on :host. */
 @import "../../../shared/styles/tokens.css";
+@import "../../../shared/styles/scrollbars.css";
 
 :root {
   --bg-2: var(--bg-elev);

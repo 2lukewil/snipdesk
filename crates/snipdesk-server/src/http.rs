@@ -85,6 +85,11 @@ pub struct AppState {
     /// Bearer token for the Prometheus `/metrics` endpoint. `None`
     /// disables the endpoint (404). See `config::Config::metrics_token`.
     pub metrics_token: Option<String>,
+
+    /// When true, ticket-referenced paste events reported by clients are
+    /// stored; when false they're ignored. See
+    /// `config::Config::ticket_link_enabled`.
+    pub ticket_link_enabled: bool,
     /// Latest known server release vs. running version. Updated by
     /// the background poller in `crate::updater`; the dashboard
     /// renders a banner when `is_newer` flips true.

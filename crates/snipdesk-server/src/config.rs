@@ -90,6 +90,15 @@ pub struct Config {
     #[serde(default)]
     pub metrics_token: Option<String>,
 
+    /// Opt-in collection of ticket-referenced paste events (the
+    /// support-ticket link feature). Off by default: when false the
+    /// server ignores any ticket events a client reports, so nothing
+    /// ticket-related is stored. Turn on per deployment that wants to
+    /// correlate snippet usage with support tickets. Env override:
+    /// SNIPDESK_TICKET_LINK_ENABLED.
+    #[serde(default)]
+    pub ticket_link_enabled: bool,
+
     /// Origins allowed to make cross-origin JSON-API requests. Empty
     /// (default) means no CORS layer at all - same-origin only, which
     /// matches the v1 desktop-client + dashboard topology where both
@@ -364,6 +373,7 @@ impl Default for Config {
             secure_cookies: false,
             password_enabled: default_password_enabled(),
             metrics_token: None,
+            ticket_link_enabled: false,
             cors_allowed_origins: Vec::new(),
             stats: StatsConfig::default(),
             fx: None,
@@ -676,6 +686,16 @@ impl Config {
             } else {
                 Some(v.to_string())
             };
+        }
+        if let Some(v) = env_string("SNIPDESK_TICKET_LINK_ENABLED") {
+            match parse_env_bool(&v) {
+                Some(b) => self.ticket_link_enabled = b,
+                None => tracing::warn!(
+                    value = %v,
+                    "SNIPDESK_TICKET_LINK_ENABLED is not a boolean (true/false); keeping {}",
+                    self.ticket_link_enabled
+                ),
+            }
         }
         if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
             self.oidc.allowed_deep_link_schemes = list;

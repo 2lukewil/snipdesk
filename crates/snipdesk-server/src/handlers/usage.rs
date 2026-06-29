@@ -57,6 +57,11 @@ pub struct UsageReport {
     pub personal: Vec<SnippetDelta>,
     #[serde(default)]
     pub library: Vec<SnippetDelta>,
+    /// Ticket-referenced paste events (support-ticket link feature).
+    /// Ignored unless the deployment set `ticket_link_enabled`; clients
+    /// may always send them.
+    #[serde(default)]
+    pub tickets: Vec<TicketEvent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,6 +72,25 @@ pub struct SnippetDelta {
     /// delta window. Used to populate `last_used`.
     pub last_used: i64,
 }
+
+/// A single paste that happened while a support ticket was the active
+/// browser context. Carries only the opaque ticket reference, never
+/// any ticket text.
+#[derive(Debug, Deserialize)]
+pub struct TicketEvent {
+    /// Library or personal snippet that was pasted.
+    pub snippet_id: String,
+    /// Opaque ticket reference scraped from the support-tool URL.
+    pub ticket_ref: String,
+    /// Unix-seconds timestamp of the paste.
+    pub at: i64,
+}
+
+/// Caps for one report's ticket batch: bound the write volume from a
+/// single flush, and keep a reference from being an essay.
+const MAX_TICKET_EVENTS: usize = 2000;
+const MAX_TICKET_REF_LEN: usize = 128;
+const MAX_SNIPPET_ID_LEN: usize = 64;
 
 /// `POST /api/usage/report`. Auth-required; folds deltas into the
 /// per-user totals and per-snippet counters. Returns 204 on success.
@@ -160,6 +184,45 @@ pub async fn report(
         .execute(&mut *tx)
         .await
         .map_err(|e| ApiError::internal(format!("library usage: {e}")))?;
+    }
+
+    // Ticket-referenced events, only when the deployment opted in.
+    // When disabled we ignore them entirely - nothing ticket-related
+    // is validated or stored. snippet_id is recorded as reported (no
+    // ownership gate): the link is "this snippet was used on this
+    // ticket", independent of who owns the snippet.
+    if state.ticket_link_enabled && !body.tickets.is_empty() {
+        if body.tickets.len() > MAX_TICKET_EVENTS {
+            return Err(ApiError::bad_request(
+                "invalid_ticket_batch",
+                "too many ticket events in one report",
+            ));
+        }
+        for t in &body.tickets {
+            let ticket_ref = t.ticket_ref.trim();
+            if ticket_ref.is_empty()
+                || ticket_ref.len() > MAX_TICKET_REF_LEN
+                || t.snippet_id.is_empty()
+                || t.snippet_id.len() > MAX_SNIPPET_ID_LEN
+                || t.at < 0
+            {
+                return Err(ApiError::bad_request(
+                    "invalid_ticket_event",
+                    "ticket event missing or out of range",
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO ticket_usage (at, user_id, snippet_id, ticket_ref) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind(t.at)
+            .bind(user_id)
+            .bind(&t.snippet_id)
+            .bind(ticket_ref)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ApiError::internal(format!("ticket usage: {e}")))?;
+        }
     }
 
     tx.commit()

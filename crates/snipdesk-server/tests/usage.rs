@@ -22,6 +22,10 @@ use sqlx::Row;
 use tower::ServiceExt;
 
 async fn make_state() -> (axum::Router, sqlx::SqlitePool) {
+    make_state_cfg(false).await
+}
+
+async fn make_state_cfg(ticket_link_enabled: bool) -> (axum::Router, sqlx::SqlitePool) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -43,6 +47,7 @@ async fn make_state() -> (axum::Router, sqlx::SqlitePool) {
         cors_allowed_origins: Vec::new(),
         brand_name: "SnipDesk".to_string(),
         metrics_token: None,
+        ticket_link_enabled,
         update_cache: std::sync::Arc::new(snipdesk_server::updater::UpdateCache::default()),
     };
     (router(state), pool)
@@ -307,4 +312,66 @@ async fn report_requires_auth() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn ticket_events_stored_only_when_enabled() {
+    // Disabled deployment (the default): ticket events are ignored,
+    // nothing lands in ticket_usage.
+    let (app, pool) = make_state().await;
+    let (token, _) = signup(&app, "alice@example.com").await;
+    let s = post_json(
+        &app,
+        "/api/usage/report",
+        &token,
+        serde_json::json!({
+            "tickets": [{"snippet_id": "lib-1", "ticket_ref": "TID-42", "at": 1717000000}],
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ticket_usage")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "disabled deployment must not store ticket events");
+
+    // Enabled deployment: events are stored, keyed by ticket_ref.
+    let (app2, pool2) = make_state_cfg(true).await;
+    let (token2, _) = signup(&app2, "bob@example.com").await;
+    let s = post_json(
+        &app2,
+        "/api/usage/report",
+        &token2,
+        serde_json::json!({
+            "tickets": [
+                {"snippet_id": "lib-1", "ticket_ref": "TID-42", "at": 1717000000},
+                {"snippet_id": "lib-2", "ticket_ref": "TID-42", "at": 1717000100}
+            ],
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ticket_usage")
+        .fetch_one(&pool2)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+    let refs: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT ticket_ref) FROM ticket_usage")
+        .fetch_one(&pool2)
+        .await
+        .unwrap();
+    assert_eq!(refs, 1);
+
+    // Enabled but malformed (empty snippet_id) is rejected.
+    let s = post_json(
+        &app2,
+        "/api/usage/report",
+        &token2,
+        serde_json::json!({
+            "tickets": [{"snippet_id": "", "ticket_ref": "TID-9", "at": 1}],
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
 }

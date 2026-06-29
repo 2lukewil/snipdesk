@@ -157,5 +157,6 @@ pub fn routes() -> Router<AppState> {
         // raw bytes via plain handlers (no fs reads at runtime; the
         // bytes are baked into the binary by include_str!).
         .route("/static/htmx.min.js", get(assets::htmx))
+        .route("/static/idiomorph-ext.min.js", get(assets::idiomorph))
         .route("/static/dashboard.css", get(assets::css))
 }

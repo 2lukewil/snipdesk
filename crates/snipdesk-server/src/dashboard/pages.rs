@@ -2098,7 +2098,7 @@ pub async fn library_page(
               hx-get=\"/dashboard/library/cards\" \
               hx-trigger=\"every 5s [document.querySelector('.lib-edit-form') === null], libraryChanged from:body, refresh-now\" \
               hx-include=\"#library-folder-input,#library-search-input\" \
-              hx-swap=\"innerHTML\">",
+              hx-ext=\"morph\" hx-swap=\"morph:innerHTML\">",
     );
     let filtered = library_visible_rows(&rows, &selected, &q.q);
     body.push_str(&render_library_cards_inner(

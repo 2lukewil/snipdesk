@@ -11,6 +11,13 @@ use axum::response::IntoResponse;
 /// release can't break the dashboard mid-deploy.
 const HTMX_JS: &str = include_str!("static/htmx.min.js");
 
+/// Vendored idiomorph 0.7.4 (the htmx-extension build, which bundles
+/// Idiomorph and registers the `morph` extension). Lets list/sidebar
+/// refreshes patch the DOM in place instead of replacing it, so scroll
+/// position and the selected row survive the poll. Update the same way
+/// as htmx: replace the file with a pinned release.
+const IDIOMORPH_JS: &str = include_str!("static/idiomorph-ext.min.js");
+
 /// Inline dashboard CSS. Small enough that a separate file would be
 /// over-engineering; bumping it into a real stylesheet is a refactor
 /// the day we add a third theme or designer feedback. For now the
@@ -24,6 +31,16 @@ pub async fn htmx() -> impl IntoResponse {
             "application/javascript; charset=utf-8",
         )],
         HTMX_JS,
+    )
+}
+
+pub async fn idiomorph() -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        IDIOMORPH_JS,
     )
 }
 

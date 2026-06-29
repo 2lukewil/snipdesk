@@ -140,7 +140,13 @@ export async function clearSession() {
   // same user re-signing in resumes a delta sync and any edits made while
   // signed out still push up. ticket_link is server-provided config; drop
   // it so a stale pattern can't outlive the session (or a server switch).
-  await remove(["token", "user", "cache_library", "ticket_link"]);
+  await remove([
+    "token",
+    "user",
+    "cache_library",
+    "ticket_link",
+    "onboarding_shortcut_reported",
+  ]);
 }
 
 // Server-provided ticket-link config (from GET /api/client-config),

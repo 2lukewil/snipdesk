@@ -46,8 +46,28 @@ chrome.commands.onCommand.addListener((command) => {
     // Tell any open extension page (the onboarding) the shortcut fired.
     // Best-effort: no receiver when nothing's listening.
     chrome.runtime.sendMessage({ type: MSG.LAUNCHER_OPENED }).catch(() => {});
+    reportShortcutTried();
   }
 });
+
+// Report the "tried the shortcut" onboarding milestone once. The server
+// dedupes per user; the local flag just avoids a needless request on
+// every shortcut press, and is cleared on sign-out so a different user
+// on the same browser reports their own. Best-effort and silent.
+async function reportShortcutTried() {
+  try {
+    const seen = (await chrome.storage.local.get("onboarding_shortcut_reported"))
+      .onboarding_shortcut_reported;
+    if (seen) return;
+    const serverUrl = await store.getServerUrl();
+    const token = await store.getToken();
+    if (!serverUrl || !token) return; // signed out: nothing to report
+    await api.reportUsage(serverUrl, token, { onboarding: ["shortcut_tried"] });
+    await chrome.storage.local.set({ onboarding_shortcut_reported: true });
+  } catch (_e) {
+    // ignore; retried on the next shortcut press
+  }
+}
 
 function launcherOnActiveTab() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

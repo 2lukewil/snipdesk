@@ -164,14 +164,6 @@ async fn render_page(
                     ""
                 },
             ),
-            (
-                "INSIGHTS_ACTIVE",
-                if matches!(active, NavTab::Insights) {
-                    "active"
-                } else {
-                    ""
-                },
-            ),
             ("NAV_USER", &escape_html(&display)),
             ("NAV_ROLE", &escape_html(&role)),
             ("CONTENT", content),
@@ -213,7 +205,6 @@ async fn render_update_banner(state: &AppState) -> String {
 enum NavTab {
     Users,
     Library,
-    Insights,
     Stats,
     Audit,
     Onboarding,
@@ -991,14 +982,11 @@ struct RecentSignup {
     created_at: i64,
 }
 
-#[derive(sqlx::FromRow)]
-struct RecentLibrary {
-    title: String,
-    folder_path: Option<String>,
-    updated_at: i64,
-}
-
-pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) -> Response {
+pub async fn stats_page(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
+) -> Response {
     let session = DashboardSession {
         claims: admin.claims.clone(),
     };
@@ -1028,14 +1016,6 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     let recent_users: Vec<RecentSignup> = sqlx::query_as(
         "SELECT display_name, email, role, created_at FROM users \
          ORDER BY created_at DESC LIMIT 10",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    let recent_library: Vec<RecentLibrary> = sqlx::query_as(
-        "SELECT title, folder_path, updated_at FROM library_snippets \
-         WHERE is_deleted = 0 ORDER BY updated_at DESC LIMIT 10",
     )
     .fetch_all(&state.pool)
     .await
@@ -1097,21 +1077,10 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     .await
     .unwrap_or_default();
 
-    // Top library snippets by team-wide paste count. JOINs the
-    // aggregate counter to the live row so we have the title to
-    // display. ORDER BY total DESC, LIMIT 5.
-    let top_library: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT s.title, COALESCE(SUM(u.usage_count), 0) AS total \
-         FROM library_snippets s \
-         LEFT JOIN library_usage u ON u.snippet_id = s.id \
-         WHERE s.is_deleted = 0 \
-         GROUP BY s.id \
-         HAVING total > 0 \
-         ORDER BY total DESC LIMIT 5",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    // Per-snippet library usage table (folded in from the old Insights
+    // page). Built by a shared helper so the sort links and ticket
+    // drill-down stay identical; rendered into the bottom region below.
+    let usage_table = library_usage_table(&state, q.sort.as_deref().unwrap_or("uses")).await;
 
     // Adoption: percentage of users who've actually pasted at
     // least once. Cheap signal for "is rollout sticking".
@@ -1125,11 +1094,9 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         0
     };
 
-    // Build the rate table the dashboard JS uses to reweight the
-    // money card into the admin's chosen display currency. Live
-    // values overlay the static table - same precedence the math
-    // above used. Sorted by code so the dropdown is alphabetical
-    // and stable across page renders.
+    // Build the rate table the page JS uses to convert the money card
+    // into the viewer's locale currency. Live values overlay the static
+    // table - same precedence the math above used.
     let mut display_rates: std::collections::BTreeMap<String, f64> =
         state.stats.aud_rates.clone().into_iter().collect();
     for (k, v) in state.fx_cache.rates.read().await.iter() {
@@ -1139,31 +1106,15 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     // on the provider returning it.
     display_rates.insert("AUD".to_string(), 1.0);
     let rates_json = serde_json::to_string(&display_rates).unwrap_or_else(|_| "{}".to_string());
-    let codes: Vec<&str> = display_rates.keys().map(|s| s.as_str()).collect();
 
+    // The whole page fills the viewport below the nav and never scrolls
+    // itself; the bottom panels scroll internally instead.
     let mut body = String::new();
-    body.push_str("<h1>Server stats</h1>");
-    body.push_str(
-        "<p class=\"muted\">Activity across your team. Money saved follows the display currency \
-         on the right.</p>",
-    );
-    // Toolbar holds only the display-currency selector now; the card set
-    // is fixed so the layout is identical on every load.
-    body.push_str("<div class=\"stats-toolbar\">");
-    body.push_str("<label class=\"stats-currency\"><span>Display currency:</span>");
-    body.push_str("<select id=\"stats-currency-select\">");
-    for c in &codes {
-        body.push_str(&format!(
-            "<option value=\"{c}\">{c}</option>",
-            c = escape_html(c)
-        ));
-    }
-    body.push_str("</select></label></div>");
+    body.push_str("<div class=\"stats-page\">");
 
     // Hero row: the four outcome metrics, given prominence. Money is
-    // built inline because it carries the data-aud value and ids the
-    // currency dropdown reweights; the rest go through the helper.
-    let curr = &state.stats.currency;
+    // built inline because it carries the data-aud value + the id the
+    // currency JS reweights into the viewer's locale.
     body.push_str("<div class=\"stats-hero\">");
     body.push_str(&stat_card_featured(
         "Hours saved",
@@ -1174,12 +1125,11 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         "<div class=\"stat-card featured stat-card-money\" data-aud=\"{aud}\">\
            <div class=\"stat-value\" id=\"stat-money-value\">A${val}</div>\
            <div class=\"stat-label\">Money saved</div>\
-           <div class=\"stat-hint\">each user's wage applied to their own pastes, displayed in {curr_safe} (default {default_safe})</div>\
+           <div class=\"stat-hint\">each user's wage applied to their own pastes, shown in {curr_safe}</div>\
          </div>",
         aud = money_saved_aud,
         val = format_thousands(money_saved_aud as i64),
         curr_safe = "<span id=\"stat-money-curr\">AUD</span>",
-        default_safe = escape_html(curr),
     ));
     body.push_str(&stat_card_featured(
         "Total pastes",
@@ -1217,13 +1167,16 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     ));
     body.push_str("</div>");
 
-    // Activity panels: the two "top" lists and the two recent feeds in
-    // one responsive grid so they fill the row on wide screens and
-    // stack when narrow. Each panel renders its own empty state so the
-    // layout stays consistent with no data.
-    body.push_str("<div class=\"stats-panels\">");
+    // Bottom region: the wide per-snippet library-usage table (folded in
+    // from Insights) beside the user-side feeds. Each panel scrolls
+    // internally so the page itself stays put.
+    body.push_str("<div class=\"stats-bottom\">");
 
-    body.push_str("<div class=\"stats-panel\"><h2>Top users</h2>");
+    body.push_str("<div class=\"stats-panel panel-tall\"><h2>Library usage</h2>");
+    body.push_str(&usage_table);
+    body.push_str("</div>");
+
+    body.push_str("<div class=\"stats-panel\"><h2>Top users</h2><div class=\"panel-scroll\">");
     if top_users.is_empty() {
         body.push_str("<p class=\"panel-empty\">No paste activity reported yet.</p>");
     } else {
@@ -1240,28 +1193,9 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         }
         body.push_str("</ul>");
     }
-    body.push_str("</div>");
+    body.push_str("</div></div>");
 
-    body.push_str("<div class=\"stats-panel\"><h2>Top library snippets</h2>");
-    if top_library.is_empty() {
-        body.push_str("<p class=\"panel-empty\">No library paste activity reported yet.</p>");
-    } else {
-        body.push_str("<ul class=\"recent-list\">");
-        for (i, (title, total)) in top_library.iter().enumerate() {
-            body.push_str(&format!(
-                "<li class=\"ti\"><span class=\"ti-rank\">{rank}</span>\
-                 <span class=\"ti-name\">{title}</span>\
-                 <span class=\"ti-val\">{total} uses</span></li>",
-                rank = i + 1,
-                title = escape_html(title),
-                total = format_thousands(*total),
-            ));
-        }
-        body.push_str("</ul>");
-    }
-    body.push_str("</div>");
-
-    body.push_str("<div class=\"stats-panel\"><h2>Recent signups</h2>");
+    body.push_str("<div class=\"stats-panel\"><h2>Recent signups</h2><div class=\"panel-scroll\">");
     if recent_users.is_empty() {
         body.push_str("<p class=\"panel-empty\">No users yet.</p>");
     } else {
@@ -1280,36 +1214,14 @@ pub async fn stats_page(State(state): State<AppState>, admin: DashboardAdmin) ->
         }
         body.push_str("</ul>");
     }
-    body.push_str("</div>");
+    body.push_str("</div></div>");
 
-    body.push_str("<div class=\"stats-panel\"><h2>Recent library snippets</h2>");
-    if recent_library.is_empty() {
-        body.push_str("<p class=\"panel-empty\">No library snippets yet. Add one from the <a href=\"/dashboard/library\">library page</a>.</p>");
-    } else {
-        body.push_str("<ul class=\"recent-list\">");
-        for s in &recent_library {
-            let folder = s
-                .folder_path
-                .as_deref()
-                .filter(|p| !p.is_empty())
-                .map(|p| format!(" <span class=\"muted small\">in {}</span>", escape_html(p)))
-                .unwrap_or_default();
-            body.push_str(&format!(
-                "<li><div class=\"li-top\"><span class=\"li-name\">{title}</span>{folder}</div>\
-                 <span class=\"muted small\">updated {when}</span></li>",
-                title = escape_html(&s.title),
-                when = format_relative(s.updated_at),
-            ));
-        }
-        body.push_str("</ul>");
-    }
-    body.push_str("</div>");
+    body.push_str("</div>"); // .stats-bottom
+    body.push_str("</div>"); // .stats-page
 
-    body.push_str("</div>");
-    // Embed the rate table so the dropdown's JS can convert
-    // money_saved_aud into any code locally. Kept inline rather
-    // than on a separate endpoint so the dashboard stays
-    // self-contained.
+    // Embed the rate table so the page JS can convert money_saved_aud
+    // into the locale currency locally. Inline rather than a separate
+    // endpoint so the dashboard stays self-contained.
     body.push_str(&format!(
         "<script id=\"stats-rates\" type=\"application/json\">{rates_json}</script>"
     ));
@@ -1381,34 +1293,40 @@ fn format_thousands(n: i64) -> String {
     }
 }
 
-/// Inline JS for the stats page: per-admin hide/show persistence in
-/// localStorage. Doesn't need to coordinate with the server because
-/// it's purely a display preference; storing it server-side would
-/// also mean each admin's view is "their" view across browsers,
-/// which is overkill for v1.
+/// Inline JS for the stats page: convert the money card into the
+/// viewer's locale currency, and fit the page to the viewport so only
+/// the bottom panels scroll.
 const STATS_PAGE_JS: &str = r#"<script>
 (function () {
-  // ---- Currency dropdown ----
-  // The Money saved card carries its raw value as data-aud="N". The
-  // rate table is embedded as JSON in a sibling <script>; we read
-  // it once at startup. Picking a code reweights the displayed
-  // value: units_in_code = aud / aud_rates[code].
+  // ---- Full-height fit ----
+  // The page fills the viewport below the nav and doesn't scroll; the
+  // bottom panels scroll internally. The nav height isn't constant (it
+  // can wrap, and the update banner adds a strip), so measure whatever
+  // sits above the page and expose it as --nav-h for the height calc.
+  function fitPage() {
+    var page = document.querySelector(".stats-page");
+    if (!page) return;
+    var top = page.getBoundingClientRect().top + window.scrollY;
+    document.documentElement.style.setProperty("--nav-h", top + "px");
+  }
+  fitPage();
+  window.addEventListener("resize", fitPage);
+
+  // ---- Money in the viewer's currency ----
+  // The Money saved card carries its raw AUD value as data-aud="N". The
+  // rate table is embedded as JSON in a sibling <script>; we read it
+  // once and convert to the locale currency: units = aud / rate[code].
   var ratesEl = document.getElementById("stats-rates");
   var rates = {};
   try { rates = JSON.parse(ratesEl ? ratesEl.textContent : "{}"); }
   catch (_e) { rates = {}; }
-  var sel = document.getElementById("stats-currency-select");
   var moneyEl = document.getElementById("stat-money-value");
   var moneyCurr = document.getElementById("stat-money-curr");
   var moneyCard = moneyEl ? moneyEl.closest(".stat-card") : null;
-  var PREF_KEY = "snipdesk-stats-currency";
 
-  function chosenCurrency() {
-    var saved = null;
-    try { saved = localStorage.getItem(PREF_KEY); } catch (_e) {}
-    if (saved && rates[saved]) return saved;
-    // First-time default: best-effort from navigator.language.
-    // "en-US" -> USD, "de-DE" -> EUR, "ja-JP" -> JPY, etc.
+  function localeCurrency() {
+    // Best-effort from navigator.language: "en-US" -> USD, "de-DE" ->
+    // EUR, "ja-JP" -> JPY, etc. Falls back to AUD (the canonical base).
     var localeMap = {
       "AU": "AUD", "US": "USD", "GB": "GBP", "DE": "EUR", "FR": "EUR",
       "IT": "EUR", "ES": "EUR", "NL": "EUR", "AT": "EUR", "BE": "EUR",
@@ -1438,14 +1356,10 @@ const STATS_PAGE_JS: &str = r#"<script>
     var rate = rates[code];
     if (!rate || !isFinite(rate) || rate <= 0) return;
     var converted = aud / rate;
-    // ISO-style "USD 1,234" for everything except the few codes
-    // where a leading symbol is the norm. Keeps the column tidy
-    // for any code we add later without a new entry per currency.
-    // Symbols expressed as JS unicode escapes so the literal is pure
-    // ASCII in the served HTML. Belt-and-braces against any layer
-    // that might re-encode the response (proxies, browser legacy-
-    // detection); the inline-script byte stream stays ASCII even
-    // though the runtime string content is the right glyph.
+    // ISO-style "USD 1,234" for everything except the few codes where a
+    // leading symbol is the norm. Symbols as JS unicode escapes so the
+    // served HTML byte stream stays ASCII regardless of any re-encoding
+    // layer in front of the server.
     var symbol = ({"USD":"US$","AUD":"A$","CAD":"C$","NZD":"NZ$","HKD":"HK$","SGD":"S$","GBP":"\u00a3","EUR":"\u20ac","JPY":"\u00a5","CNY":"\u00a5","INR":"\u20b9"})[code];
     moneyEl.textContent = symbol
       ? symbol + formatThousands(converted)
@@ -1453,14 +1367,7 @@ const STATS_PAGE_JS: &str = r#"<script>
     if (moneyCurr) moneyCurr.textContent = code;
   }
 
-  if (sel) {
-    sel.value = chosenCurrency();
-    updateMoneyCard(sel.value);
-    sel.addEventListener("change", function () {
-      try { localStorage.setItem(PREF_KEY, sel.value); } catch (_e) {}
-      updateMoneyCard(sel.value);
-    });
-  }
+  updateMoneyCard(localeCurrency());
 })();
 </script>"#;
 
@@ -6084,15 +5991,16 @@ struct InsightRow {
 /// (id, title, folder_path, created_at, uses, last_used).
 type InsightAggRow = (String, String, Option<String>, i64, i64, Option<i64>);
 
-pub async fn library_insights_page(
-    State(state): State<AppState>,
-    admin: DashboardAdmin,
-    axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
-) -> Response {
-    let session = DashboardSession {
-        claims: admin.claims.clone(),
-    };
+/// GET /dashboard/library/insights - the page is folded into the stats
+/// page now; kept as a redirect so old links and bookmarks still land.
+pub async fn library_insights_page(_admin: DashboardAdmin) -> Response {
+    axum::response::Redirect::to("/dashboard/stats").into_response()
+}
 
+/// Per-snippet library usage table for the stats page's bottom region.
+/// `sort` is one of uses | recent | age | title (default uses). Returns
+/// a scrollable panel body; the caller wraps it in the panel shell.
+async fn library_usage_table(state: &AppState, sort: &str) -> String {
     // Per-snippet rollup: team-wide paste count and most-recent paste.
     // LEFT JOIN so never-pasted snippets still appear (uses = 0).
     let raw: Vec<InsightAggRow> = sqlx::query_as(
@@ -6143,15 +6051,8 @@ pub async fn library_insights_page(
         })
         .collect();
 
-    // Headline figures.
-    let total_snippets = rows.len() as i64;
-    let total_pastes: i64 = rows.iter().map(|r| r.uses).sum();
-    let active = rows.iter().filter(|r| r.uses > 0).count() as i64;
-    let never_used = total_snippets - active;
-
     // Sort. Default is most-used; a falling-out-of-use library is
     // easiest to prune sorted by age (oldest first) or recency.
-    let sort = q.sort.as_deref().unwrap_or("uses");
     match sort {
         "age" => rows.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
         "recent" => rows.sort_by(|a, b| b.last_used.cmp(&a.last_used)),
@@ -6159,40 +6060,10 @@ pub async fn library_insights_page(
         _ => rows.sort_by(|a, b| b.uses.cmp(&a.uses).then(a.title.cmp(&b.title))),
     }
 
-    let mut body = String::new();
-    body.push_str(
-        "<div class=\"insights-head\">\
-           <h1>Library insights</h1>\
-           <a class=\"btn\" href=\"/dashboard/library\">&larr; Back to library</a>\
-         </div>",
-    );
-    body.push_str(
-        "<p class=\"muted\">Team-wide usage across the snippet library. Counts are cumulative \
-         (we don't keep a usage history yet, so there are no time-windowed trends).</p>",
-    );
-
-    body.push_str("<div class=\"insight-tiles\">");
-    body.push_str(&insight_tile(
-        &format_thousands(total_pastes),
-        "Total pastes",
-        "",
-    ));
-    body.push_str(&insight_tile(
-        &total_snippets.to_string(),
-        "Snippets",
-        "in the library",
-    ));
-    body.push_str(&insight_tile(
-        &active.to_string(),
-        "Active",
-        "pasted at least once",
-    ));
-    body.push_str(&insight_tile(
-        &never_used.to_string(),
-        "Never used",
-        "candidates to prune",
-    ));
-    body.push_str("</div>");
+    // Empty library: a short note rather than an empty table.
+    if rows.is_empty() {
+        return "<p class=\"panel-empty\">No library snippets yet.</p>".to_string();
+    }
 
     // When ticket linking is on, count distinct tickets per snippet for
     // the extra column + drill-down link. Off -> the column is hidden.
@@ -6210,56 +6081,52 @@ pub async fn library_insights_page(
         std::collections::HashMap::new()
     };
 
-    if rows.is_empty() {
-        body.push_str("<p class=\"muted\">No library snippets yet.</p>");
-    } else {
-        // Sortable header: each link flips to its column; the active one
-        // is marked. format_relative gives "8mo ago" style for age/recency.
-        let header = |key: &str, label: &str, numeric: bool| {
-            let active_mark = if sort == key { " \u{2193}" } else { "" };
-            let cls = if numeric { " class=\"n\"" } else { "" };
-            format!(
-                "<th{cls}><a href=\"/dashboard/library/insights?sort={key}\">{label}{active_mark}</a></th>"
-            )
+    // Sortable header: each link flips to its column; the active one is
+    // marked. format_relative gives "8mo ago" style for age/recency.
+    let header = |key: &str, label: &str, numeric: bool| {
+        let active_mark = if sort == key { " \u{2193}" } else { "" };
+        let cls = if numeric { " class=\"n\"" } else { "" };
+        format!("<th{cls}><a href=\"/dashboard/stats?sort={key}\">{label}{active_mark}</a></th>")
+    };
+    let mut body = String::new();
+    body.push_str("<div class=\"panel-scroll\"><table class=\"insights-table\"><thead><tr>");
+    body.push_str(&header("title", "Snippet", false));
+    body.push_str("<th>Folder</th>");
+    body.push_str(&header("uses", "Uses", true));
+    body.push_str(&header("recent", "Last used", false));
+    body.push_str(&header("age", "Created", false));
+    body.push_str("<th>Top user</th>");
+    if show_tickets {
+        body.push_str("<th class=\"n\">Tickets</th>");
+    }
+    body.push_str("</tr></thead><tbody>");
+    for r in &rows {
+        let folder = match &r.folder {
+            Some(f) if !f.is_empty() => escape_html(f),
+            _ => "<span class=\"muted\">Unfiled</span>".to_string(),
         };
-        body.push_str("<div class=\"scroll-x\"><table class=\"insights-table\"><thead><tr>");
-        body.push_str(&header("title", "Snippet", false));
-        body.push_str("<th>Folder</th>");
-        body.push_str(&header("uses", "Uses", true));
-        body.push_str(&header("recent", "Last used", false));
-        body.push_str(&header("age", "Created", false));
-        body.push_str("<th>Top user</th>");
-        if show_tickets {
-            body.push_str("<th class=\"n\">Tickets</th>");
-        }
-        body.push_str("</tr></thead><tbody>");
-        for r in &rows {
-            let folder = match &r.folder {
-                Some(f) if !f.is_empty() => escape_html(f),
-                _ => "<span class=\"muted\">Unfiled</span>".to_string(),
-            };
-            let last = match r.last_used {
-                Some(t) => format_relative(t),
-                None => "<span class=\"muted\">never</span>".to_string(),
-            };
-            let uses_cell = if r.uses == 0 {
-                "<span class=\"muted\">0</span>".to_string()
-            } else {
-                format_thousands(r.uses)
-            };
-            let tickets_cell = if show_tickets {
-                match ticket_counts.get(&r.id).copied().unwrap_or(0) {
+        let last = match r.last_used {
+            Some(t) => format_relative(t),
+            None => "<span class=\"muted\">never</span>".to_string(),
+        };
+        let uses_cell = if r.uses == 0 {
+            "<span class=\"muted\">0</span>".to_string()
+        } else {
+            format_thousands(r.uses)
+        };
+        let tickets_cell = if show_tickets {
+            match ticket_counts.get(&r.id).copied().unwrap_or(0) {
                     0 => "<td class=\"n muted\">0</td>".to_string(),
                     n => format!(
                         "<td class=\"n\"><a href=\"/dashboard/library/snippet-tickets/{id}\">{n}</a></td>",
                         id = escape_html(&r.id),
                     ),
                 }
-            } else {
-                String::new()
-            };
-            body.push_str(&format!(
-                "<tr{never}>\
+        } else {
+            String::new()
+        };
+        body.push_str(&format!(
+            "<tr{never}>\
                    <td><a href=\"/dashboard/library#lib-{id}\">{title}</a></td>\
                    <td class=\"fold\">{folder}</td>\
                    <td class=\"n\">{uses}</td>\
@@ -6268,53 +6135,23 @@ pub async fn library_insights_page(
                    <td class=\"muted\">{top}</td>\
                    {tickets}\
                  </tr>",
-                never = if r.uses == 0 {
-                    " class=\"insight-stale\""
-                } else {
-                    ""
-                },
-                id = escape_html(&r.id),
-                title = escape_html(&r.title),
-                folder = folder,
-                uses = uses_cell,
-                last = last,
-                age = format_relative(r.created_at),
-                top = r.top_user.as_deref().map(escape_html).unwrap_or_default(),
-                tickets = tickets_cell,
-            ));
-        }
-        body.push_str("</tbody></table></div>");
+            never = if r.uses == 0 {
+                " class=\"insight-stale\""
+            } else {
+                ""
+            },
+            id = escape_html(&r.id),
+            title = escape_html(&r.title),
+            folder = folder,
+            uses = uses_cell,
+            last = last,
+            age = format_relative(r.created_at),
+            top = r.top_user.as_deref().map(escape_html).unwrap_or_default(),
+            tickets = tickets_cell,
+        ));
     }
-
-    render_page(
-        &state,
-        &session,
-        "Library insights",
-        NavTab::Insights,
-        &body,
-    )
-    .await
-    .into_response()
-}
-
-/// A headline tile for the insights page. Standalone (not the stats
-/// page's hideable stat_card) so it carries no localStorage wiring.
-fn insight_tile(value: &str, label: &str, hint: &str) -> String {
-    let hint_html = if hint.is_empty() {
-        String::new()
-    } else {
-        format!("<div class=\"insight-hint\">{}</div>", escape_html(hint))
-    };
-    format!(
-        "<div class=\"insight-tile\">\
-           <div class=\"insight-value\">{value}</div>\
-           <div class=\"insight-label\">{label}</div>\
-           {hint}\
-         </div>",
-        value = escape_html(value),
-        label = escape_html(label),
-        hint = hint_html,
-    )
+    body.push_str("</tbody></table></div>");
+    body
 }
 
 /// GET /dashboard/library/snippet-tickets/:id - the support tickets a
@@ -6352,7 +6189,7 @@ pub async fn library_snippet_tickets_page(
     body.push_str(
         "<div class=\"insights-head\">\
            <h1>Tickets for this snippet</h1>\
-           <a class=\"btn\" href=\"/dashboard/library/insights\">&larr; Back to insights</a>\
+           <a class=\"btn\" href=\"/dashboard/stats\">&larr; Back to stats</a>\
          </div>",
     );
     body.push_str(&format!(
@@ -6382,7 +6219,7 @@ pub async fn library_snippet_tickets_page(
         body.push_str("</tbody></table></div>");
     }
 
-    render_page(&state, &session, "Snippet tickets", NavTab::Insights, &body)
+    render_page(&state, &session, "Snippet tickets", NavTab::Stats, &body)
         .await
         .into_response()
 }

@@ -946,24 +946,22 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 
 /* --- Stats page --- */
 
-/* Top-of-stats-page toolbar: just the display-currency selector,
-   right-aligned. The card set is fixed, so there's no picker. */
-.stats-toolbar {
+/* The stats page fills the viewport below the nav and doesn't scroll
+   itself; the bottom panels scroll internally. Mirrors the library's
+   full-height fit (--nav-h is measured at runtime). */
+main:has(.stats-page) {
+  max-width: none;
+  padding: 0;
+  height: calc(100vh - var(--nav-h, 47px));
+  overflow: hidden;
+}
+.stats-page {
+  height: 100%;
   display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin: 6px 0 10px;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 22px;
   gap: 12px;
-}
-.stats-currency {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--fg-dim);
-}
-.stats-currency select {
-  font: inherit;
 }
 /* Two fixed rows: the hero (four outcome metrics) and the secondary
    deck (four standing counts). Both are four-up on desktop, two-up on
@@ -973,12 +971,18 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+  flex: none;
 }
-.stats-hero { margin: 12px 0; }
-.stats-grid { margin: 0 0 26px; }
 @media (max-width: 860px) {
   .stats-hero,
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Below desktop the fixed-height fit gives way to normal page scroll:
+     the bottom panels stack and cap their own height instead. (The
+     .stats-bottom display override lives after its base rule below so
+     it wins the cascade.) */
+  main:has(.stats-page) { height: auto; overflow: visible; }
+  .stats-page { height: auto; }
+  .stats-bottom .panel-scroll { max-height: 360px; }
 }
 @media (max-width: 460px) {
   .stats-hero,
@@ -1027,32 +1031,48 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   color: transparent;
 }
 
-/* Activity panels: top lists + recent feeds in one responsive row that
-   fills the width on wide screens and stacks when narrow. */
-.stats-panels {
+/* Bottom region: the wide library-usage table beside the user feeds.
+   Fills the remaining height; each panel scrolls internally. The table
+   panel spans both rows on the left. */
+.stats-bottom {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
-  gap: 16px;
-  margin: 8px 0 28px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
 }
+.stats-bottom .panel-tall { grid-row: 1 / 3; }
 .stats-panel {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  /* Let the grid track shrink to its share instead of being held wide
-     by a long unbreakable token (e.g. an email); the rows wrap such
-     tokens rather than forcing fewer columns. */
+  /* Panel is a header + a scrolling body; min-height:0 lets the body
+     actually shrink so its own overflow takes over instead of the page
+     growing. */
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
-.stats-panel .recent-list li { overflow-wrap: anywhere; }
 .stats-panel > h2 {
   margin: 0;
   padding: 11px 16px;
   font-size: 13px;
   font-weight: 600;
   border-bottom: 1px solid var(--border);
+  flex: none;
+}
+/* The scrolling body. The insights table's own wrapper carries this
+   class too, so both lists and the table scroll the same way. */
+.panel-scroll { flex: 1; min-height: 0; overflow: auto; }
+.stats-panel .recent-list li { overflow-wrap: anywhere; }
+/* Narrow screens stack the bottom panels (placed after the grid base so
+   it wins the cascade when the breakpoint matches). */
+@media (max-width: 860px) {
+  .stats-bottom { display: flex; flex-direction: column; }
+  .stats-bottom .panel-tall { grid-row: auto; }
 }
 .panel-empty { color: var(--fg-dim); font-size: 12px; margin: 0; padding: 14px 16px; }
 /* Ranked rows for the "top" panels. */
@@ -1167,26 +1187,6 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   gap: 12px;
   flex-wrap: wrap;
 }
-.insight-tiles {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin: 16px 0 20px;
-}
-@media (max-width: 720px) { .insight-tiles { grid-template-columns: repeat(2, 1fr); } }
-.insight-tile {
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 13px 15px;
-}
-.insight-value {
-  font-size: 24px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-.insight-label { font-size: 13px; margin-top: 2px; }
-.insight-hint { font-size: 12px; color: var(--fg-dim); margin-top: 5px; }
 .scroll-x { overflow-x: auto; }
 .insights-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .insights-table th {
@@ -1199,6 +1199,11 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   padding: 7px 10px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
+  /* Stay visible while the panel body scrolls under it. */
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  z-index: 1;
 }
 .insights-table th a { color: inherit; }
 .insights-table th a:hover { color: var(--accent); }

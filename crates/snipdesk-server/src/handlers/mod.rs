@@ -4,6 +4,7 @@
 pub mod admin;
 pub mod auth;
 pub mod library;
+pub mod metrics;
 pub mod oidc;
 pub mod snippets;
 pub mod usage;

@@ -167,6 +167,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         fx_cache,
         cors_allowed_origins: cfg.cors_allowed_origins.clone(),
         brand_name: cfg.brand.name.clone(),
+        metrics_token: cfg.metrics_token.clone(),
         update_cache: {
             let cache = Arc::new(snipdesk_server::updater::UpdateCache::default());
             if cfg.updater.enabled {

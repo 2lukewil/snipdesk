@@ -81,6 +81,10 @@ pub struct AppState {
     /// "SnipDesk" via BrandConfig; deployments override via
     /// `[brand].name` in the server TOML.
     pub brand_name: String,
+
+    /// Bearer token for the Prometheus `/metrics` endpoint. `None`
+    /// disables the endpoint (404). See `config::Config::metrics_token`.
+    pub metrics_token: Option<String>,
     /// Latest known server release vs. running version. Updated by
     /// the background poller in `crate::updater`; the dashboard
     /// renders a banner when `is_newer` flips true.
@@ -162,6 +166,9 @@ fn build_cors_layer(origins: &[String]) -> Option<CorsLayer> {
 fn build_inner_router() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(health))
+        // Prometheus scrape target for ops. Self-guards with a bearer
+        // token (404 when unconfigured), so it needs no cookie auth.
+        .route("/metrics", get(handlers::metrics::metrics))
         .route("/api/auth/methods", get(handlers::auth::methods))
         .route(
             "/api/auth/signup",

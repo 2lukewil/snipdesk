@@ -39,6 +39,7 @@ async fn make_app() -> (SqlitePool, axum::Router) {
         fx_cache: Arc::new(snipdesk_server::fx::FxCache::default()),
         cors_allowed_origins: Vec::new(),
         brand_name: "SnipDesk".to_string(),
+        metrics_token: None,
         update_cache: Arc::new(snipdesk_server::updater::UpdateCache::default()),
     };
     (pool, router(state))

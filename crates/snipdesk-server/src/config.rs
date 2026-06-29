@@ -81,6 +81,15 @@ pub struct Config {
     #[serde(default = "default_password_enabled")]
     pub password_enabled: bool,
 
+    /// Bearer token guarding the Prometheus `/metrics` endpoint. When
+    /// unset (the default), `/metrics` is disabled entirely and returns
+    /// 404 - secure by default, opt-in for ops who want to scrape. When
+    /// set, scrapers must send `Authorization: Bearer <token>`. Env
+    /// override: SNIPDESK_METRICS_TOKEN. Treated like a secret; never
+    /// logged.
+    #[serde(default)]
+    pub metrics_token: Option<String>,
+
     /// Origins allowed to make cross-origin JSON-API requests. Empty
     /// (default) means no CORS layer at all - same-origin only, which
     /// matches the v1 desktop-client + dashboard topology where both
@@ -354,6 +363,7 @@ impl Default for Config {
             oidc: OidcConfig::default(),
             secure_cookies: false,
             password_enabled: default_password_enabled(),
+            metrics_token: None,
             cors_allowed_origins: Vec::new(),
             stats: StatsConfig::default(),
             fx: None,
@@ -658,6 +668,14 @@ impl Config {
         }
         if let Some(v) = env_string("SNIPDESK_BRAND_NAME") {
             self.brand.name = v;
+        }
+        if let Some(v) = env_string("SNIPDESK_METRICS_TOKEN") {
+            let v = v.trim();
+            self.metrics_token = if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            };
         }
         if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
             self.oidc.allowed_deep_link_schemes = list;

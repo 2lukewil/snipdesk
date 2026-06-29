@@ -152,6 +152,10 @@ pub fn routes() -> Router<AppState> {
         // axum routes on (path, method) so the methods coexist.
         .route("/dashboard/users/:id", get(pages::user_detail_page))
         .route("/dashboard/stats", get(pages::stats_page))
+        .route(
+            "/dashboard/library/insights",
+            get(pages::library_insights_page),
+        )
         .route("/dashboard/audit", get(pages::audit_page))
         // Static assets - vendored htmx + a small CSS file. Served as
         // raw bytes via plain handlers (no fs reads at runtime; the

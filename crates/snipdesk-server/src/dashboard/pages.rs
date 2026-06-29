@@ -2084,6 +2084,7 @@ pub async fn library_page(
            <button class=\"btn\" id=\"library-export-btn\" type=\"button\" title=\"Export\">Export</button>\
            <button class=\"btn\" id=\"library-import-btn\" type=\"button\" title=\"Import\">Import</button>\
            <input type=\"file\" id=\"library-import-file\" accept=\".json,.csv\" hidden />\
+           <a class=\"btn\" href=\"/dashboard/library/insights\" title=\"Usage insights\">Insights</a>\
          </div>",
         q = escape_html(q_value),
     ));
@@ -6045,6 +6046,227 @@ pub async fn library_delete(
         )
             .into_response(),
     }
+}
+
+// ---- /dashboard/library/insights (usage + age metrics) ----
+
+#[derive(Debug, Deserialize)]
+pub struct InsightsQuery {
+    /// Column to sort the per-snippet table by: uses | recent | age |
+    /// title. Defaults to most-used.
+    #[serde(default)]
+    pub sort: Option<String>,
+}
+
+/// One row of the insights table: a library snippet with its team-wide
+/// usage rolled up.
+struct InsightRow {
+    id: String,
+    title: String,
+    folder: Option<String>,
+    created_at: i64,
+    uses: i64,
+    last_used: Option<i64>,
+    top_user: Option<String>,
+}
+
+/// Raw SELECT shape for the insights rollup:
+/// (id, title, folder_path, created_at, uses, last_used).
+type InsightAggRow = (String, String, Option<String>, i64, i64, Option<i64>);
+
+pub async fn library_insights_page(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    axum::extract::Query(q): axum::extract::Query<InsightsQuery>,
+) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+
+    // Per-snippet rollup: team-wide paste count and most-recent paste.
+    // LEFT JOIN so never-pasted snippets still appear (uses = 0).
+    let raw: Vec<InsightAggRow> = sqlx::query_as(
+        "SELECT s.id, s.title, s.folder_path, s.created_at, \
+                COALESCE(SUM(lu.usage_count), 0) AS uses, \
+                MAX(lu.last_used) AS last_used \
+         FROM library_snippets s \
+         LEFT JOIN library_usage lu ON lu.snippet_id = s.id \
+         WHERE s.is_deleted = 0 \
+         GROUP BY s.id",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Leading user per snippet, computed in Rust to avoid a window
+    // function (keeps the SQLite version floor low). The set is small:
+    // users times used-snippets.
+    let usage_by_user: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT lu.snippet_id, u.display_name, lu.usage_count \
+         FROM library_usage lu JOIN users u ON u.id = lu.user_id",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let mut top_user: std::collections::HashMap<String, (String, i64)> =
+        std::collections::HashMap::new();
+    for (sid, name, cnt) in usage_by_user {
+        let e = top_user.entry(sid).or_insert((String::new(), -1));
+        if cnt > e.1 {
+            *e = (name, cnt);
+        }
+    }
+
+    let mut rows: Vec<InsightRow> = raw
+        .into_iter()
+        .map(|(id, title, folder, created_at, uses, last_used)| {
+            let top_user = top_user.get(&id).map(|(n, _)| n.clone());
+            InsightRow {
+                id,
+                title,
+                folder,
+                created_at,
+                uses,
+                last_used,
+                top_user,
+            }
+        })
+        .collect();
+
+    // Headline figures.
+    let total_snippets = rows.len() as i64;
+    let total_pastes: i64 = rows.iter().map(|r| r.uses).sum();
+    let active = rows.iter().filter(|r| r.uses > 0).count() as i64;
+    let never_used = total_snippets - active;
+
+    // Sort. Default is most-used; a falling-out-of-use library is
+    // easiest to prune sorted by age (oldest first) or recency.
+    let sort = q.sort.as_deref().unwrap_or("uses");
+    match sort {
+        "age" => rows.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
+        "recent" => rows.sort_by(|a, b| b.last_used.cmp(&a.last_used)),
+        "title" => rows.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+        _ => rows.sort_by(|a, b| b.uses.cmp(&a.uses).then(a.title.cmp(&b.title))),
+    }
+
+    let mut body = String::new();
+    body.push_str(
+        "<div class=\"insights-head\">\
+           <h1>Library insights</h1>\
+           <a class=\"btn\" href=\"/dashboard/library\">&larr; Back to library</a>\
+         </div>",
+    );
+    body.push_str(
+        "<p class=\"muted\">Team-wide usage across the snippet library. Counts are cumulative \
+         (we don't keep a usage history yet, so there are no time-windowed trends).</p>",
+    );
+
+    body.push_str("<div class=\"insight-tiles\">");
+    body.push_str(&insight_tile(
+        &format_thousands(total_pastes),
+        "Total pastes",
+        "",
+    ));
+    body.push_str(&insight_tile(
+        &total_snippets.to_string(),
+        "Snippets",
+        "in the library",
+    ));
+    body.push_str(&insight_tile(
+        &active.to_string(),
+        "Active",
+        "pasted at least once",
+    ));
+    body.push_str(&insight_tile(
+        &never_used.to_string(),
+        "Never used",
+        "candidates to prune",
+    ));
+    body.push_str("</div>");
+
+    if rows.is_empty() {
+        body.push_str("<p class=\"muted\">No library snippets yet.</p>");
+    } else {
+        // Sortable header: each link flips to its column; the active one
+        // is marked. format_relative gives "8mo ago" style for age/recency.
+        let header = |key: &str, label: &str, numeric: bool| {
+            let active_mark = if sort == key { " \u{2193}" } else { "" };
+            let cls = if numeric { " class=\"n\"" } else { "" };
+            format!(
+                "<th{cls}><a href=\"/dashboard/library/insights?sort={key}\">{label}{active_mark}</a></th>"
+            )
+        };
+        body.push_str("<div class=\"scroll-x\"><table class=\"insights-table\"><thead><tr>");
+        body.push_str(&header("title", "Snippet", false));
+        body.push_str("<th>Folder</th>");
+        body.push_str(&header("uses", "Uses", true));
+        body.push_str(&header("recent", "Last used", false));
+        body.push_str(&header("age", "Created", false));
+        body.push_str("<th>Top user</th>");
+        body.push_str("</tr></thead><tbody>");
+        for r in &rows {
+            let folder = match &r.folder {
+                Some(f) if !f.is_empty() => escape_html(f),
+                _ => "<span class=\"muted\">Unfiled</span>".to_string(),
+            };
+            let last = match r.last_used {
+                Some(t) => format_relative(t),
+                None => "<span class=\"muted\">never</span>".to_string(),
+            };
+            let uses_cell = if r.uses == 0 {
+                "<span class=\"muted\">0</span>".to_string()
+            } else {
+                format_thousands(r.uses)
+            };
+            body.push_str(&format!(
+                "<tr{never}>\
+                   <td><a href=\"/dashboard/library#lib-{id}\">{title}</a></td>\
+                   <td class=\"fold\">{folder}</td>\
+                   <td class=\"n\">{uses}</td>\
+                   <td>{last}</td>\
+                   <td>{age}</td>\
+                   <td class=\"muted\">{top}</td>\
+                 </tr>",
+                never = if r.uses == 0 {
+                    " class=\"insight-stale\""
+                } else {
+                    ""
+                },
+                id = escape_html(&r.id),
+                title = escape_html(&r.title),
+                folder = folder,
+                uses = uses_cell,
+                last = last,
+                age = format_relative(r.created_at),
+                top = r.top_user.as_deref().map(escape_html).unwrap_or_default(),
+            ));
+        }
+        body.push_str("</tbody></table></div>");
+    }
+
+    render_page(&state, &session, "Library insights", NavTab::Library, &body)
+        .await
+        .into_response()
+}
+
+/// A headline tile for the insights page. Standalone (not the stats
+/// page's hideable stat_card) so it carries no localStorage wiring.
+fn insight_tile(value: &str, label: &str, hint: &str) -> String {
+    let hint_html = if hint.is_empty() {
+        String::new()
+    } else {
+        format!("<div class=\"insight-hint\">{}</div>", escape_html(hint))
+    };
+    format!(
+        "<div class=\"insight-tile\">\
+           <div class=\"insight-value\">{value}</div>\
+           <div class=\"insight-label\">{label}</div>\
+           {hint}\
+         </div>",
+        value = escape_html(value),
+        label = escape_html(label),
+        hint = hint_html,
+    )
 }
 
 // ---- /dashboard/audit (admin activity log) ----

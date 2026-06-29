@@ -572,32 +572,36 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   background: var(--bg);
   border: 0;
   border-radius: 0;
-  padding: 16px;
-  overflow-y: auto;
+  /* Fill the pane edge-to-edge like the other two columns, rather than
+     padding a card. The form is a flex column; inner areas scroll. */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .library-editor .placeholder { color: var(--fg-dim); }
 
 /* --- Editor pane form --- */
-.editor-form { height: 100%; min-height: 0; gap: 12px; }
+.editor-form { height: 100%; min-height: 0; gap: 0; }
 
-/* The combined compose box: title + format toolbar across the top, a
-   divider, then the body and live preview side by side - one bordered
-   surface so title, styling, and body read as a single editor. */
+/* The compose area is a full division of the editor pane (no card border
+   or padding): a title bar across the top, then the body and live
+   preview filling the rest. */
 .editor-compose {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-3);
   overflow: hidden;
 }
+/* Title bar: same height as the folder-create / search bars in the other
+   two panes, so all three pane headers sit on one line. */
 .compose-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 8px 5px 12px;
+  height: 54px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
 }
 .editor-form .compose-title {
@@ -655,9 +659,12 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 
 .editor-form .actions {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0;
-  /* Keep the footer (esp. the right-aligned updated-at note) clear of the
-     floating export/import dock in the bottom-right corner. */
-  padding-right: 56px;
+  flex: none;
+  /* Bottom action bar of the pane; border-top divides it from the body.
+     Extra right padding keeps the updated-at note clear of the floating
+     export/import dock in the corner. */
+  padding: 10px 56px 10px 12px;
+  border-top: 1px solid var(--border);
 }
 .editor-form .actions button { white-space: nowrap; }
 /* Folder + tags sit in the preview column's header band. Each input

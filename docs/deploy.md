@@ -594,6 +594,109 @@ on stdout (when not attached to a TTY - the dev terminal switches to
 human-readable format automatically). Ship to Loki / Vector / Datadog
 via the platform's standard container-log shipper.
 
+### Metrics and Grafana
+
+SnipDesk exposes a Prometheus endpoint at `GET /metrics`. It is
+**disabled by default**: set `SNIPDESK_METRICS_TOKEN` to a secret value
+to turn it on. Without the token the route returns 404; with it,
+scrapers must send `Authorization: Bearer <token>`. The endpoint needs
+no dashboard cookie, so Prometheus can scrape it directly; if you also
+want network isolation, restrict the `/metrics` path at your reverse
+proxy.
+
+What it exposes (all `snipdesk_*`, Prometheus text format):
+
+| Series | Type | Meaning |
+| --- | --- | --- |
+| `snipdesk_users_total` | gauge | Registered accounts |
+| `snipdesk_users_active_24h` / `_7d` / `_30d` | gauge | Users seen in the window |
+| `snipdesk_admins_total` | gauge | Users with the admin role |
+| `snipdesk_library_snippets_total` | gauge | Library snippets (excl. deleted) |
+| `snipdesk_library_snippets_unused` | gauge | Library snippets never pasted (prune signal) |
+| `snipdesk_library_folders_total` | gauge | Library folders |
+| `snipdesk_personal_snippets_total` | gauge | Personal snippets (excl. deleted) |
+| `snipdesk_pastes_total` | counter | All pastes reported by clients |
+| `snipdesk_library_pastes_total` | counter | Library-snippet pastes, team-wide |
+| `snipdesk_chars_pasted_total` | counter | Characters pasted |
+| `snipdesk_audit_events_total` | counter | Audit-log entries recorded |
+| `snipdesk_build_info{version}` | gauge | Always `1`; carries the version label |
+
+**1. Scrape it with Prometheus.** Add a job to `prometheus.yml`. The
+bearer credential is the same value you set in `SNIPDESK_METRICS_TOKEN`:
+
+```yaml
+scrape_configs:
+  - job_name: snipdesk
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "REPLACE_WITH_SNIPDESK_METRICS_TOKEN"
+    static_configs:
+      - targets: ["snipdesk.example.com"]
+```
+
+**2. Add Prometheus as a Grafana data source** (Connections -> Data
+sources -> Prometheus) if you don't already have one, pointing at your
+Prometheus server.
+
+**3. Build panels.** Create a dashboard and add panels with these
+queries (counters use `rate`/`increase` over a range; gauges are read
+directly):
+
+| Panel | Type | Query |
+| --- | --- | --- |
+| Active users (24h / 7d / 30d) | Stat | `snipdesk_users_active_24h` (add `_7d`, `_30d`) |
+| Library pastes per hour | Time series | `increase(snipdesk_library_pastes_total[1h])` |
+| Pastes, last 7 days | Stat | `increase(snipdesk_pastes_total[7d])` |
+| Characters pasted per day | Time series | `increase(snipdesk_chars_pasted_total[1d])` |
+| Library size vs never-used | Time series | `snipdesk_library_snippets_total` and `snipdesk_library_snippets_unused` |
+| Audit events per day | Time series | `increase(snipdesk_audit_events_total[1d])` |
+| Running version | Stat | `snipdesk_build_info` (label `version`) |
+
+Per-snippet, per-user, and per-ticket detail is intentionally **not**
+in `/metrics` - that level of cardinality doesn't belong in Prometheus.
+For per-snippet usage use the dashboard's **Library insights** page
+(`/dashboard/library/insights`); for ticket-level correlation see the
+next section.
+
+### Support-ticket linking
+
+When enabled, the browser extension records which support ticket was
+open when a snippet was pasted, so you can answer "which canned replies
+actually resolve billing tickets". It is **opt-in**: set
+`SNIPDESK_TICKET_LINK_ENABLED=true`. While off, the server ignores any
+ticket data a client reports and stores nothing.
+
+What's stored is deliberately minimal: a row of `(ticket reference,
+snippet id, user, timestamp)` in the `ticket_usage` table. **Only the
+opaque ticket reference is kept - never the ticket title or any
+customer text.** The extension reads the reference from the active
+tab's URL against a configurable pattern. For a WHMCS-style install the
+ticket id is the `id` query parameter, e.g.
+`https://billing.example.com/admin/supporttickets.php?action=view&id=12345`
+yields `12345`.
+
+**Analyzing it in Grafana.** Because the title and customer fields
+already live in WHMCS, you join to them at query time rather than
+duplicating them. Point a SQL data source at the SnipDesk database (or a
+replica) and join `ticket_usage.ticket_ref` against your existing WHMCS
+data source on the ticket id. A starting query for "most snippet-heavy
+tickets":
+
+```sql
+SELECT ticket_ref, COUNT(*) AS pastes, COUNT(DISTINCT snippet_id) AS distinct_snippets
+FROM ticket_usage
+GROUP BY ticket_ref
+ORDER BY pastes DESC
+LIMIT 50;
+```
+
+In Grafana, add the WHMCS data source alongside it and join on
+`ticket_ref = tbltickets.id` to pull the ticket title, department, and
+status into the same panel. The dashboard also surfaces a per-snippet
+"tickets it was used on" drill-down for quick lookups without Grafana.
+
 ### Backups
 
 Two strategies, pick one:

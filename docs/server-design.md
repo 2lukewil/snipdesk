@@ -150,7 +150,22 @@ CREATE TABLE audit_log (
   target_id     TEXT,
   details       TEXT                           -- small JSON blob
 );
+
+-- Ticket-referenced paste events (support-ticket linking). Opt-in via
+-- SNIPDESK_TICKET_LINK_ENABLED; empty otherwise. Stores only the opaque
+-- ticket reference, never the title or any customer text - the title is
+-- joined from the WHMCS data source in Grafana at query time.
+CREATE TABLE ticket_usage (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  at            INTEGER NOT NULL,
+  user_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
+  snippet_id    TEXT NOT NULL,                 -- not an FK: survives a purge
+  ticket_ref    TEXT NOT NULL                  -- e.g. WHMCS ticket id
+);
 ```
+
+Per-snippet usage counters (`library_usage`, `personal_snippets.usage_count`)
+back the dashboard's insights page and the `/metrics` totals.
 
 Live migrations live at `crates/snipdesk-server/migrations/`. The
 server applies them at boot and tolerates comment-only edits to
@@ -373,8 +388,12 @@ All endpoints under `/api`. JSON request/response. JWT in the
 - `PUT  /api/admin/users/:id` - disable/enable, change role
 - `DELETE /api/admin/users/:id` - soft-delete account (cascades to snippets)
 
-### Health
+### Telemetry
+- `POST /api/usage/report` - clients flush paste deltas: total chars/pastes, per-snippet counters, and (when `ticket_link_enabled`) an optional `tickets[]` array of `{ snippet_id, ticket_ref, at }` recorded into `ticket_usage`. Returns 204.
+
+### Health and metrics
 - `GET  /api/health` - liveness probe. 200 with `{ "status": "ok", "db": true }` when alive; 503 when the DB ping fails.
+- `GET  /metrics` - Prometheus exposition (aggregate `snipdesk_*` series). Disabled unless `SNIPDESK_METRICS_TOKEN` is set (404 otherwise); requires `Authorization: Bearer <token>`. Not under `/api` and not cookie-gated, so Prometheus scrapes it directly. See the deploy guide's Metrics and Grafana section.
 
 ## Sync algorithm
 
@@ -449,9 +468,14 @@ Server-rendered HTML with htmx for interactivity. Routes:
   htmx `PUT`/`DELETE`/`POST` that re-render the affected row in
   place, no full-page reload.
 - `/dashboard/library` - shared snippets with folder tree, inline
-  edit, and drag-and-drop reordering.
-- `/dashboard/audit` - paginated view of the `audit_log` table
-  (50 entries per page, newest first).
+  edit, multi-select, and drag-and-drop reordering. List refreshes
+  patch in place (idiomorph morph-swap) so navigation doesn't jump.
+- `/dashboard/library/insights` - per-snippet usage and age: total
+  pastes, active vs never-used counts, and a sortable table (uses,
+  last used, created, leading user). Cumulative; backed by
+  `library_usage`.
+- `/dashboard/audit` - the `audit_log` table with free-text search and
+  actor / action / time-window filters, paginated newest first.
 - `/dashboard/stats` - server-wide and per-user time-and-money-saved
   estimates derived from paste telemetry.
 

@@ -892,7 +892,8 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 .fab:hover { color: var(--accent); border-color: var(--accent-line); }
-.fab svg { flex: none; }
+/* Match the extension dock's icon size exactly (20px in a 44px button). */
+.fab svg { flex: none; width: 20px; height: 20px; }
 
 /* --- User detail page --- */
 
@@ -1436,18 +1437,32 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 .lib-folder-controls {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   flex: none;
   font-size: 11px;
   color: var(--fg-dim);
 }
-.lib-sort-mode {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.lib-sort-label { text-transform: uppercase; letter-spacing: 0.06em; }
+/* Segmented A-Z / Manual toggle, mirroring the mockup's sort control. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-.lib-sort-mode select { font: inherit; font-size: 11px; }
+.seg button {
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--fg-dim);
+  border: 0;
+  cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); }
 /* Scrolling node list under the pinned bars. */
 .lib-tree {
   flex: 1;

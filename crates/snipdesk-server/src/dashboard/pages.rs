@@ -2417,13 +2417,11 @@ fn render_library_folder_tree(
     // into manual order if the admin has chosen that.
     out.push_str(
         "<div class=\"lib-folder-controls\">\
-           <label class=\"lib-sort-mode\">\
-             <span>Sort</span>\
-             <select id=\"lib-sort-mode-select\">\
-               <option value=\"alpha\">Alphabetical</option>\
-               <option value=\"manual\">Manual</option>\
-             </select>\
-           </label>\
+           <span class=\"lib-sort-label\">Sort</span>\
+           <div class=\"seg lib-sort-seg\" role=\"group\" aria-label=\"Sort order\">\
+             <button type=\"button\" data-sort=\"alpha\" aria-pressed=\"true\">A-Z</button>\
+             <button type=\"button\" data-sort=\"manual\" aria-pressed=\"false\">Manual</button>\
+           </div>\
          </div>",
     );
     // Scrolling node list: the create bar + sort row stay pinned while
@@ -4900,9 +4898,10 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   }
 
   function applySortMode() {
-    var sel = document.getElementById("lib-sort-mode-select");
     var mode = loadSortMode();
-    if (sel) sel.value = mode;
+    document.querySelectorAll(".lib-sort-seg button").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-sort") === mode));
+    });
     // Re-shuffle in BOTH modes. Alphabetical sorts by path; manual
     // sorts by (sort_order, path). Returning early in alpha mode
     // would leave the DOM in manual order until the next sidebar
@@ -4964,9 +4963,10 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   // nothing / select snaps back to alphabetical" bug - the change
   // never persisted, and the next applySortMode() reset the select
   // from the stale stored mode.
-  document.body.addEventListener("change", function (e) {
-    if (!e.target || e.target.id !== "lib-sort-mode-select") return;
-    saveSortMode(e.target.value);
+  document.body.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".lib-sort-seg button");
+    if (!b) return;
+    saveSortMode(b.getAttribute("data-sort"));
     applySortMode();
     applyFolderCollapse();
   });

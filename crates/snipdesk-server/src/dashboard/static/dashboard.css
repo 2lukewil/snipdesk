@@ -64,8 +64,12 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
   padding: 4px 10px;
   border-radius: var(--radius);
   color: var(--fg);
+  transition: box-shadow 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.nav-links a.active { background: var(--grad-accent); color: var(--accent-ink); }
+/* No underline on nav: a soft accent glow on hover reads cleaner. */
+.nav-links a:hover { text-decoration: none; box-shadow: 0 0 0 1px var(--accent-line), 0 0 16px -4px var(--accent); }
+.nav-links a:not(.active):hover { color: var(--accent); background: var(--accent-weak); }
+.nav-links a.active { background: var(--grad-accent); background-origin: border-box; color: var(--accent-ink); }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .nav-user { color: var(--fg-dim); }
 .nav-form { display: inline; }
@@ -170,7 +174,11 @@ button, .btn {
   cursor: pointer;
 }
 button:hover, .btn:hover { border-color: var(--fg-dim); }
-button.primary, .btn.primary { background: var(--grad-accent); color: var(--accent-ink); border-color: transparent; }
+/* background-origin defaults to padding-box; with the gradient clipped
+   to border-box that paints the 1px border ring in the gradient's
+   extended edge colour (a solid rim). Anchor the gradient to the border
+   box so it spans the button evenly with no rim. */
+button.primary, .btn.primary { background: var(--grad-accent); background-origin: border-box; color: var(--accent-ink); border-color: transparent; }
 button.danger, .btn.danger { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
 button.ghost, .btn.ghost { background: transparent; border-color: transparent; color: var(--fg-dim); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -1199,6 +1207,13 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 .insights-table .insight-stale td { opacity: 0.62; }
 
 /* ---- Onboarding funnel ---- */
+/* Onboarding is a narrow, centred column: headings and intro centred,
+   the funnel and roster centred as blocks while keeping their rows
+   left-aligned internally. */
+.ob-page { max-width: 760px; margin: 0 auto; }
+.ob-page h1, .ob-page > .muted, .ob-page .ob-h2 { text-align: center; }
+.ob-page .stats-grid { justify-content: center; }
+.ob-page .funnel, .ob-page .ob-nudge, .ob-page > .muted.small { margin-left: auto; margin-right: auto; }
 .ob-h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
 .funnel { display: flex; flex-direction: column; gap: 10px; max-width: 720px; margin-top: 4px; }
 /* "Awaiting activation" roster: name, furthest milestone, join time. */

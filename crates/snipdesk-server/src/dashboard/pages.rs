@@ -6642,6 +6642,7 @@ pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmi
     };
 
     let mut body = String::new();
+    body.push_str("<div class=\"ob-page\">");
     body.push_str("<h1>Onboarding</h1>");
     body.push_str(
         "<p class=\"muted\">How far new users get, from first sign-in to a daily habit. Use the \
@@ -6650,7 +6651,7 @@ pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmi
     );
 
     if signed_up == 0 {
-        body.push_str("<p class=\"muted\">No users yet.</p>");
+        body.push_str("<p class=\"muted\">No users yet.</p></div>");
         return render_page(&state, &session, "Onboarding", NavTab::Onboarding, &body)
             .await
             .into_response();
@@ -6751,6 +6752,7 @@ pub async fn onboarding_page(State(state): State<AppState>, admin: DashboardAdmi
             ));
         }
     }
+    body.push_str("</div>");
 
     render_page(&state, &session, "Onboarding", NavTab::Onboarding, &body)
         .await

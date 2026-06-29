@@ -249,8 +249,19 @@ $("open-manager").addEventListener("click", () => chrome.runtime.openOptionsPage
 
 async function applyTheme() {
   const res = await send(MSG.SETTINGS_GET);
-  const theme = res.ok ? res.data?.theme : "dark";
-  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+  const s = res.ok ? res.data || {} : {};
+  const theme =
+    s.theme === "system"
+      ? window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark"
+      : s.theme === "light"
+        ? "light"
+        : "dark";
+  document.documentElement.dataset.theme = theme;
+  const accent = (s.accent_color || "").trim();
+  if (accent) document.documentElement.style.setProperty("--accent", accent);
+  else document.documentElement.style.removeProperty("--accent");
 }
 
 applyTheme();

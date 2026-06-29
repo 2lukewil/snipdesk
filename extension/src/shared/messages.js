@@ -5,6 +5,12 @@ export const MSG = {
   PING: "ping",
   TOGGLE_LAUNCHER: "toggle-launcher",
   LAUNCH_HERE: "launch-here",
+  // Broadcast from the worker when the launcher shortcut fires, so open
+  // extension pages (the onboarding) can react.
+  LAUNCHER_OPENED: "launcher-opened",
+  // Broadcast from the worker when auth state changes (sign in/out, token
+  // expiry), so open extension pages live-update without a reload.
+  AUTH_CHANGED: "auth-changed",
 
   AUTH_STATUS: "auth-status",
   AUTH_METHODS: "auth-methods",

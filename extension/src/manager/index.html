@@ -15,7 +15,7 @@
         <span id="identity" class="identity"></span>
       </span>
       <button id="btn-logout" class="icon-btn hidden" title="Sign out" aria-label="Sign out">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
       </button>
     </header>
 
@@ -76,41 +76,67 @@
           <h2>Settings</h2>
           <button class="modal-close" data-close="settings-modal" aria-label="Close">&times;</button>
         </div>
+        <div id="settings-tabs" class="settings-tabs" role="tablist">
+          <button type="button" class="settings-tab active" data-tab="general">General</button>
+          <button type="button" class="settings-tab" data-tab="appearance">Appearance</button>
+          <button type="button" class="settings-tab" data-tab="savings">Savings</button>
+          <button type="button" class="settings-tab" data-tab="formatting">Formatting</button>
+          <button type="button" class="settings-tab" data-tab="about">About</button>
+        </div>
         <div class="modal-body">
-          <h2>Savings estimate</h2>
-          <label class="check"><input type="checkbox" id="set-show-savings" /> Show time/money saved</label>
-          <label>Typing speed (WPM)<input type="number" id="set-wpm" min="1" max="500" /></label>
-          <label>Hourly wage (0 to hide money)<input type="number" id="set-wage" min="0" step="0.01" /></label>
-          <label>Currency symbol<input type="text" id="set-currency" maxlength="8" /></label>
-          <h2>Display</h2>
-          <label>Theme
-            <select id="set-theme">
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
-          <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
-          <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
-
-          <h2>Formatting</h2>
-          <p class="muted">How <code>prefix</code>text<code>suffix</code> markup renders in the preview. Matches the desktop app, which is what WHMCS expects.</p>
-          <table class="rule-table">
-            <thead><tr><th>Label</th><th>Prefix</th><th>Suffix</th><th></th></tr></thead>
-            <tbody id="rule-rows"></tbody>
-          </table>
-          <div class="actions rule-actions">
-            <button id="btn-add-rule" class="ghost" type="button">Add rule</button>
-            <button id="btn-reset-rules" class="ghost" type="button">Reset to defaults</button>
+          <div class="settings-panel" data-panel="general">
+            <label class="check"><input type="checkbox" id="set-sort-usage" /> Sort by most used (otherwise alphabetical)</label>
+            <label class="check"><input type="checkbox" id="set-usage-count" /> Show usage counts</label>
           </div>
 
-          <div class="actions">
-            <button id="btn-save-settings" class="primary">Save settings</button>
-            <button id="btn-shortcut" class="ghost">Change shortcut</button>
-            <button id="btn-replay-onboarding" class="ghost">Replay tour</button>
-            <button id="btn-dedupe" class="ghost" type="button" title="Find snippets with identical title and body, keep the most-used in each set, and move the rest to Trash.">Remove duplicates</button>
+          <div class="settings-panel hidden" data-panel="appearance">
+            <label>Theme
+              <select id="set-theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="system">Match system</option>
+              </select>
+            </label>
+            <label>Accent color
+              <span class="accent-row">
+                <input type="color" id="set-accent" />
+                <button type="button" id="btn-accent-reset" class="ghost">Default</button>
+              </span>
+            </label>
+            <label class="check"><input type="checkbox" id="set-compact" /> Compact density</label>
           </div>
-          <div id="settings-status" class="status"></div>
+
+          <div class="settings-panel hidden" data-panel="savings">
+            <label class="check"><input type="checkbox" id="set-show-savings" /> Show time/money saved</label>
+            <label>Typing speed (WPM)<input type="number" id="set-wpm" min="1" max="500" /></label>
+            <label>Hourly wage (0 to hide money)<input type="number" id="set-wage" min="0" step="0.01" /></label>
+            <label>Currency symbol<input type="text" id="set-currency" maxlength="8" /></label>
+          </div>
+
+          <div class="settings-panel hidden" data-panel="formatting">
+            <p class="muted">How <code>prefix</code>text<code>suffix</code> markup renders in the preview. Matches the desktop app, which is what WHMCS expects.</p>
+            <table class="rule-table">
+              <thead><tr><th>Label</th><th>Prefix</th><th>Suffix</th><th></th></tr></thead>
+              <tbody id="rule-rows"></tbody>
+            </table>
+            <div class="actions rule-actions">
+              <button id="btn-add-rule" class="ghost" type="button">Add rule</button>
+              <button id="btn-reset-rules" class="ghost" type="button">Reset to defaults</button>
+            </div>
+          </div>
+
+          <div class="settings-panel hidden" data-panel="about">
+            <p class="muted">Shortcuts are managed by your browser; the launcher hotkey can be rebound on Chrome's shortcuts page.</p>
+            <div class="actions">
+              <button id="btn-shortcut" class="ghost">Change shortcut</button>
+              <button id="btn-replay-onboarding" class="ghost">Replay tour</button>
+              <button id="btn-dedupe" class="ghost" type="button" title="Find snippets with identical title and body, keep the most-used in each set, and move the rest to Trash.">Remove duplicates</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="btn-save-settings" class="primary">Save settings</button>
+          <span id="settings-status" class="status"></span>
         </div>
       </div>
     </div>
@@ -142,6 +168,8 @@
         <div class="ob-panel hidden" data-step="launcher">
           <h2>Open the launcher anywhere</h2>
           <p>Press <kbd id="ob-hotkey">Ctrl+Shift+Space</kbd> on any page to open SnipDesk. Type to search, then press Enter to drop the snippet into the field you were in.</p>
+          <p id="ob-launcher-hint" class="muted">Go ahead, give it a try.</p>
+          <p id="ob-launcher-tried" class="ob-tried hidden">Nice, that's your shortcut. It opens the launcher on any web page.</p>
           <p class="muted">Rebind it on <a href="#" id="ob-shortcut-link">Chrome's shortcuts page</a>, and pin the toolbar icon for one-click access.</p>
         </div>
 

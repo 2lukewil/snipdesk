@@ -53,6 +53,7 @@ const PENCIL_SVG =
 
 let settings = {};
 let editingRules = []; // working copy of format_rules, flushed on Save
+let accentCustom = false; // whether the accent picker holds a custom color vs the theme default
 let snippets = [];
 let pendingFolders = [];
 let folderOrder = {};
@@ -66,23 +67,40 @@ const expanded = new Set();
 let treeKeys = []; // [{ key, hasKids }] in display order, for arrow-key nav
 let navPane = "list"; // "list" | "tree" - which section the arrow keys drive
 
-async function init() {
+// Reflect the current auth state in the header/dock. Toggles both ways so
+// it's correct whether called on load or live after a sign in/out.
+async function applyAuthUi() {
   const status = (await send(MSG.AUTH_STATUS)).data || {};
+  const signedIn = !!status.signedIn;
+  const isAdmin = signedIn && status.user?.role === "admin";
+  $("btn-logout").classList.toggle("hidden", !signedIn);
+  $("identity").textContent = signedIn
+    ? status.user?.display_name || status.user?.email || ""
+    : "";
+  $("btn-dashboard").classList.toggle("hidden", !isAdmin);
+  $("admin-badge").classList.toggle("hidden", !isAdmin);
+}
+
+// Live-update when auth changes elsewhere (e.g. signing in/out from the
+// popup): refresh the header/dock, the snippet list (the team library
+// appears or disappears), and the status dot - no reload needed.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type !== MSG.AUTH_CHANGED) return;
+  applyAuthUi();
+  loadSnippets();
+  statusTick();
+});
+
+async function init() {
   $("dock").classList.remove("hidden");
   $("tab-snippets").classList.remove("hidden");
-  if (status.signedIn) {
-    $("btn-logout").classList.remove("hidden");
-    $("identity").textContent = status.user?.display_name || status.user?.email || "";
-    if (status.user?.role === "admin") {
-      $("btn-dashboard").classList.remove("hidden");
-      $("admin-badge").classList.remove("hidden");
-    }
-  }
+  await applyAuthUi();
   // Signed out is local-only: the bottom-left status dot reads "Local only";
   // the toolbar and dock stay fully usable.
 
   settings = (await send(MSG.SETTINGS_GET)).data || {};
   applyTheme();
+  applyAccent();
   pendingFolders = await getPendingFolders();
   folderOrder = await getFolderOrder();
   await loadSnippets();
@@ -155,7 +173,10 @@ async function refreshServerStatus() {
 // ---- modals (trash / settings) ----
 function openModalEl(id) {
   $(id).classList.remove("hidden");
-  if (id === "settings-modal") fillSettingsForm();
+  if (id === "settings-modal") {
+    fillSettingsForm();
+    applyAccent(); // revert any unsaved accent preview to the saved value
+  }
   if (id === "trash-modal") loadTrash();
 }
 
@@ -177,6 +198,7 @@ const OB_PHRASE =
 let obStep = 0;
 let obTyping = null; // { startedAt, wpm }
 let obWpm = null; // measured WPM, applied on advancing past the typing step
+let launcherTried = false; // set when the launcher shortcut fires during onboarding
 
 function guessCurrencyFromLocale() {
   const map = {
@@ -274,15 +296,71 @@ function renderOnboarding() {
   OB_STEPS.forEach((_, i) => prog.appendChild(el("span", "ob-dot" + (i === obStep ? " active" : ""))));
   $("ob-back").classList.toggle("hidden", obStep === 0);
   $("ob-next").textContent = obStep === OB_STEPS.length - 1 ? "Get started" : "Next";
+  if (OB_STEPS[obStep] === "launcher") {
+    refreshLauncherHotkey();
+    $("ob-launcher-hint").classList.toggle("hidden", launcherTried);
+    $("ob-launcher-tried").classList.toggle("hidden", !launcherTried);
+  }
   if (OB_STEPS[obStep] === "typing") primeTyping();
   if (OB_STEPS[obStep] === "wage") primeWage();
 }
 
+// Show the launcher command's real bound shortcut, so a rebind is
+// reflected here. Empty means the user cleared it on Chrome's page.
+async function refreshLauncherHotkey() {
+  let shortcut = "";
+  try {
+    const cmds = await chrome.commands.getAll();
+    shortcut = (cmds.find((c) => c.name === "open-launcher")?.shortcut || "").trim();
+  } catch (_e) {
+    /* chrome.commands unavailable; leave the default text */
+  }
+  const kbd = $("ob-hotkey");
+  if (!kbd) return;
+  kbd.textContent = shortcut || "not set";
+  kbd.classList.toggle("unset", !shortcut);
+  // No shortcut bound: nudge toward setting one rather than "try it".
+  const hint = $("ob-launcher-hint");
+  if (hint && !launcherTried) {
+    hint.textContent = shortcut
+      ? "Go ahead, give it a try."
+      : "No shortcut yet. Set one on Chrome's shortcuts page below.";
+  }
+}
+
 function showOnboarding() {
   obStep = 0;
+  launcherTried = false;
   renderOnboarding();
   $("onboarding-modal").classList.remove("hidden");
 }
+
+// The worker broadcasts LAUNCHER_OPENED when the shortcut fires. If the
+// onboarding is on the launcher step, acknowledge that they tried it.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type !== MSG.LAUNCHER_OPENED) return;
+  launcherTried = true;
+  const onboarding = $("onboarding-modal");
+  if (onboarding && !onboarding.classList.contains("hidden") && OB_STEPS[obStep] === "launcher") {
+    $("ob-launcher-hint").classList.add("hidden");
+    $("ob-launcher-tried").classList.remove("hidden");
+  }
+});
+
+// Re-read the bound shortcut whenever this tab regains focus. There's no
+// event for a rebind, but changing it happens on Chrome's shortcuts page
+// (another tab), so returning here is the cue to refresh - the displayed
+// hotkey updates live without leaving the step.
+function refreshHotkeyIfOnLauncherStep() {
+  const onboarding = $("onboarding-modal");
+  if (onboarding && !onboarding.classList.contains("hidden") && OB_STEPS[obStep] === "launcher") {
+    refreshLauncherHotkey();
+  }
+}
+window.addEventListener("focus", refreshHotkeyIfOnLauncherStep);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshHotkeyIfOnLauncherStep();
+});
 
 async function finishOnboarding() {
   await commitOnboardingStep(OB_STEPS[obStep]);
@@ -1038,6 +1116,13 @@ function openEditor(snippet, prefill) {
   const folder = inputField(fieldRow, "Folder", snippet?.folder_path || "", readOnly, "f-folder");
   const tags = inputField(fieldRow, "Tags", (snippet?.tags || []).join(", "), readOnly, "f-tags");
   editor.appendChild(fieldRow);
+  // Usage line for saved snippets, mirroring the desktop preview.
+  if (snippet) {
+    const uses = snippet.uses || 0;
+    let usageText = `Used ${uses} time${uses === 1 ? "" : "s"}`;
+    if (snippet.last_used) usageText += ` · last used ${formatWhen(snippet.last_used)}`;
+    editor.appendChild(el("div", "editor-usage muted", usageText));
+  }
   if (!snippet) title.focus(); // new snippet (incl. context-menu capture): jump to the title
 
   const bodyLabel = el("label", "f-body", "Body");
@@ -1163,6 +1248,8 @@ function fillSettingsForm() {
   $("set-sort-usage").checked = settings.sort_by_usage !== false;
   $("set-usage-count").checked = settings.show_usage_count !== false;
   $("set-theme").value = settings.theme || "dark";
+  accentCustom = !!(settings.accent_color || "").trim();
+  $("set-accent").value = accentCustom ? settings.accent_color : themeDefaultAccent();
   $("set-compact").checked = !!settings.compact;
   editingRules = (settings.format_rules?.length ? settings.format_rules : DEFAULT_FORMAT_RULES).map((r) => ({ ...r }));
   renderRuleEditor();
@@ -1200,8 +1287,35 @@ function renderRuleEditor() {
   });
 }
 
+function resolveTheme(theme) {
+  if (theme === "system") {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  }
+  return theme === "light" ? "light" : "dark";
+}
+
 function applyTheme() {
-  document.documentElement.dataset.theme = settings.theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = resolveTheme(settings.theme);
+}
+
+// Custom accent overrides the theme default; empty falls back to it.
+// theme.css derives --accent-2 from --accent, so the override cascades.
+function applyAccent() {
+  const c = (settings.accent_color || "").trim();
+  if (c) document.documentElement.style.setProperty("--accent", c);
+  else document.documentElement.style.removeProperty("--accent");
+}
+
+// The theme's built-in accent, read with any custom override removed.
+function themeDefaultAccent() {
+  const root = document.documentElement;
+  const prev = root.style.getPropertyValue("--accent");
+  root.style.removeProperty("--accent");
+  const def = getComputedStyle(root).getPropertyValue("--accent").trim() || "#4c9aff";
+  if (prev) root.style.setProperty("--accent", prev);
+  return def;
 }
 
 function applyDensity() {
@@ -1217,6 +1331,7 @@ async function saveSettings() {
     sort_by_usage: $("set-sort-usage").checked,
     show_usage_count: $("set-usage-count").checked,
     theme: $("set-theme").value,
+    accent_color: accentCustom ? ($("set-accent").value || "").trim() : "",
     compact: $("set-compact").checked,
     format_rules: editingRules
       .map((r) => ({ label: (r.label || "").trim(), prefix: r.prefix || "", suffix: r.suffix || "" }))
@@ -1227,6 +1342,7 @@ async function saveSettings() {
   if (res.ok) {
     settings = res.data;
     applyTheme();
+    applyAccent();
     applyDensity();
     status.textContent = "Saved.";
     status.className = "status ok";
@@ -1590,6 +1706,30 @@ function onGlobalNavKey(e) {
 function wire() {
   $("btn-trash").addEventListener("click", () => openModalEl("trash-modal"));
   $("btn-settings").addEventListener("click", () => openModalEl("settings-modal"));
+  // Settings tabs: clicking a tab reveals its panel.
+  $("settings-tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".settings-tab");
+    if (!tab) return;
+    const name = tab.dataset.tab;
+    for (const b of document.querySelectorAll(".settings-tab")) b.classList.toggle("active", b === tab);
+    for (const p of document.querySelectorAll(".settings-panel")) p.classList.toggle("hidden", p.dataset.panel !== name);
+  });
+  // Accent picker: live-preview on change; "Default" clears to the theme accent.
+  $("set-accent").addEventListener("input", () => {
+    accentCustom = true;
+    document.documentElement.style.setProperty("--accent", $("set-accent").value);
+  });
+  $("btn-accent-reset").addEventListener("click", () => {
+    accentCustom = false;
+    document.documentElement.style.removeProperty("--accent");
+    $("set-accent").value = themeDefaultAccent();
+  });
+  // Re-resolve "Match system" when the OS scheme flips.
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (settings.theme === "system") applyTheme();
+    });
+  }
   for (const btn of document.querySelectorAll(".modal-close")) {
     btn.addEventListener("click", () => closeModalEl(btn.dataset.close));
   }

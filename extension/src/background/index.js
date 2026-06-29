@@ -41,7 +41,12 @@ chrome.alarms.onAlarm.addListener((a) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === "open-launcher") launcherOnActiveTab();
+  if (command === "open-launcher") {
+    launcherOnActiveTab();
+    // Tell any open extension page (the onboarding) the shortcut fired.
+    // Best-effort: no receiver when nothing's listening.
+    chrome.runtime.sendMessage({ type: MSG.LAUNCHER_OPENED }).catch(() => {});
+  }
 });
 
 function launcherOnActiveTab() {
@@ -88,15 +93,23 @@ function launchWebAuthFlow(url) {
 async function authError(e) {
   if (e instanceof api.ApiError && (e.kind === "unauthorized" || e.kind === "inactive")) {
     await store.clearSession();
+    broadcastAuthChanged();
     return { ok: false, error: e.message, signedOut: true, reason: e.kind };
   }
   return { ok: false, error: e?.message || String(e) };
+}
+
+// Tell open extension pages (popup, manager) that auth state changed so
+// they live-update. Best-effort: no receiver when nothing's listening.
+function broadcastAuthChanged() {
+  chrome.runtime.sendMessage({ type: MSG.AUTH_CHANGED }).catch(() => {});
 }
 
 async function afterSignIn(serverUrl, auth) {
   await store.setToken(auth.token);
   await store.setUser(auth.user);
   await store.setSettings({ server_url: serverUrl });
+  broadcastAuthChanged();
   await syncNow();
   return { ok: true, data: { user: auth.user } };
 }
@@ -387,6 +400,7 @@ const handlers = {
       await store.setToken(token);
       await store.setUser(meRes.user);
       await store.setSettings({ server_url: serverUrl });
+      broadcastAuthChanged();
       await syncNow();
       return { ok: true, data: { user: meRes.user } };
     } catch (e) {
@@ -414,6 +428,7 @@ const handlers = {
       await store.setToken(token);
       await store.setUser(meRes.user);
       await store.setSettings({ server_url: serverUrl });
+      broadcastAuthChanged();
       syncNow().catch(() => {});
       return { ok: true, data: { user: meRes.user } };
     } catch (e) {
@@ -423,6 +438,7 @@ const handlers = {
 
   [MSG.AUTH_LOGOUT]: async () => {
     await store.clearSession();
+    broadcastAuthChanged();
     return { ok: true };
   },
 

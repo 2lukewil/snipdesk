@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   sort_by_usage: true,
   show_usage_count: true,
   theme: "dark",
+  accent_color: "",
   compact: false,
   onboarded: false,
   format_rules: DEFAULT_FORMAT_RULES,
@@ -132,7 +133,13 @@ export async function clearPendingNewSnippet() {
 }
 
 export async function clearSession() {
-  await remove(["token", "user", "cache_personal", "cache_library"]);
+  // Personal snippets stay on the device so the extension is fully usable
+  // signed out / offline, matching the desktop. Only the auth token, the
+  // cached identity, and the team library (which only exists while signed
+  // in) are dropped. cache_personal keeps its sync high-water mark so the
+  // same user re-signing in resumes a delta sync and any edits made while
+  // signed out still push up.
+  await remove(["token", "user", "cache_library"]);
 }
 
 // Admin-managed config from enterprise policy (chrome.storage.managed).

@@ -33,14 +33,25 @@ header .user { display: inline-flex; align-items: center; gap: 6px; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  /* Half the original (was 44px), sized to sit within the brand's line
+     box (~32px) so showing it when signed in doesn't grow the header.
+     The icon size comes from the svg's width/height attributes. */
+  /* flex:none so the header's flex layout can't shrink the button on the
+     main axis (which collapsed it to the icon width). Square + zeroed
+     global button padding (8px 14px) keeps the icon evenly centered. */
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   background: transparent;
   border: 0;
   color: var(--text-dim);
   border-radius: var(--radius);
   cursor: pointer;
 }
+/* Keep the icon at its true (square) size: as a flex item it would
+   otherwise shrink horizontally and collapse the glyph. */
+.icon-btn svg { flex: none; }
 .icon-btn:hover { color: var(--text); background: var(--bg-3); }
 
 /* Content fills the whole viewport under the header, edge to edge. */
@@ -393,6 +404,12 @@ button.danger { border-color: var(--danger); color: var(--danger); }
   color: var(--text);
   white-space: nowrap;
 }
+.onboarding-card kbd.unset { color: var(--text-dim); font-style: italic; }
+/* Acknowledgment shown once the user fires their launcher shortcut. */
+.onboarding-card p.ob-tried {
+  color: color-mix(in srgb, #2ea043 70%, var(--text));
+  font-weight: 600;
+}
 .ob-progress { display: flex; justify-content: center; gap: 8px; margin-bottom: 22px; }
 .ob-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.15s, width 0.15s; }
 .ob-dot.active { width: 20px; border-radius: 4px; background: var(--accent); }
@@ -593,3 +610,39 @@ body.compact .tree-node { padding: 3px 8px; }
 .status.ok { color: var(--accent); }
 .status.err { color: var(--danger); }
 .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+
+/* Settings modal: tabbed layout with a sticky save footer. */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 8px 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-tab {
+  width: auto;
+  margin: 0;
+  padding: 7px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.settings-tab:hover:not(:disabled) { color: var(--text); border-color: transparent; }
+.settings-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.modal-settings .modal-body { max-height: 64vh; }
+.modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.modal-foot button { width: auto; margin-top: 0; }
+.modal-foot .status { margin-top: 0; }
+.accent-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.accent-row input[type="color"] { width: 46px; height: 30px; padding: 2px; margin-top: 0; cursor: pointer; }
+.accent-row button { width: auto; margin-top: 0; padding: 6px 12px; }
+.editor-usage { margin-bottom: 12px; }

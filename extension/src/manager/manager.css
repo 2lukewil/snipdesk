@@ -111,7 +111,7 @@ button.danger { border-color: var(--danger); color: var(--danger); }
   flex: 1;
   min-height: 0;
 }
-.pane { border: 1px solid var(--border); min-height: 0; overflow-y: auto; }
+.pane { border: 1px solid var(--border); min-height: 0; overflow-y: auto; background: var(--bg-elev); }
 /* Folder tree + snippet list + editor read as one connected, edge-to-edge
    unit: no gap, shared dividers, no rounding, flush to the screen. */
 .tree-pane { border-radius: 0; border-left-width: 0; border-right-width: 0; }
@@ -246,7 +246,7 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 .list .empty { padding: 14px; color: var(--text-dim); }
 
 /* Editor */
-.editor { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.editor { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-elev); }
 /* Title / Folder / Tags share one row; the wide editor pane has room,
    so they shrink rather than wrap. */
 .editor-fields { display: flex; flex-wrap: nowrap; gap: 10px; margin-bottom: 12px; }

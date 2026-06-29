@@ -3226,6 +3226,7 @@ fn render_library_row_highlighted(r: &LibraryRow, q: &str) -> String {
         "<div class=\"library-row\" id=\"lib-{id_attr}\" \
              draggable=\"true\" data-snippet-id=\"{id_attr}\" \
              hx-get=\"/dashboard/library/{id_attr}/edit\" \
+             hx-trigger=\"click[!shiftKey&&!ctrlKey&&!metaKey]\" \
              hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
            <div class=\"t\"><span class=\"t-text\">{title}</span>\
              <span class=\"t-right\">{uses}</span></div>\
@@ -3276,10 +3277,8 @@ fn render_library_editor(r: &LibraryRow) -> String {
            </div>\
            <div class=\"actions\">\
              <button class=\"primary\" type=\"submit\">Save changes</button>\
-             <button type=\"button\" class=\"btn danger\" \
-                hx-delete=\"/dashboard/library/{id_attr}\" \
-                hx-confirm=\"Delete library snippet '{title_attr}'?\" \
-                hx-target=\"#library-editor\" hx-swap=\"innerHTML\">Delete</button>\
+             <button type=\"button\" class=\"btn danger\" id=\"library-editor-delete\" \
+                data-id=\"{id_attr}\">Delete</button>\
              <span class=\"editor-meta\">updated {when}</span>\
            </div>\
          </form>",
@@ -3967,47 +3966,208 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     if (e.target && e.target.id === "library-editor-body") refreshEditorPreview();
   });
 
-  // ---- List selection ----
+  // ---- List selection (single + multi) and optimistic mutations ----
   //
-  // Clicking a row loads its editor into #library-editor (the row's
-  // hx-get does the fetch). We track the selected id in a variable so
-  // the active highlight survives the 5s list re-swap. After the
-  // editor swaps we re-derive the selection from the form htmx put
-  // back: an edit/save returns a form with hx-put="/dashboard/library/<id>"
-  // (highlight that row); a delete or "+ new" returns a form with no
-  // hx-put (clear the highlight).
-  var selectedSnippetId = null;
-  function applyRowSelection() {
+  // Plain click opens a row's editor (its gated hx-get does the fetch);
+  // ctrl/cmd toggles a row into a multi-selection; shift selects a range
+  // from the anchor. 2+ selected swaps the editor pane for a bulk bar.
+  // Selection is re-applied after the 5s list re-swap.
+  //
+  // Mutations are optimistic: the DOM updates immediately and the request
+  // runs in the background so actions feel local. Optimistically removed
+  // ids are tracked so a poll that races the DELETE can't flash them back;
+  // a failed request rolls the row back and toasts.
+  var selectedSnippetId = null;          // single active snippet (editor target)
+  var selSet = Object.create(null);      // id -> true, the multi-selection
+  var anchorId = null;                   // shift-range anchor
+  var pendingRemoved = Object.create(null); // optimistically deleted, awaiting the server
+
+  function listRows() {
     var list = document.getElementById("library-list");
-    if (!list) return;
-    Array.prototype.forEach.call(
-      list.querySelectorAll(".library-row"),
-      function (row) {
-        row.classList.toggle(
-          "active",
-          row.getAttribute("data-snippet-id") === selectedSnippetId
-        );
-      }
-    );
+    return list ? Array.prototype.slice.call(list.querySelectorAll(".library-row")) : [];
   }
+  function rowIds() {
+    return listRows().map(function (r) { return r.getAttribute("data-snippet-id"); });
+  }
+  function selCount() { return Object.keys(selSet).length; }
+  function clearMultiSel() { selSet = Object.create(null); }
+
+  function applyRowSelection() {
+    listRows().forEach(function (row) {
+      var id = row.getAttribute("data-snippet-id");
+      row.classList.toggle("active", id === selectedSnippetId && selCount() === 0);
+      row.classList.toggle("selected", !!selSet[id]);
+    });
+  }
+
+  // Drop rows that were optimistically deleted, so a poll/refresh racing
+  // the background DELETE doesn't flash them back before it commits.
+  function hidePendingRemoved() {
+    listRows().forEach(function (row) {
+      if (pendingRemoved[row.getAttribute("data-snippet-id")]) row.remove();
+    });
+  }
+
+  function showEditorPlaceholder() {
+    var ed = document.getElementById("library-editor");
+    if (ed) ed.innerHTML = '<p class="placeholder">Select a snippet, or create a new one.</p>';
+  }
+  function refreshSidebar() {
+    if (!window.htmx) return;
+    var sb = document.getElementById("library-sidebar");
+    if (sb) window.htmx.trigger(sb, "refresh-now");
+  }
+  function toast(msg) {
+    var b = document.createElement("div");
+    b.className = "banner error";
+    b.textContent = msg;
+    var panes = document.querySelector(".library-three-pane");
+    if (panes && panes.parentNode) panes.parentNode.insertBefore(b, panes);
+    setTimeout(function () { b.remove(); }, 4000);
+  }
+
+  // Optimistically remove rows, then DELETE each in the background.
+  function deleteIds(ids) {
+    if (!ids.length) return;
+    var saved = {};
+    listRows().forEach(function (r) {
+      var id = r.getAttribute("data-snippet-id");
+      if (ids.indexOf(id) !== -1) saved[id] = { node: r, next: r.nextSibling, parent: r.parentNode };
+    });
+    ids.forEach(function (id) {
+      pendingRemoved[id] = true;
+      if (saved[id]) saved[id].node.remove();
+    });
+    clearMultiSel();
+    selectedSnippetId = null;
+    showEditorPlaceholder();
+    applyRowSelection();
+    ids.forEach(function (id) {
+      fetch("/dashboard/library/" + encodeURIComponent(id), { method: "DELETE" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("status " + r.status);
+          delete pendingRemoved[id];
+        })
+        .catch(function () {
+          delete pendingRemoved[id];
+          var info = saved[id];
+          if (info && info.parent) info.parent.insertBefore(info.node, info.next);
+          toast("Couldn't delete a snippet; it was restored.");
+        });
+    });
+    refreshSidebar();
+  }
+
+  function showBulkBar() {
+    var ed = document.getElementById("library-editor");
+    if (!ed) return;
+    var n = selCount();
+    ed.innerHTML =
+      '<div class="bulk-bar"><p class="bulk-count">' + n + " snippet" + (n === 1 ? "" : "s") +
+      ' selected</p><div class="actions">' +
+      '<button type="button" class="btn danger" id="bulk-delete">Delete selected</button>' +
+      '<button type="button" class="btn" id="bulk-clear">Clear</button></div></div>';
+    document.getElementById("bulk-delete").addEventListener("click", function () {
+      var ids = Object.keys(selSet);
+      if (!ids.length) return;
+      if (!window.confirm("Delete " + ids.length + " library snippet" + (ids.length === 1 ? "" : "s") + "?")) return;
+      deleteIds(ids);
+    });
+    document.getElementById("bulk-clear").addEventListener("click", function () {
+      clearMultiSel();
+      applyRowSelection();
+      showEditorPlaceholder();
+    });
+  }
+
+  function loadEditor(id) {
+    if (window.htmx) {
+      window.htmx.ajax("GET", "/dashboard/library/" + encodeURIComponent(id) + "/edit",
+        { target: "#library-editor", swap: "innerHTML" });
+    }
+  }
+
   var listEl = document.getElementById("library-list");
   if (listEl) {
     listEl.addEventListener("click", function (e) {
       var row = e.target.closest && e.target.closest(".library-row[data-snippet-id]");
       if (!row) return;
-      selectedSnippetId = row.getAttribute("data-snippet-id");
-      applyRowSelection();
+      var id = row.getAttribute("data-snippet-id");
+      var ids = rowIds();
+      if (e.shiftKey && anchorId && ids.indexOf(anchorId) !== -1) {
+        var lo = Math.min(ids.indexOf(anchorId), ids.indexOf(id));
+        var hi = Math.max(ids.indexOf(anchorId), ids.indexOf(id));
+        clearMultiSel();
+        for (var i = lo; i <= hi; i++) selSet[ids[i]] = true;
+      } else if (e.ctrlKey || e.metaKey) {
+        // Fold the currently-open snippet into the selection so the first
+        // ctrl-click adds a second row rather than restarting from one.
+        if (selCount() === 0 && selectedSnippetId) selSet[selectedSnippetId] = true;
+        if (selSet[id]) delete selSet[id]; else selSet[id] = true;
+        anchorId = id;
+      } else {
+        // Plain click: single-select; the row's gated hx-get loads the editor.
+        clearMultiSel();
+        selectedSnippetId = id;
+        anchorId = id;
+        applyRowSelection();
+        return;
+      }
+      var n = selCount();
+      if (n > 1) {
+        selectedSnippetId = null;
+        applyRowSelection();
+        showBulkBar();
+      } else if (n === 1) {
+        selectedSnippetId = Object.keys(selSet)[0];
+        clearMultiSel();
+        applyRowSelection();
+        loadEditor(selectedSnippetId);
+      } else {
+        selectedSnippetId = null;
+        applyRowSelection();
+        showEditorPlaceholder();
+      }
     });
   }
+
+  // Optimistic delete from the editor's Delete button (JS, not hx-delete).
+  document.body.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest("#library-editor-delete");
+    if (!btn) return;
+    var id = btn.getAttribute("data-id");
+    if (!id) return;
+    if (!window.confirm("Delete this library snippet?")) return;
+    deleteIds([id]);
+  });
+
+  // Optimistic save: paint the new title onto the row immediately; the
+  // hx-put still runs and the libraryChanged refresh confirms it.
+  document.body.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || form.id !== "library-editor-form") return;
+    var put = form.getAttribute("hx-put");
+    if (!put) return; // the create form has no hx-put yet
+    var id = put.split("/").pop();
+    var titleInput = form.querySelector('input[name="title"]');
+    var row = document.querySelector('#library-list .library-row[data-snippet-id="' + id + '"]');
+    if (row && titleInput) {
+      var t = row.querySelector(".t-text");
+      if (t) t.textContent = titleInput.value;
+    }
+  });
+
   document.body.addEventListener("htmx:afterSwap", function (e) {
     if (!e.target) return;
     if (e.target.id === "library-list") {
+      hidePendingRemoved();
       applyRowSelection();
     } else if (e.target.id === "library-editor") {
       var form = e.target.querySelector(".editor-form[hx-put]");
-      selectedSnippetId = form
-        ? (form.getAttribute("hx-put") || "").split("/").pop()
-        : null;
+      if (form) {
+        selectedSnippetId = (form.getAttribute("hx-put") || "").split("/").pop();
+        clearMultiSel(); // an editor form means single mode
+      }
       applyRowSelection();
       refreshEditorPreview();
     }
@@ -4249,15 +4409,37 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
     clearDropPositionClasses();
     if (draggingKind === "snippet" && draggingId) {
       var folder = node.hasAttribute("data-unfiled") ? "" : target;
+      // Optimistic: if the snippet leaves the folder being viewed, drop it
+      // from the list now; otherwise it stays and the chip updates on
+      // refresh. The PUT runs in the background and reconciles on error.
+      var view = (document.getElementById("library-folder-input") || {}).value || "__all__";
+      var staysInView = view === "__all__"
+        ? true
+        : view === "__unfiled__"
+          ? folder === ""
+          : (folder === view || folder.indexOf(view + "/") === 0);
+      var moved = document.querySelector('#library-list .library-row[data-snippet-id="' + draggingId + '"]');
+      var rowInfo = null;
+      if (!staysInView && moved) {
+        rowInfo = { node: moved, next: moved.nextSibling, parent: moved.parentNode };
+        moved.remove();
+      }
       var params = new URLSearchParams();
       params.append("folder_path", folder);
       fetch("/dashboard/library/" + encodeURIComponent(draggingId) + "/move", {
         method: "PUT",
         body: params,
-      }).then(function (r) {
-        if (!r.ok) { console.warn("snippet move failed", r.status); return; }
-        refreshLibrary();
-      });
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error("status " + r.status);
+          refreshSidebar();
+          if (staysInView) refreshLibrary();
+        })
+        .catch(function () {
+          if (rowInfo && rowInfo.parent) rowInfo.parent.insertBefore(rowInfo.node, rowInfo.next);
+          toast("Couldn't move the snippet; it was put back.");
+          refreshLibrary();
+        });
     } else if (draggingKind === "folder" && draggingId) {
       if (!target || target === draggingId || target.indexOf(draggingId + "/") === 0) {
         return;

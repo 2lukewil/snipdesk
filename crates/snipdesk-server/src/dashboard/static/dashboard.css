@@ -415,7 +415,18 @@ input[type="search"]::-webkit-search-cancel-button:hover { background-color: var
 .library-row:last-child { border-bottom: 0; }
 .library-row:hover { background: var(--bg-hover); }
 .library-row.active { background: var(--bg-3); border-left-color: var(--accent); }
+/* Multi-selection (ctrl/shift click): a clear accent wash distinct from
+   the single-active row. */
+.library-row.selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-left-color: var(--accent);
+}
 .library-row.dragging { opacity: 0.5; }
+
+/* Bulk-action bar shown in the editor pane when 2+ rows are selected. */
+.bulk-bar { padding: 4px 2px; }
+.bulk-bar .bulk-count { font-weight: 600; margin: 0 0 14px; }
+.bulk-bar .actions { display: flex; gap: 8px; }
 .library-row[draggable="true"] { cursor: grab; }
 .library-row .t { font-weight: 500; display: flex; align-items: center; gap: 8px; }
 .library-row .t-text {

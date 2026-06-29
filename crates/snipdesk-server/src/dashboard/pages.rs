@@ -6061,7 +6061,30 @@ pub struct AuditPageQuery {
     /// the list falls back to AUDIT_DEFAULT_PAGE_SIZE.
     #[serde(default)]
     pub per_page: Option<i64>,
+    /// Free-text search across actor, action, target, and details.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Action verb filter (create/update/delete/move/signin).
+    #[serde(default)]
+    pub action: Option<String>,
+    /// Actor user id filter.
+    #[serde(default)]
+    pub actor: Option<String>,
+    /// Time window in days (1/7/30); absent or 0 means all time.
+    #[serde(default)]
+    pub since: Option<i64>,
 }
+
+/// Action verbs offered in the audit filter dropdown, matched against
+/// the segment after the last dot of an action code.
+const AUDIT_ACTION_VERBS: &[&str] = &["create", "update", "delete", "move", "signin"];
+/// Time-window choices: (days, label). 0 = all time.
+const AUDIT_SINCE_CHOICES: &[(i64, &str)] = &[
+    (0, "All time"),
+    (1, "Last 24h"),
+    (7, "7 days"),
+    (30, "30 days"),
+];
 
 /// Choices we let the admin pick from in the dropdown. Defaulting
 /// to 25 keeps the page short on first load; an operator combing
@@ -6083,6 +6106,31 @@ fn audit_page_size(req: Option<i64>) -> i64 {
     }
 }
 
+/// Serialise the active filters into a `&key=value` fragment to append
+/// to pager links (page + per_page are added by the caller). Empty
+/// filters contribute nothing, so an unfiltered view keeps clean URLs.
+fn audit_filter_query(
+    q: Option<&str>,
+    action: Option<&str>,
+    actor: Option<&str>,
+    since: Option<i64>,
+) -> String {
+    let mut s = String::new();
+    if let Some(v) = q {
+        s.push_str(&format!("&q={}", urlencoding::encode(v)));
+    }
+    if let Some(v) = action {
+        s.push_str(&format!("&action={}", urlencoding::encode(v)));
+    }
+    if let Some(v) = actor {
+        s.push_str(&format!("&actor={}", urlencoding::encode(v)));
+    }
+    if let Some(d) = since {
+        s.push_str(&format!("&since={d}"));
+    }
+    s
+}
+
 pub async fn audit_page(
     State(state): State<AppState>,
     admin: DashboardAdmin,
@@ -6094,27 +6142,41 @@ pub async fn audit_page(
     let per_page = audit_page_size(q.per_page);
     let page = q.page.unwrap_or(0).clamp(0, AUDIT_MAX_PAGES);
     let offset = page * per_page;
-    // Total + page count drive both the "page N of M" display and
-    // the next-link condition. The old `rows.len() == PAGE_SIZE`
-    // heuristic only worked once the first page was completely
-    // full, which made the pager look broken on small instances.
-    // COUNT must apply the same hidden-action filter as list_recent
-    // or the pager's "page N of M" claim disagrees with what
-    // actually appears in the table.
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM audit_log{}",
-        crate::audit::hidden_actions_filter_sql("WHERE"),
-    );
-    let total: i64 = sqlx::query_scalar(&count_sql)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(0);
+
+    // Normalise the filter inputs: trim free text, allowlist the verb
+    // and time window so a hand-edited URL can't smuggle anything odd
+    // into the query builder.
+    let q_text = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let action_verb = q
+        .action
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| AUDIT_ACTION_VERBS.contains(s));
+    let actor_id = q.actor.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let since_days = q
+        .since
+        .filter(|d| AUDIT_SINCE_CHOICES.iter().any(|(c, _)| c == d && *c != 0));
+    let filter = crate::audit::AuditFilter {
+        q: q_text.map(str::to_string),
+        action_verb: action_verb.map(str::to_string),
+        actor_id: actor_id.map(str::to_string),
+        since_ts: since_days.map(|d| chrono::Utc::now().timestamp() - d * 86400),
+    };
+    // Query-string carrying the active filters, appended to every pager
+    // and per-page link so navigation preserves the current view.
+    let filter_qs = audit_filter_query(q_text, action_verb, actor_id, since_days);
+
+    // Total + page count drive both the "page N of M" display and the
+    // next-link condition; both run the same filter so the pager's
+    // claim matches the table.
+    let total: i64 = crate::audit::count_filtered(&state.pool, &filter).await;
     let total_pages = if total == 0 {
         1
     } else {
         ((total + per_page - 1) / per_page).min(AUDIT_MAX_PAGES + 1)
     };
-    let rows = crate::audit::list_recent(&state.pool, per_page, offset).await;
+    let rows = crate::audit::list_filtered(&state.pool, &filter, per_page, offset).await;
+    let actors = crate::audit::distinct_actors(&state.pool).await;
 
     // Pre-fetch display_name + email for every user target on
     // this page so the target column renders as "Name <email>"
@@ -6204,8 +6266,82 @@ pub async fn audit_page(
          Append-only; entries don't expire. Sorted newest first.</p>",
     );
 
+    // ---- Filter bar (GET form; selects auto-submit, search submits on
+    // Enter). Every control resets to page 0 so a narrowed result set
+    // starts at its newest entry. The active values stay selected so
+    // the form reflects the current view after a reload. ----
+    let any_filter =
+        q_text.is_some() || action_verb.is_some() || actor_id.is_some() || since_days.is_some();
+    body.push_str("<form method=\"get\" action=\"/dashboard/audit\" class=\"audit-filters\">");
+    body.push_str(&format!(
+        "<input type=\"search\" name=\"q\" class=\"audit-search\" placeholder=\"Search actor, action, target, details...\" value=\"{}\" />",
+        escape_html(q_text.unwrap_or(""))
+    ));
+    body.push_str("<select name=\"action\" aria-label=\"Action\" onchange=\"this.form.submit()\">");
+    body.push_str("<option value=\"\">All actions</option>");
+    for v in AUDIT_ACTION_VERBS {
+        let sel = if action_verb == Some(*v) {
+            " selected"
+        } else {
+            ""
+        };
+        body.push_str(&format!(
+            "<option value=\"{v}\"{sel}>{}</option>",
+            capitalize(v)
+        ));
+    }
+    body.push_str("</select>");
+    body.push_str("<select name=\"actor\" aria-label=\"Actor\" onchange=\"this.form.submit()\">");
+    body.push_str("<option value=\"\">All actors</option>");
+    for (aid, email) in &actors {
+        let sel = if actor_id == Some(aid.as_str()) {
+            " selected"
+        } else {
+            ""
+        };
+        body.push_str(&format!(
+            "<option value=\"{}\"{sel}>{}</option>",
+            escape_html(aid),
+            escape_html(email)
+        ));
+    }
+    body.push_str("</select>");
+    body.push_str(
+        "<select name=\"since\" aria-label=\"Time range\" onchange=\"this.form.submit()\">",
+    );
+    for (days, label) in AUDIT_SINCE_CHOICES {
+        let is_sel = since_days == Some(*days) || (*days == 0 && since_days.is_none());
+        let sel = if is_sel { " selected" } else { "" };
+        body.push_str(&format!("<option value=\"{days}\"{sel}>{label}</option>"));
+    }
+    body.push_str("</select>");
+    // per_page rides in the same form so changing it keeps the filters.
+    body.push_str(
+        "<select name=\"per_page\" aria-label=\"Per page\" onchange=\"this.form.submit()\">",
+    );
+    for choice in AUDIT_PAGE_CHOICES {
+        let sel = if *choice == per_page { " selected" } else { "" };
+        body.push_str(&format!(
+            "<option value=\"{choice}\"{sel}>{choice} / page</option>"
+        ));
+    }
+    body.push_str("</select>");
+    body.push_str("<input type=\"hidden\" name=\"page\" value=\"0\" />");
+    body.push_str("<button type=\"submit\" class=\"btn\">Search</button>");
+    if any_filter {
+        body.push_str("<a class=\"audit-clear\" href=\"/dashboard/audit\">Clear</a>");
+    }
+    body.push_str("</form>");
+
     if rows.is_empty() {
-        body.push_str("<p class=\"muted\">No audit entries yet.</p>");
+        if any_filter {
+            body.push_str(
+                "<p class=\"muted\">No entries match these filters. \
+                 <a href=\"/dashboard/audit\">Clear filters</a>.</p>",
+            );
+        } else {
+            body.push_str("<p class=\"muted\">No audit entries yet.</p>");
+        }
     } else {
         body.push_str("<table class=\"audit-table\"><thead><tr>");
         body.push_str("<th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th>");
@@ -6297,10 +6433,13 @@ pub async fn audit_page(
         );
     }
 
+    // Prev/next carry the per_page size and the active filters so paging
+    // doesn't drop the current view. The per-page picker lives in the
+    // filter bar above, not here.
     body.push_str("<div class=\"audit-pager\">");
     if page > 0 {
         body.push_str(&format!(
-            "<a href=\"/dashboard/audit?page={}&per_page={}\">&larr; Newer</a>",
+            "<a href=\"/dashboard/audit?page={}&per_page={}{filter_qs}\">&larr; Newer</a>",
             page - 1,
             per_page,
         ));
@@ -6317,36 +6456,13 @@ pub async fn audit_page(
     let has_next = (page + 1) < total_pages && page < AUDIT_MAX_PAGES;
     if has_next {
         body.push_str(&format!(
-            "<a href=\"/dashboard/audit?page={}&per_page={}\">Older &rarr;</a>",
+            "<a href=\"/dashboard/audit?page={}&per_page={}{filter_qs}\">Older &rarr;</a>",
             page + 1,
             per_page,
         ));
     } else {
         body.push_str("<span class=\"muted\">Older &rarr;</span>");
     }
-    // Per-page picker. Inline form so changing the value reloads
-    // the page at p=0 with the new size (jumping back to the
-    // newest entries because the old offset wouldn't make sense
-    // at the new page size). No JS required - the browser's
-    // native form submit handles it.
-    body.push_str(
-        "<form method=\"get\" action=\"/dashboard/audit\" class=\"audit-perpage\">\
-           <label for=\"audit-perpage-select\">Per page:</label>\
-           <select id=\"audit-perpage-select\" name=\"per_page\" \
-                   onchange=\"this.form.submit()\">",
-    );
-    for choice in AUDIT_PAGE_CHOICES {
-        let selected = if *choice == per_page { " selected" } else { "" };
-        body.push_str(&format!(
-            "<option value=\"{choice}\"{selected}>{choice}</option>"
-        ));
-    }
-    body.push_str(
-        "</select>\
-           <input type=\"hidden\" name=\"page\" value=\"0\" />\
-           <noscript><button type=\"submit\" class=\"btn\">Apply</button></noscript>\
-         </form>",
-    );
     body.push_str("</div>");
 
     render_page(&state, &session, "Audit", NavTab::Audit, &body)

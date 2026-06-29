@@ -993,6 +993,34 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .audit-perpage select { font: inherit; }
 
+/* Filter bar above the audit table: search box stretches, selects and
+   the search button sit on one wrapping row. */
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+.audit-filters .audit-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.audit-filters input,
+.audit-filters select {
+  font: inherit;
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+}
+.audit-filters .audit-clear {
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+.audit-filters .audit-clear:hover { color: var(--accent); }
+
 /* Diff expand button + hidden second row that holds the rendered
    git-style diff for library.update entries. */
 .audit-diff-toggle {

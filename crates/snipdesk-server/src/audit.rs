@@ -167,17 +167,154 @@ pub fn hidden_actions_filter_sql(prefix: &str) -> String {
 /// page; the offset + limit are bounded by the caller (so a
 /// runaway URL like `?limit=999999999` can't OOM the page).
 pub async fn list_recent(pool: &SqlitePool, limit: i64, offset: i64) -> Vec<AuditRow> {
+    list_filtered(pool, &AuditFilter::default(), limit, offset).await
+}
+
+/// Search + filter knobs for the audit page. All optional; an empty
+/// filter behaves exactly like `list_recent` (hidden actions still
+/// excluded). Built from the audit page's query string.
+#[derive(Default)]
+pub struct AuditFilter {
+    /// Free-text match across actor email, action code, target id,
+    /// and the details JSON. Case-insensitive (SQLite LIKE).
+    pub q: Option<String>,
+    /// Action verb, e.g. "create" / "update" / "delete" / "move".
+    /// Matches the segment after the last dot of the action code.
+    pub action_verb: Option<String>,
+    /// Restrict to a single actor by user id.
+    pub actor_id: Option<String>,
+    /// Only entries at or after this unix timestamp.
+    pub since_ts: Option<i64>,
+}
+
+/// Escape the LIKE metacharacters so a query containing `%` or `_`
+/// matches them literally (paired with `ESCAPE '\'` in the SQL).
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A bound value for the dynamically-built audit query. Conditions are
+/// optional, so binds are collected in order and applied in one pass.
+enum Bind {
+    Text(String),
+    Int(i64),
+}
+
+/// Assemble the `WHERE` clause (including the always-on hidden-actions
+/// exclusion) and the ordered bind values for a filter. Shared by the
+/// count and the list query so they can never disagree.
+fn build_where(f: &AuditFilter) -> (String, Vec<Bind>) {
+    let mut conds: Vec<String> = Vec::new();
+    let mut binds: Vec<Bind> = Vec::new();
+
+    // Hidden actions: values are compile-time constants, safe to inline.
+    let hidden = hidden_actions_sql_list();
+    if !hidden.is_empty() {
+        conds.push(format!("action NOT IN ({hidden})"));
+    }
+    if let Some(q) = f.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let like = format!("%{}%", escape_like(q));
+        conds.push(
+            "(actor_email LIKE ? ESCAPE '\\' OR action LIKE ? ESCAPE '\\' \
+              OR IFNULL(target_id, '') LIKE ? ESCAPE '\\' \
+              OR IFNULL(details, '') LIKE ? ESCAPE '\\')"
+                .to_string(),
+        );
+        for _ in 0..4 {
+            binds.push(Bind::Text(like.clone()));
+        }
+    }
+    if let Some(v) = f
+        .action_verb
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        conds.push("action LIKE ('%.' || ?)".to_string());
+        binds.push(Bind::Text(v.to_string()));
+    }
+    if let Some(a) = f
+        .actor_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        conds.push("actor_id = ?".to_string());
+        binds.push(Bind::Text(a.to_string()));
+    }
+    if let Some(ts) = f.since_ts {
+        conds.push("at >= ?".to_string());
+        binds.push(Bind::Int(ts));
+    }
+
+    let where_sql = if conds.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conds.join(" AND "))
+    };
+    (where_sql, binds)
+}
+
+/// Total matching rows, for the pager's "page N of M".
+pub async fn count_filtered(pool: &SqlitePool, f: &AuditFilter) -> i64 {
+    let (where_sql, binds) = build_where(f);
+    let sql = format!("SELECT COUNT(*) FROM audit_log{where_sql}");
+    let mut query = sqlx::query_scalar::<_, i64>(&sql);
+    for b in &binds {
+        query = match b {
+            Bind::Text(s) => query.bind(s),
+            Bind::Int(i) => query.bind(i),
+        };
+    }
+    query.fetch_one(pool).await.unwrap_or(0)
+}
+
+/// A page of entries matching `f`, newest first. limit + offset are
+/// bounded by the caller.
+pub async fn list_filtered(
+    pool: &SqlitePool,
+    f: &AuditFilter,
+    limit: i64,
+    offset: i64,
+) -> Vec<AuditRow> {
+    let (where_sql, binds) = build_where(f);
     let sql = format!(
         "SELECT id, at, actor_id, actor_email, action, target_kind, target_id, details \
-         FROM audit_log{filter} \
+         FROM audit_log{where_sql} \
          ORDER BY at DESC, id DESC \
-         LIMIT ?1 OFFSET ?2",
-        filter = hidden_actions_filter_sql("WHERE"),
+         LIMIT ? OFFSET ?"
     );
-    sqlx::query_as::<_, AuditRow>(&sql)
+    let mut query = sqlx::query_as::<_, AuditRow>(&sql);
+    for b in &binds {
+        query = match b {
+            Bind::Text(s) => query.bind(s),
+            Bind::Int(i) => query.bind(i),
+        };
+    }
+    query
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await
         .unwrap_or_default()
+}
+
+/// Distinct actors that appear in the log, for the filter dropdown.
+/// Ordered by email. Skips rows whose actor was deleted (NULL id).
+pub async fn distinct_actors(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT actor_id, actor_email FROM audit_log \
+         WHERE actor_id IS NOT NULL AND actor_id != '' \
+         GROUP BY actor_id ORDER BY actor_email",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
 }

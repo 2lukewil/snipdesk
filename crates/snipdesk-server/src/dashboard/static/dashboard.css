@@ -582,63 +582,91 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 
 /* --- Editor pane form --- */
 .editor-form { height: 100%; min-height: 0; gap: 12px; }
-/* Title / Folder / Tags share one row; the wide editor pane has room,
-   so they shrink rather than wrap. */
-.editor-fields { display: flex; flex-wrap: nowrap; gap: 10px; }
-.editor-fields label { margin: 0; }
-.editor-fields .f-title { flex: 2 1 0; min-width: 0; }
-.editor-fields .f-folder, .editor-fields .f-tags { flex: 1 1 0; min-width: 0; }
-.editor-form input[type="text"] { width: 100%; box-sizing: border-box; }
-.editor-form .f-body {
-  flex: 1.4;
+
+/* The combined compose box: title + format toolbar across the top, a
+   divider, then the body and live preview side by side - one bordered
+   surface so title, styling, and body read as a single editor. */
+.editor-compose {
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--fg-dim);
-  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  overflow: hidden;
 }
-.editor-form .f-body textarea { flex: 1; min-height: 150px; resize: none; margin: 0; }
-/* Body + live preview sit side by side when the editor pane is wide,
-   and fall back to stacked when it's narrow (auto-fit + a min column). */
+.compose-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-form .compose-title {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.editor-form .compose-title:focus { outline: none; box-shadow: none; }
+.editor-form .compose-title::placeholder { color: var(--fg-faint); font-weight: 500; }
+
+/* Body | live preview, split inside the compose box. */
 .editor-body-grid {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-/* Holds the textarea + the floating format toolbar. */
-.body-input { position: relative; display: flex; min-height: 0; }
-.body-input textarea {
-  flex: 1;
+.editor-body-grid > textarea {
   width: 100%;
   height: 100%;
   min-height: 150px;
-  /* Headroom for the floating toolbar so text starts beneath it. */
-  padding-top: 38px;
+  resize: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
+.editor-body-grid > textarea:focus { outline: none; box-shadow: none; }
+
 .editor-form .actions {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-soft);
 }
 .editor-form .actions button { white-space: nowrap; }
+/* Folder + tags live in the action bar now, between Delete and the
+   updated-at note. Compact inputs that share the row. */
+.editor-form .foot-field {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 90px;
+  box-sizing: border-box;
+}
 .editor-form .editor-meta { margin-left: auto; color: var(--fg-faint); font-size: 12px; white-space: nowrap; }
 
 /* Live preview beside the body, mirroring the extension editor. Values
    match the extension's .editor-preview so both surfaces read alike. */
-.editor-preview-wrap { min-height: 0; display: flex; flex-direction: column; }
-.editor-preview-wrap .preview-label { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px; }
+/* Preview sits in the right half of the compose box; its left edge is
+   the divider between body and preview. Flush (no border/radius of its
+   own) so the compose box reads as one surface. */
+.editor-preview-wrap {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+}
 .editor-preview {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 10px;
+  background: transparent;
+  padding: 8px 12px;
   font-size: 13px;
 }
 .editor-preview .md-line { min-height: 1.25em; white-space: pre-wrap; }
@@ -766,19 +794,14 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .lib-folder-node:hover { background: var(--bg-hover); }
 
-/* Formatting toolbar: a compact segmented control floating in the
-   textarea's top-right corner, so it doesn't cost a whole row of its
-   own. The textarea reserves headroom (padding-top) so typed text
-   never slides under it. */
+/* Formatting toolbar: a compact segmented control that shares the
+   compose box's top row with the title input, to the right of it. */
 .format-toolbar {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 2;
   display: inline-flex;
   gap: 2px;
   width: max-content;
-  background: var(--bg-3);
+  flex: none;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 3px;

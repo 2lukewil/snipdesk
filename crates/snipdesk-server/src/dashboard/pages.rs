@@ -2207,9 +2207,14 @@ pub async fn library_page(
     body.push_str("</div>");
     body.push_str("</div>");
     // ---- Pane 3: editor. Row clicks + the "+" button swap content
-    // in here. Starts empty.
+    // in here. Auto-select the top snippet so the editor is never empty
+    // on load; LIBRARY_PAGE_JS marks that row active. Falls back to the
+    // placeholder only when the view has no snippets.
     body.push_str("<div class=\"library-editor editor\" id=\"library-editor\">");
-    body.push_str(render_library_editor_placeholder());
+    match filtered.first().copied() {
+        Some(top) => body.push_str(&render_library_editor(top)),
+        None => body.push_str(render_library_editor_placeholder()),
+    }
     body.push_str("</div>");
     body.push_str("</div>");
     // Selection-tree modal shell, outside the grid (position:fixed).
@@ -3359,19 +3364,15 @@ fn render_library_editor(r: &LibraryRow) -> String {
               hx-put=\"/dashboard/library/{id_attr}\" \
               hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
            <input type=\"hidden\" name=\"expected_version\" value=\"{ver}\" />\
-           <div class=\"editor-fields\">\
-             <label class=\"f-title\">Title<input type=\"text\" name=\"title\" value=\"{title_attr}\" required /></label>\
-             <label class=\"f-folder\">Folder<input type=\"text\" name=\"folder_path\" \
-                placeholder=\"e.g. Replies/Billing\" value=\"{folder_attr}\" /></label>\
-             <label class=\"f-tags\">Tags<input type=\"text\" name=\"tags\" value=\"{tags_attr}\" \
-                placeholder=\"billing, refund\" /></label>\
-           </div>\
-           <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
+           <div class=\"editor-compose\">\
+             <div class=\"compose-head\">\
+               <input class=\"compose-title\" type=\"text\" name=\"title\" value=\"{title_attr}\" \
+                  placeholder=\"Title\" required aria-label=\"Title\" />\
+               <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+             </div>\
              <div class=\"editor-body-grid\">\
-               <div class=\"body-input\">\
-                 <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
-                 <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
-               </div>\
+               <textarea id=\"library-editor-body\" name=\"body\" required \
+                  placeholder=\"Snippet text...\">{body_text}</textarea>\
                <div class=\"editor-preview-wrap\">\
                  <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
                </div>\
@@ -3381,6 +3382,10 @@ fn render_library_editor(r: &LibraryRow) -> String {
              <button class=\"primary\" type=\"submit\">Save changes</button>\
              <button type=\"button\" class=\"btn danger\" id=\"library-editor-delete\" \
                 data-id=\"{id_attr}\">Delete</button>\
+             <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
+                placeholder=\"Folder, e.g. Replies/Billing\" value=\"{folder_attr}\" aria-label=\"Folder\" />\
+             <input class=\"foot-field\" type=\"text\" name=\"tags\" value=\"{tags_attr}\" \
+                placeholder=\"Tags: billing, refund\" aria-label=\"Tags\" />\
              <span class=\"editor-meta\">updated {when}</span>\
            </div>\
          </form>",
@@ -3408,25 +3413,27 @@ fn render_library_editor_create(selected: &str) -> String {
         "<form class=\"lib-edit-form editor-form stack\" id=\"library-editor-form\" \
               hx-post=\"/dashboard/library\" \
               hx-target=\"#library-editor\" hx-swap=\"innerHTML\">\
-           <div class=\"editor-fields\">\
-             <label class=\"f-title\">Title<input type=\"text\" name=\"title\" required /></label>\
-             <label class=\"f-folder\">Folder<input type=\"text\" name=\"folder_path\" \
-                placeholder=\"e.g. Replies/Billing\" value=\"{prefill}\" /></label>\
-             <label class=\"f-tags\">Tags<input type=\"text\" name=\"tags\" \
-                placeholder=\"billing, refund\" /></label>\
-           </div>\
-           <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
+           <div class=\"editor-compose\">\
+             <div class=\"compose-head\">\
+               <input class=\"compose-title\" type=\"text\" name=\"title\" \
+                  placeholder=\"Title\" required aria-label=\"Title\" />\
+               <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+             </div>\
              <div class=\"editor-body-grid\">\
-               <div class=\"body-input\">\
-                 <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
-                 <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
-               </div>\
+               <textarea id=\"library-editor-body\" name=\"body\" required \
+                  placeholder=\"Snippet text...\"></textarea>\
                <div class=\"editor-preview-wrap\">\
                  <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
                </div>\
              </div>\
            </div>\
-           <div class=\"actions\"><button class=\"primary\" type=\"submit\">Add to library</button></div>\
+           <div class=\"actions\">\
+             <button class=\"primary\" type=\"submit\">Add to library</button>\
+             <input class=\"foot-field\" type=\"text\" name=\"folder_path\" \
+                placeholder=\"Folder, e.g. Replies/Billing\" value=\"{prefill}\" aria-label=\"Folder\" />\
+             <input class=\"foot-field\" type=\"text\" name=\"tags\" \
+                placeholder=\"Tags: billing, refund\" aria-label=\"Tags\" />\
+           </div>\
          </form>",
         prefill = escape_html(&prefilled_folder),
         toolbar = library_format_toolbar(),
@@ -5071,6 +5078,18 @@ const LIBRARY_PAGE_JS: &str = r##"<script>
   // AFTER htmx had already processed the attribute, so triggers
   // fired from JS were silently dropped and mutations only
   // surfaced on the next 5s/10s tick.
+
+  // Initial selection: the editor pane is server-rendered with the top
+  // snippet (auto-select), so reflect that as the active row and paint
+  // its preview without waiting for a click.
+  (function () {
+    var form = document.querySelector("#library-editor form[hx-put]");
+    if (!form) return;
+    selectedSnippetId = (form.getAttribute("hx-put") || "").split("/").pop();
+    anchorId = selectedSnippetId;
+    applyRowSelection();
+    refreshEditorPreview();
+  })();
 })();
 </script>"##;
 

@@ -1031,18 +1031,19 @@ main:has(.stats-page) {
   color: transparent;
 }
 
-/* Bottom region: the wide library-usage table beside the user feeds.
-   Fills the remaining height; each panel scrolls internally. The table
-   panel spans both rows on the left. */
+/* Bottom region: the library-usage table on the left (spanning both
+   rows) with two columns of shorter panels to its right - user feeds
+   and the onboarding sections. Fills the remaining height; each panel
+   scrolls internally. */
 .stats-bottom {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
-.stats-bottom .panel-tall { grid-row: 1 / 3; }
+.stats-bottom .panel-tall { grid-column: 1; grid-row: 1 / 3; }
 .stats-panel {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -1217,40 +1218,38 @@ main:has(.stats-page) {
 .insights-table .fold { color: var(--fg-dim); }
 .insights-table .insight-stale td { opacity: 0.62; }
 
-/* ---- Onboarding funnel ---- */
-/* Onboarding is a narrow, centred column: headings and intro centred,
-   the funnel and roster centred as blocks while keeping their rows
-   left-aligned internally. */
-.ob-page { max-width: 760px; margin: 0 auto; }
-.ob-page .stats-grid { justify-content: center; }
-.ob-page .funnel, .ob-page .ob-nudge, .ob-page > .muted.small { margin-left: auto; margin-right: auto; }
-.ob-h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
-.funnel { display: flex; flex-direction: column; gap: 10px; max-width: 720px; margin-top: 4px; }
-/* "Awaiting activation" roster: name, furthest milestone, join time. */
-.ob-nudge { max-width: 720px; }
-.ob-nudge li { display: flex; align-items: center; gap: 12px; }
-.ob-nudge .ob-name { font-weight: 500; }
-.ob-nudge .ob-stage {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-}
-.ob-nudge .ob-stage-warm { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
-.ob-nudge .ob-stage-cold { color: var(--fg-dim); }
-.ob-nudge .muted.small { margin-left: auto; }
-.frow { display: grid; grid-template-columns: 160px 1fr 110px; align-items: center; gap: 12px; }
-.frow .flab { font-size: 14px; }
-.fbar-track { background: var(--bg-3); border-radius: 5px; height: 26px; overflow: hidden; }
+/* ---- Onboarding sections (in the stats bottom region) ---- */
+/* Compact funnel sized for a panel column: label sizes to content, the
+   bar takes the slack, count trails. */
+.funnel { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; }
+/* Fixed label/count columns so every row's bar spans the same extent
+   (each .frow is its own grid, so shared track sizing isn't automatic). */
+.frow { display: grid; grid-template-columns: 100px 1fr 72px; align-items: center; gap: 10px; }
+.frow .flab { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fbar-track { background: var(--bg-3); border-radius: 5px; height: 18px; overflow: hidden; }
 .fbar {
   height: 100%;
   min-width: 2px;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 80%, #000), var(--accent));
   border-radius: 5px;
 }
-.frow .fnum { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.frow .fnum { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
 .frow .fdrop { color: var(--danger); font-size: 11px; }
-@media (max-width: 640px) { .frow { grid-template-columns: 110px 1fr 84px; } }
+/* "Awaiting activation" roster: name, furthest milestone, join time. */
+.ob-nudge li { display: flex; align-items: center; gap: 10px; }
+.ob-nudge .ob-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-nudge .ob-stage {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex: none;
+}
+.ob-nudge .ob-stage-warm { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
+.ob-nudge .ob-stage-cold { color: var(--fg-dim); }
+.ob-nudge .muted.small { margin-left: auto; white-space: nowrap; }
+.panel-note { padding: 6px 14px 10px; margin: 0; }
 
 /* Filter bar above the audit table: search box stretches, selects and
    the search button sit on one wrapping row. */

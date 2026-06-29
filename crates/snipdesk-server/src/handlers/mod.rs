@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod client_config;
 pub mod library;
 pub mod metrics;
 pub mod oidc;

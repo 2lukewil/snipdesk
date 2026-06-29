@@ -90,6 +90,11 @@ pub struct AppState {
     /// stored; when false they're ignored. See
     /// `config::Config::ticket_link_enabled`.
     pub ticket_link_enabled: bool,
+
+    /// Regex served to clients (via `/api/client-config`) for scraping a
+    /// ticket reference from the active tab URL. See
+    /// `config::Config::ticket_url_pattern`.
+    pub ticket_url_pattern: Option<String>,
     /// Latest known server release vs. running version. Updated by
     /// the background poller in `crate::updater`; the dashboard
     /// renders a banner when `is_newer` flips true.
@@ -187,6 +192,10 @@ fn build_inner_router() -> Router<AppState> {
         .route(
             "/api/me",
             get(handlers::auth::me).patch(handlers::auth::update_me),
+        )
+        .route(
+            "/api/client-config",
+            get(handlers::client_config::client_config),
         )
         // OIDC. Both endpoints are public (no AuthUser required);
         // the start endpoint initiates the OAuth dance and the

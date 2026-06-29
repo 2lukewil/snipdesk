@@ -48,6 +48,7 @@ async fn make_state_cfg(ticket_link_enabled: bool) -> (axum::Router, sqlx::Sqlit
         brand_name: "SnipDesk".to_string(),
         metrics_token: None,
         ticket_link_enabled,
+        ticket_url_pattern: None,
         update_cache: std::sync::Arc::new(snipdesk_server::updater::UpdateCache::default()),
     };
     (router(state), pool)

@@ -56,6 +56,7 @@ async fn fresh_state() -> (SqlitePool, AppState) {
         brand_name: "SnipDesk".to_string(),
         metrics_token: None,
         ticket_link_enabled: false,
+        ticket_url_pattern: None,
         update_cache: Arc::new(snipdesk_server::updater::UpdateCache::default()),
     };
     (pool, state)

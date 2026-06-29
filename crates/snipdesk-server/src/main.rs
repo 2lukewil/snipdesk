@@ -169,6 +169,7 @@ async fn run(config_path: PathBuf, force_console: Option<bool>) -> Result<()> {
         brand_name: cfg.brand.name.clone(),
         metrics_token: cfg.metrics_token.clone(),
         ticket_link_enabled: cfg.ticket_link_enabled,
+        ticket_url_pattern: cfg.ticket_url_pattern.clone(),
         update_cache: {
             let cache = Arc::new(snipdesk_server::updater::UpdateCache::default());
             if cfg.updater.enabled {

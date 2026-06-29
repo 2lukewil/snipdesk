@@ -99,6 +99,16 @@ pub struct Config {
     #[serde(default)]
     pub ticket_link_enabled: bool,
 
+    /// Regex the browser extension applies to the active tab's URL to
+    /// pull a ticket reference; capture group 1 is the reference. Served
+    /// to clients via `/api/client-config` so admins set the matching
+    /// rule once, server-side, for whatever ticketing tool they run.
+    /// Treated as an opaque string (the client compiles it as a JS
+    /// RegExp) - keep it specific so it doesn't match `id=` on unrelated
+    /// pages. Env override: SNIPDESK_TICKET_URL_PATTERN.
+    #[serde(default)]
+    pub ticket_url_pattern: Option<String>,
+
     /// Origins allowed to make cross-origin JSON-API requests. Empty
     /// (default) means no CORS layer at all - same-origin only, which
     /// matches the v1 desktop-client + dashboard topology where both
@@ -374,6 +384,7 @@ impl Default for Config {
             password_enabled: default_password_enabled(),
             metrics_token: None,
             ticket_link_enabled: false,
+            ticket_url_pattern: None,
             cors_allowed_origins: Vec::new(),
             stats: StatsConfig::default(),
             fx: None,
@@ -696,6 +707,14 @@ impl Config {
                     self.ticket_link_enabled
                 ),
             }
+        }
+        if let Some(v) = env_string("SNIPDESK_TICKET_URL_PATTERN") {
+            let v = v.trim();
+            self.ticket_url_pattern = if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            };
         }
         if let Some(list) = env_csv("SNIPDESK_OIDC_ALLOWED_SCHEMES") {
             self.oidc.allowed_deep_link_schemes = list;

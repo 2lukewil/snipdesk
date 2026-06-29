@@ -162,6 +162,7 @@ for the stable knobs, env for the secrets).
 | `SNIPDESK_UPDATER_ENABLED` | `[updater].enabled` - set `false` for zero outbound HTTP from the server |
 | `SNIPDESK_METRICS_TOKEN` | `metrics_token` - bearer token for the Prometheus `/metrics` endpoint. Unset (default) disables `/metrics` entirely (404); set it to let Prometheus scrape with `Authorization: Bearer <token>`. Keep it secret and restrict the path at your proxy if you also want network isolation |
 | `SNIPDESK_TICKET_LINK_ENABLED` | `ticket_link_enabled` (`true`/`false`, default `false`) - opt in to storing ticket-referenced paste events (the support-ticket link feature). When `false` the server ignores any ticket events clients report, so nothing ticket-related is stored. Only the opaque ticket reference is kept, never ticket text |
+| `SNIPDESK_TICKET_URL_PATTERN` | `ticket_url_pattern` - regex the browser extension applies to the active tab URL to pull a ticket reference (capture group 1 is the reference). Served to clients via `/api/client-config`, so you set the rule once for whatever ticketing tool you run. Keep it specific so it doesn't match `id=` on unrelated pages. See the support-ticket-linking section for examples |
 | `SNIPDESK_OPEN_BROWSER` | set `false` to stop a zero-account server from opening the first-run setup page in the local browser (containers never open one; this is for bare-host and scripted runs) |
 | `SNIPDESK_PASSWORD_ENABLED` | `password_enabled` - set `false` for an SSO-only deployment: the password endpoints reject server-side and every sign-in surface (desktop client, dashboard login, first-run setup) shows only the configured OIDC providers. The server refuses to start with this `false` and no OIDC provider configured, since nobody could sign in. The first admin is then whoever signs in through the IdP first |
 
@@ -671,11 +672,32 @@ ticket data a client reports and stores nothing.
 What's stored is deliberately minimal: a row of `(ticket reference,
 snippet id, user, timestamp)` in the `ticket_usage` table. **Only the
 opaque ticket reference is kept - never the ticket title or any
-customer text.** The extension reads the reference from the active
-tab's URL against a configurable pattern. For a WHMCS-style install the
-ticket id is the `id` query parameter, e.g.
-`https://billing.example.com/admin/supporttickets.php?action=view&id=12345`
-yields `12345`.
+customer text.**
+
+The extension learns how to find the reference from the server: after
+sign-in it fetches `GET /api/client-config`, which returns whether the
+feature is on and the regex to apply to the active tab's URL. You set
+that regex once with `SNIPDESK_TICKET_URL_PATTERN` (capture group 1 is
+the reference), so different deployments can target different ticketing
+tools without rebuilding the extension. The extension scrapes only when
+the feature is enabled and a pattern is set.
+
+```jsonc
+// GET /api/client-config (after sign-in)
+{ "ticket_link": { "enabled": true, "url_pattern": "supporttickets\\.php\\?[^#]*[?&]id=(\\d+)" } }
+```
+
+Pattern examples (set as `SNIPDESK_TICKET_URL_PATTERN`):
+
+| Ticketing tool | URL looks like | Pattern |
+| --- | --- | --- |
+| WHMCS (admin) | `…/admin/supporttickets.php?action=view&id=12345` | `supporttickets\.php\?[^#]*[?&]id=(\d+)` |
+| Zendesk | `…/agent/tickets/9876` | `/agent/tickets/(\d+)` |
+| Generic `?ticket=` | `…/desk?ticket=ABC-42` | `[?&]ticket=([A-Za-z0-9-]+)` |
+
+Anchor the pattern to the ticket page's path (e.g. `supporttickets.php`)
+rather than a bare `id=` so it can't pick up an unrelated query
+parameter on some other page.
 
 **Analyzing it in Grafana.** Because the title and customer fields
 already live in WHMCS, you join to them at query time rather than

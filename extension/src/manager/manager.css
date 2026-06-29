@@ -245,34 +245,79 @@ button.danger { border-color: var(--danger); color: var(--danger); }
 }
 .list .empty { padding: 14px; color: var(--text-dim); }
 
-/* Editor */
-.editor { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; padding: 16px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-elev); }
-/* Title / Folder / Tags share one row; the wide editor pane has room,
-   so they shrink rather than wrap. */
-.editor-fields { display: flex; flex-wrap: nowrap; gap: 10px; margin-bottom: 12px; }
-.editor-fields label { margin: 0; }
-.editor-fields .f-title { flex: 2 1 0; min-width: 0; }
-.editor-fields .f-folder, .editor-fields .f-tags { flex: 1 1 0; min-width: 0; }
-.editor .f-body { flex: 1.4; min-height: 0; display: flex; flex-direction: column; margin: 0 0 12px; }
-.editor .f-body textarea { flex: 1; min-height: 0; resize: none; }
-.editor label { display: block; font-size: 12px; color: var(--text-dim); margin: 0 0 12px; }
-.editor input, .editor textarea { display: block; width: 100%; margin-top: 4px; }
-.editor textarea { min-height: 220px; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
-.editor .actions { display: flex; gap: 8px; margin-top: 4px; }
-.editor .ro-note { color: #d0a548; font-size: 12px; margin-bottom: 12px; }
-.editor .placeholder { color: var(--text-dim); }
-.editor-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 12px; }
-.editor-preview-wrap .editor-preview { flex: 1; min-height: 0; overflow-y: auto; }
-.editor-preview-wrap .preview-label { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+/* Editor: compose box mirroring the admin panel's library editor - a
+   title bar over a two-column body (format toolbar + textarea | folder /
+   tags + live preview), with a bottom action bar. */
+.editor {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-elev);
+}
+.editor .ro-note { color: #d0a548; font-size: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.editor .placeholder { color: var(--text-dim); padding: 16px; }
+.editor-form { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.editor-compose { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.compose-head {
+  display: flex; align-items: center; gap: 10px;
+  height: 54px; padding: 0 12px; border-bottom: 1px solid var(--border);
+}
+.editor-form .compose-title {
+  flex: 1; min-width: 0; width: auto; margin: 0;
+  background: transparent; border: 0; padding: 4px 0;
+  font-size: 15px; font-weight: 600; color: var(--fg);
+}
+.editor-form .compose-title:focus { outline: none; box-shadow: none; }
+.editor-form .compose-title::placeholder { color: var(--fg-faint); font-weight: 500; }
+.editor-body-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compose-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.compose-col-preview { border-left: 1px solid var(--border); }
+.col-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px; height: 52px; border-bottom: 1px solid var(--border);
+}
+.compose-col > textarea {
+  flex: 1; width: 100%; min-height: 120px; resize: none; margin: 0;
+  border: 0; border-radius: 0; background: transparent;
+  font-family: inherit; font-size: var(--editor-font-size, 14px);
+  line-height: 1.6; padding: 10px 12px; color: var(--text);
+}
+.compose-col > textarea:focus { outline: none; box-shadow: none; }
+.editor-form .actions {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: none; margin: 0;
+  padding: 10px 56px 10px 12px; border-top: 1px solid var(--border);
+}
+.editor-form .actions button { white-space: nowrap; }
+.editor-form .editor-meta { margin-left: auto; color: var(--fg-faint); font-size: 12px; white-space: nowrap; }
+.editor-form .error { flex: none; padding: 6px 12px; margin: 0; }
+/* Folder + tags in the preview column header, each with a leading emoji. */
+.foot-input { position: relative; flex: 1 1 0; min-width: 0; display: flex; }
+.foot-input .foot-ic { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); font-size: 13px; line-height: 1; pointer-events: none; }
+.editor-form .foot-field { flex: 1; width: auto; min-width: 0; margin: 0; padding-left: 30px; box-sizing: border-box; }
+/* Format toolbar: full-width row of buttons that grow to fill the band. */
+.format-toolbar { display: flex; gap: 6px; width: 100%; }
+.format-toolbar .fmt-btn {
+  flex: 1; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 14px; color: var(--fg-dim); cursor: pointer;
+}
+.format-toolbar .fmt-btn:hover { background: var(--accent-weak); border-color: var(--accent-line); color: var(--accent); }
+.format-toolbar .fmt-size { display: inline-flex; align-items: baseline; justify-content: center; gap: 1px; font-weight: 600; }
+/* Live preview: flush in the right column, same font size as the textarea. */
+.editor-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .editor-preview {
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-word;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: var(--editor-font-size, 14px);
+  line-height: 1.6;
+  word-break: break-word;
   color: var(--text);
 }
 .editor-preview .md-line { min-height: 1.25em; white-space: pre-wrap; }

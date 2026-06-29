@@ -1103,6 +1103,11 @@ function openEditor(snippet, prefill) {
   selectedId = snippet ? snippet.id : null;
   selectedIds = snippet ? new Set([snippet.id]) : new Set();
   renderList();
+  // Apply the persisted editor text size (shared --editor-font-size token).
+  try {
+    const sz = localStorage.getItem("snipdesk-editor-size");
+    if (sz === "sm" || sz === "lg") document.documentElement.dataset.editorSize = sz;
+  } catch (e) {}
   const editor = $("editor");
   editor.replaceChildren();
   const readOnly = snippet?.source === "library";
@@ -1111,41 +1116,63 @@ function openEditor(snippet, prefill) {
     editor.appendChild(el("div", "ro-note", "Team library snippet (read-only; managed in the dashboard)."));
   }
 
-  const fieldRow = el("div", "editor-fields");
-  const title = inputField(fieldRow, "Title", snippet?.title || "", readOnly, "f-title");
-  const folder = inputField(fieldRow, "Folder", snippet?.folder_path || "", readOnly, "f-folder");
-  const tags = inputField(fieldRow, "Tags", (snippet?.tags || []).join(", "), readOnly, "f-tags");
-  editor.appendChild(fieldRow);
-  // Usage line for saved snippets, mirroring the desktop preview.
-  if (snippet) {
-    const uses = snippet.uses || 0;
-    let usageText = `Used ${uses} time${uses === 1 ? "" : "s"}`;
-    if (snippet.last_used) usageText += ` · last used ${formatWhen(snippet.last_used)}`;
-    editor.appendChild(el("div", "editor-usage muted", usageText));
-  }
-  if (!snippet) title.focus(); // new snippet (incl. context-menu capture): jump to the title
+  // Compose box, mirroring the admin panel's library editor: a title bar
+  // over a two-column body - format toolbar + textarea on the left,
+  // folder/tags + live preview on the right.
+  const form = el("div", "editor-form");
+  const compose = el("div", "editor-compose");
 
-  const bodyLabel = el("label", "f-body", "Body");
+  const head = el("div", "compose-head");
+  const title = el("input", "compose-title");
+  title.type = "text";
+  title.placeholder = "Title";
+  title.value = snippet?.title || "";
+  title.disabled = readOnly;
+  title.setAttribute("aria-label", "Title");
+  head.appendChild(title);
+  compose.appendChild(head);
+
+  const grid = el("div", "editor-body-grid");
+
+  const editCol = el("div", "compose-col");
+  const editHead = el("div", "col-head");
   const body = el("textarea");
+  body.id = "mgr-editor-body";
+  body.placeholder = "Snippet text...";
   body.value = snippet?.body || prefill?.body || "";
   body.disabled = readOnly;
-  bodyLabel.appendChild(body);
-  editor.appendChild(bodyLabel);
+  editHead.appendChild(buildFormatToolbar(body.id));
+  editCol.appendChild(editHead);
+  editCol.appendChild(body);
+  grid.appendChild(editCol);
 
-  // Live preview with variables highlighted.
+  const prevCol = el("div", "compose-col compose-col-preview");
+  const prevHead = el("div", "col-head");
+  const folder = footInput("📁", "Folder", snippet?.folder_path || "", readOnly);
+  const tags = footInput("🏷️", "Tags", (snippet?.tags || []).join(", "), readOnly);
+  prevHead.appendChild(folder.wrap);
+  prevHead.appendChild(tags.wrap);
+  prevCol.appendChild(prevHead);
   const previewWrap = el("div", "editor-preview-wrap");
-  previewWrap.appendChild(el("div", "preview-label", "Preview"));
   const preview = el("div", "editor-preview");
   previewWrap.appendChild(preview);
-  editor.appendChild(previewWrap);
+  prevCol.appendChild(previewWrap);
+  grid.appendChild(prevCol);
+
+  compose.appendChild(grid);
+  form.appendChild(compose);
+  editor.appendChild(form);
+
+  wireFormatToolbar(editHead.querySelector(".format-toolbar"), body);
   const renderPrev = () => renderFormatted(preview, body.value, formatRules());
   renderPrev();
   body.addEventListener("input", renderPrev);
 
-  const err = el("div", "error hidden");
-  editor.appendChild(err);
-
+  if (!snippet) title.focus(); // new snippet (incl. context-menu capture): jump to the title
   if (readOnly) return;
+
+  const err = el("div", "error hidden");
+  form.appendChild(err);
 
   const actions = el("div", "actions");
   const saveBtn = el("button", "primary", snippet ? "Save" : "Create");
@@ -1157,15 +1184,20 @@ function openEditor(snippet, prefill) {
     actions.appendChild(delBtn);
     dupBtn.addEventListener("click", () => duplicate(snippet));
     delBtn.addEventListener("click", () => remove(snippet));
+    // Usage + updated, right-aligned, mirroring the panel's editor meta.
+    const uses = snippet.uses || 0;
+    let meta = `Used ${uses} time${uses === 1 ? "" : "s"}`;
+    if (snippet.last_used) meta += ` · last used ${formatWhen(snippet.last_used)}`;
+    actions.appendChild(el("span", "editor-meta", meta));
   }
-  editor.appendChild(actions);
+  form.appendChild(actions);
 
   saveBtn.addEventListener("click", async () => {
     const payload = {
       title: title.value,
       body: body.value,
-      tags: tags.value.split(",").map((t) => t.trim()).filter(Boolean),
-      folder_path: folder.value.trim() || null,
+      tags: tags.input.value.split(",").map((t) => t.trim()).filter(Boolean),
+      folder_path: folder.input.value.trim() || null,
     };
     const problem = validateSnippet(payload);
     if (problem) {
@@ -1205,15 +1237,70 @@ async function afterUpsert(id) {
   }
 }
 
-function inputField(parent, labelText, value, disabled, cls) {
-  const label = el("label", cls || null, labelText);
-  const input = el("input");
+// Folder / tag input with a leading emoji marker, mirroring the panel's
+// preview-column header inputs.
+function footInput(emoji, placeholder, value, disabled) {
+  const wrap = el("span", "foot-input");
+  const ic = el("span", "foot-ic", emoji);
+  ic.setAttribute("aria-hidden", "true");
+  const input = el("input", "foot-field");
   input.type = "text";
+  input.placeholder = placeholder;
   input.value = value;
   input.disabled = disabled;
-  label.appendChild(input);
-  parent.appendChild(label);
-  return input;
+  input.setAttribute("aria-label", placeholder);
+  wrap.appendChild(ic);
+  wrap.appendChild(input);
+  return { wrap, input };
+}
+
+// The format toolbar markup, identical to the panel's: bold / italic /
+// code / link wrap buttons plus the text-size cycle button.
+function buildFormatToolbar(targetId) {
+  const tb = el("div", "format-toolbar");
+  tb.dataset.target = targetId;
+  tb.innerHTML =
+    '<button type="button" class="fmt-btn" data-prefix="**" data-suffix="**" title="Bold"><b>B</b></button>' +
+    '<button type="button" class="fmt-btn" data-prefix="*" data-suffix="*" title="Italic"><i>I</i></button>' +
+    '<button type="button" class="fmt-btn" data-prefix="`" data-suffix="`" title="Inline code"><code>{}</code></button>' +
+    '<button type="button" class="fmt-btn" data-prefix="[" data-suffix="](https://)" title="Link">link</button>' +
+    '<button type="button" class="fmt-btn fmt-size" title="Cycle editor text size" aria-label="Cycle editor text size"><span style="font-size:11px">A</span><span style="font-size:15px">A</span></button>';
+  return tb;
+}
+
+// Wire a format toolbar to its textarea: the size button cycles the
+// shared --editor-font-size token; the others wrap the selection with
+// markdown markers (then refresh the live preview).
+function wireFormatToolbar(tb, ta) {
+  if (!tb) return;
+  tb.addEventListener("click", (e) => {
+    const btn = e.target.closest(".fmt-btn");
+    if (!btn) return;
+    e.preventDefault();
+    if (btn.classList.contains("fmt-size")) {
+      const order = ["sm", "md", "lg"];
+      const cur = document.documentElement.dataset.editorSize || "md";
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      if (next === "md") document.documentElement.removeAttribute("data-editor-size");
+      else document.documentElement.dataset.editorSize = next;
+      try { localStorage.setItem("snipdesk-editor-size", next); } catch (_e) {}
+      return;
+    }
+    if (ta.disabled) return;
+    const prefix = btn.getAttribute("data-prefix") || "";
+    const suffix = btn.getAttribute("data-suffix") || "";
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    const sel = ta.value.slice(start, end);
+    ta.value = ta.value.slice(0, start) + prefix + sel + suffix + ta.value.slice(end);
+    if (sel.length === 0) {
+      const p = start + prefix.length;
+      ta.setSelectionRange(p, p);
+    } else {
+      ta.setSelectionRange(start + prefix.length, start + prefix.length + sel.length);
+    }
+    ta.focus();
+    ta.dispatchEvent(new Event("input"));
+  });
 }
 
 async function duplicate(snippet) {

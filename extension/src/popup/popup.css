@@ -57,8 +57,8 @@ button {
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.55; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+button.primary { background: var(--grad-accent); background-origin: border-box; border-color: transparent; color: var(--accent-ink); }
+button.primary:hover:not(:disabled) { filter: brightness(1.06); border-color: transparent; }
 button.ghost { background: transparent; }
 
 /* Token-paste toggle: a subtle text button (not a full-width control)

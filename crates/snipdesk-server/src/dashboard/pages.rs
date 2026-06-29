@@ -6184,6 +6184,22 @@ pub async fn library_insights_page(
     ));
     body.push_str("</div>");
 
+    // When ticket linking is on, count distinct tickets per snippet for
+    // the extra column + drill-down link. Off -> the column is hidden.
+    let show_tickets = state.ticket_link_enabled;
+    let ticket_counts: std::collections::HashMap<String, i64> = if show_tickets {
+        sqlx::query_as::<_, (String, i64)>(
+            "SELECT snippet_id, COUNT(DISTINCT ticket_ref) FROM ticket_usage GROUP BY snippet_id",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     if rows.is_empty() {
         body.push_str("<p class=\"muted\">No library snippets yet.</p>");
     } else {
@@ -6203,6 +6219,9 @@ pub async fn library_insights_page(
         body.push_str(&header("recent", "Last used", false));
         body.push_str(&header("age", "Created", false));
         body.push_str("<th>Top user</th>");
+        if show_tickets {
+            body.push_str("<th class=\"n\">Tickets</th>");
+        }
         body.push_str("</tr></thead><tbody>");
         for r in &rows {
             let folder = match &r.folder {
@@ -6218,6 +6237,17 @@ pub async fn library_insights_page(
             } else {
                 format_thousands(r.uses)
             };
+            let tickets_cell = if show_tickets {
+                match ticket_counts.get(&r.id).copied().unwrap_or(0) {
+                    0 => "<td class=\"n muted\">0</td>".to_string(),
+                    n => format!(
+                        "<td class=\"n\"><a href=\"/dashboard/library/snippet-tickets/{id}\">{n}</a></td>",
+                        id = escape_html(&r.id),
+                    ),
+                }
+            } else {
+                String::new()
+            };
             body.push_str(&format!(
                 "<tr{never}>\
                    <td><a href=\"/dashboard/library#lib-{id}\">{title}</a></td>\
@@ -6226,6 +6256,7 @@ pub async fn library_insights_page(
                    <td>{last}</td>\
                    <td>{age}</td>\
                    <td class=\"muted\">{top}</td>\
+                   {tickets}\
                  </tr>",
                 never = if r.uses == 0 {
                     " class=\"insight-stale\""
@@ -6239,6 +6270,7 @@ pub async fn library_insights_page(
                 last = last,
                 age = format_relative(r.created_at),
                 top = r.top_user.as_deref().map(escape_html).unwrap_or_default(),
+                tickets = tickets_cell,
             ));
         }
         body.push_str("</tbody></table></div>");
@@ -6267,6 +6299,76 @@ fn insight_tile(value: &str, label: &str, hint: &str) -> String {
         label = escape_html(label),
         hint = hint_html,
     )
+}
+
+/// GET /dashboard/library/snippet-tickets/:id - the support tickets a
+/// snippet has been pasted into, newest first. The opaque ticket
+/// reference is all we hold; the title/customer fields live in WHMCS
+/// and are joined there (or in Grafana), not duplicated here.
+pub async fn library_snippet_tickets_page(
+    State(state): State<AppState>,
+    admin: DashboardAdmin,
+    Path(id): Path<String>,
+) -> Response {
+    let session = DashboardSession {
+        claims: admin.claims.clone(),
+    };
+
+    let title: Option<String> =
+        sqlx::query_scalar("SELECT title FROM library_snippets WHERE id = ?1 AND is_deleted = 0")
+            .bind(&id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let tickets: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT ticket_ref, COUNT(*) AS pastes, MAX(at) AS last_used \
+         FROM ticket_usage WHERE snippet_id = ?1 \
+         GROUP BY ticket_ref ORDER BY last_used DESC \
+         LIMIT 500",
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let mut body = String::new();
+    body.push_str(
+        "<div class=\"insights-head\">\
+           <h1>Tickets for this snippet</h1>\
+           <a class=\"btn\" href=\"/dashboard/library/insights\">&larr; Back to insights</a>\
+         </div>",
+    );
+    body.push_str(&format!(
+        "<p class=\"muted\">Snippet: <strong>{}</strong>. Pastes recorded while a support \
+         ticket was open. The reference links to your ticketing tool; titles live there.</p>",
+        escape_html(title.as_deref().unwrap_or("(deleted snippet)")),
+    ));
+
+    if tickets.is_empty() {
+        body.push_str(
+            "<p class=\"muted\">No ticket-linked pastes recorded for this snippet yet.</p>",
+        );
+    } else {
+        body.push_str(
+            "<div class=\"scroll-x\"><table class=\"insights-table\"><thead><tr>\
+               <th>Ticket</th><th class=\"n\">Pastes</th><th>Last used</th>\
+             </tr></thead><tbody>",
+        );
+        for (ticket_ref, pastes, last_used) in &tickets {
+            body.push_str(&format!(
+                "<tr><td>{ref_safe}</td><td class=\"n\">{pastes}</td><td>{last}</td></tr>",
+                ref_safe = escape_html(ticket_ref),
+                pastes = pastes,
+                last = format_relative(*last_used),
+            ));
+        }
+        body.push_str("</tbody></table></div>");
+    }
+
+    render_page(&state, &session, "Snippet tickets", NavTab::Library, &body)
+        .await
+        .into_response()
 }
 
 // ---- /dashboard/audit (admin activity log) ----

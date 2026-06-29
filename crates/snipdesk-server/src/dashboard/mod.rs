@@ -156,6 +156,10 @@ pub fn routes() -> Router<AppState> {
             "/dashboard/library/insights",
             get(pages::library_insights_page),
         )
+        .route(
+            "/dashboard/library/snippet-tickets/:id",
+            get(pages::library_snippet_tickets_page),
+        )
         .route("/dashboard/audit", get(pages::audit_page))
         // Static assets - vendored htmx + a small CSS file. Served as
         // raw bytes via plain handlers (no fs reads at runtime; the

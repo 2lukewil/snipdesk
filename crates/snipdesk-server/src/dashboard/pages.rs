@@ -671,17 +671,61 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     };
     let my_id = admin.user_id().to_string();
     let ob = load_onboarding_signals(&state).await;
+
+    // Headline counts for the toolbar summary.
+    let cutoff_30d = Utc::now().timestamp() - 30 * 86_400;
+    let total = rows.len();
+    let admins = rows.iter().filter(|u| u.role == "admin").count();
+    let disabled = rows.iter().filter(|u| u.is_disabled).count();
+    let active = rows
+        .iter()
+        .filter(|u| u.last_seen_at.is_some_and(|t| t >= cutoff_30d))
+        .count();
+
     let mut body = String::new();
-    body.push_str("<h1>Users</h1>");
-    body.push_str(&new_user_form());
-    // The tbody polls itself every 5s so another admin's changes (or
-    // CLI / console mutations) appear without a manual refresh. The
-    // poll fetches /dashboard/users/rows which returns only the rows
-    // (no table chrome) and swaps them into this tbody's innerHTML.
-    // Inline row actions (promote/demote/delete) still work because
-    // htmx re-binds attributes after every swap.
+    // Full-height page: pinned toolbar over a table that fills the
+    // viewport and scrolls internally (the "fullscreen" treatment).
+    body.push_str("<div class=\"users-page\">");
+    body.push_str("<div class=\"users-toolbar\">");
     body.push_str(
-        "<table class=\"data\"><thead><tr>\
+        "<input type=\"search\" id=\"users-filter\" class=\"users-search\" \
+            placeholder=\"Filter by name or email\" autocomplete=\"off\" aria-label=\"Filter users\" />",
+    );
+    body.push_str(
+        "<div class=\"seg users-seg\" role=\"group\" aria-label=\"Filter by role\">\
+           <button type=\"button\" data-filter=\"all\" aria-pressed=\"true\">All</button>\
+           <button type=\"button\" data-filter=\"admin\" aria-pressed=\"false\">Admins</button>\
+           <button type=\"button\" data-filter=\"member\" aria-pressed=\"false\">Members</button>\
+           <button type=\"button\" data-filter=\"disabled\" aria-pressed=\"false\">Disabled</button>\
+         </div>",
+    );
+    body.push_str(&format!(
+        "<span class=\"users-count\"><b>{total}</b> users &middot; <b>{admins}</b> admins \
+         &middot; <b>{active}</b> active in 30d &middot; <b>{disabled}</b> disabled</span>"
+    ));
+    body.push_str("<span class=\"users-spacer\"></span>");
+    body.push_str(
+        "<button type=\"button\" class=\"primary\" id=\"users-add-open\">+ Add user</button>",
+    );
+    body.push_str("</div>");
+
+    // Add-user slide-over modal (reuses the dash-modal shell). The form
+    // resets and the modal closes on a successful create.
+    body.push_str(
+        "<div class=\"dash-modal\" id=\"user-modal\" hidden>\
+           <div class=\"dash-modal-card\">\
+             <button type=\"button\" class=\"dash-modal-close\" id=\"user-modal-close\" aria-label=\"Close\">&times;</button>\
+             <h2>Add user</h2>",
+    );
+    body.push_str(&new_user_form());
+    body.push_str("</div></div>");
+
+    // The tbody polls itself every 5s so another admin's changes (or
+    // CLI / console mutations) appear without a manual refresh; the
+    // client-side filter re-applies after each swap (see USERS_PAGE_JS).
+    body.push_str("<div class=\"users-tablewrap\">");
+    body.push_str(
+        "<table class=\"data users-table\"><thead><tr>\
          <th>Name</th><th>Email</th><th>Role</th><th>Snippets</th>\
          <th>Onboarding</th><th>Last seen</th><th>Status</th><th class=\"col-actions\"></th>\
          </tr></thead><tbody id=\"users-tbody\" \
@@ -692,12 +736,75 @@ pub async fn users_page(State(state): State<AppState>, admin: DashboardAdmin) ->
     for u in &rows {
         body.push_str(&render_user_row(u, &my_id, &onboarding_cell(&ob, &u.id)));
     }
-    body.push_str("</tbody></table>");
+    body.push_str("</tbody></table></div>");
+    body.push_str("</div>"); // .users-page
+    body.push_str(USERS_PAGE_JS);
 
     render_page(&state, &session, "Users", NavTab::Users, &body)
         .await
         .into_response()
 }
+
+/// Inline JS for the users page: full-height fit, client-side filtering
+/// (search + role/status segment) re-applied after the 5s poll swap,
+/// and the add-user modal open/close.
+const USERS_PAGE_JS: &str = r##"<script>
+(function () {
+  function fit() {
+    var p = document.querySelector(".users-page");
+    if (!p) return;
+    document.documentElement.style.setProperty("--nav-h", (p.getBoundingClientRect().top + window.scrollY) + "px");
+  }
+  fit();
+  window.addEventListener("resize", fit);
+
+  var search = document.getElementById("users-filter");
+  var seg = document.querySelector(".users-seg");
+  function mode() {
+    var b = seg && seg.querySelector('button[aria-pressed="true"]');
+    return b ? b.getAttribute("data-filter") : "all";
+  }
+  function apply() {
+    var q = ((search && search.value) || "").trim().toLowerCase();
+    var m = mode();
+    document.querySelectorAll("#users-tbody tr").forEach(function (tr) {
+      var hay = tr.getAttribute("data-search") || "";
+      var role = tr.getAttribute("data-role") || "";
+      var status = tr.getAttribute("data-status") || "";
+      var okQ = !q || hay.indexOf(q) !== -1;
+      var okM = m === "all" || (m === "disabled" ? status === "disabled" : role === m);
+      tr.classList.toggle("hidden-row", !(okQ && okM));
+    });
+  }
+  if (search) search.addEventListener("input", apply);
+  if (seg) seg.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("button[data-filter]");
+    if (!b) return;
+    seg.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    apply();
+  });
+  // The poll replaces the tbody's rows; re-apply the active filter so a
+  // narrowed view doesn't reset itself every 5 seconds.
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    if (e.target && e.target.id === "users-tbody") apply();
+  });
+  apply();
+
+  var modal = document.getElementById("user-modal");
+  var open = document.getElementById("users-add-open");
+  var close = document.getElementById("user-modal-close");
+  if (open && modal) open.addEventListener("click", function () {
+    modal.hidden = false;
+    var f = modal.querySelector('input[name="display_name"]');
+    if (f) f.focus();
+  });
+  if (close && modal) close.addEventListener("click", function () { modal.hidden = true; });
+  if (modal) modal.addEventListener("click", function (e) { if (e.target === modal) modal.hidden = true; });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && modal && !modal.hidden) modal.hidden = true;
+  });
+})();
+</script>"##;
 
 /// Fragment endpoint: just the `<tr>` rows for the users tbody. Used by
 /// the polling tick on `/dashboard/users` so updates from other admins,
@@ -1397,32 +1504,28 @@ const STATS_PAGE_JS: &str = r#"<script>
 })();
 </script>"#;
 
-/// Inline "Create user" form. Lives at the top of the users page so an
-/// admin can add a teammate without poking around. Submitted via htmx
-/// so a successful add prepends the row inline.
+/// The "Create user" form, rendered inside the add-user modal on the
+/// users page. Submitted via htmx so a successful add prepends the row
+/// inline; on success it resets and closes the modal.
 fn new_user_form() -> String {
     String::from(
-        "<details class=\"lib-form\" style=\"margin-bottom:16px;\">\
-           <summary>Add user</summary>\
-           <form class=\"stack\" \
-                 hx-post=\"/dashboard/users\" \
-                 hx-target=\"#users-tbody\" \
-                 hx-swap=\"afterbegin\" \
-                 hx-on::after-request=\"if(event.detail.successful) this.reset()\" \
-                 style=\"margin-top:10px\">\
-             <div class=\"row\">\
-               <label>Display name<input type=\"text\" name=\"display_name\" required /></label>\
-               <label>Email<input type=\"email\" name=\"email\" required /></label>\
-             </div>\
-             <div class=\"row\">\
-               <label>Password (min 10 chars)<input type=\"text\" name=\"password\" required minlength=\"10\" /></label>\
-               <label>Role\
-                 <select name=\"role\"><option value=\"member\">member</option><option value=\"admin\">admin</option></select>\
-               </label>\
-             </div>\
-             <div class=\"actions\"><button class=\"primary\" type=\"submit\">Create user</button></div>\
-           </form>\
-         </details>",
+        "<form class=\"stack\" \
+               hx-post=\"/dashboard/users\" \
+               hx-target=\"#users-tbody\" \
+               hx-swap=\"afterbegin\" \
+               hx-on::after-request=\"if(event.detail.successful){this.reset();document.getElementById('user-modal').hidden=true;}\">\
+           <div class=\"row\">\
+             <label>Display name<input type=\"text\" name=\"display_name\" required /></label>\
+             <label>Email<input type=\"email\" name=\"email\" required /></label>\
+           </div>\
+           <div class=\"row\">\
+             <label>Password (min 10 chars)<input type=\"text\" name=\"password\" required minlength=\"10\" /></label>\
+             <label>Role\
+               <select name=\"role\"><option value=\"member\">member</option><option value=\"admin\">admin</option></select>\
+             </label>\
+           </div>\
+           <div class=\"actions\"><button class=\"primary\" type=\"submit\">Create user</button></div>\
+         </form>",
     )
 }
 
@@ -1543,6 +1646,13 @@ fn onboarding_pips(saved: bool, tried: bool, pasted: bool) -> String {
     format!("<span class=\"ob-pips\" aria-label=\"{reached} of 4 onboarding steps\">{pips}</span>")
 }
 
+// Row-action glyphs (16px line icons, matching the fab-dock set).
+const IC_PROMOTE: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"5\"/><polyline points=\"5 12 12 5 19 12\"/></svg>";
+const IC_DEMOTE: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"12\" y1=\"5\" x2=\"12\" y2=\"19\"/><polyline points=\"19 12 12 19 5 12\"/></svg>";
+const IC_DISABLE: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><line x1=\"5.6\" y1=\"5.6\" x2=\"18.4\" y2=\"18.4\"/></svg>";
+const IC_ENABLE: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"20 6 9 17 4 12\"/></svg>";
+const IC_TRASH: &str = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/></svg>";
+
 fn render_user_row(
     u: &crate::handlers::admin::AdminUserView,
     me_id: &str,
@@ -1567,35 +1677,38 @@ fn render_user_row(
         // them - better to hide than to show a button that always 400s.
         "<span class=\"muted\">- you -</span>".to_string()
     } else {
-        let toggle_role = if u.role == "admin" {
-            ("member", "Demote")
+        let (toggle_role, role_icon) = if u.role == "admin" {
+            (("member", "Demote to member"), IC_DEMOTE)
         } else {
-            ("admin", "Promote")
+            (("admin", "Promote to admin"), IC_PROMOTE)
         };
-        let toggle_disabled = if u.is_disabled {
-            (false, "Enable")
+        let (toggle_disabled, dis_icon) = if u.is_disabled {
+            ((false, "Enable"), IC_ENABLE)
         } else {
-            (true, "Disable")
+            ((true, "Disable"), IC_DISABLE)
         };
         format!(
-            "<button class=\"btn\" \
+            "<button class=\"icon-act\" title=\"{label}\" aria-label=\"{label}\" \
                 hx-put=\"/dashboard/users/{id}\" \
                 hx-vals='{{\"role\":\"{role}\"}}' \
-                hx-target=\"closest tr\" hx-swap=\"outerHTML\">{label}</button> \
-             <button class=\"btn\" \
+                hx-target=\"closest tr\" hx-swap=\"outerHTML\">{role_icon}</button>\
+             <button class=\"icon-act\" title=\"{dlabel}\" aria-label=\"{dlabel}\" \
                 hx-put=\"/dashboard/users/{id}\" \
                 hx-vals='{{\"is_disabled\":{flag}}}' \
-                hx-target=\"closest tr\" hx-swap=\"outerHTML\">{dlabel}</button> \
-             <button class=\"btn danger\" \
+                hx-target=\"closest tr\" hx-swap=\"outerHTML\">{dis_icon}</button>\
+             <button class=\"icon-act danger\" title=\"Delete\" aria-label=\"Delete\" \
                 hx-delete=\"/dashboard/users/{id}\" \
                 hx-confirm=\"Delete {name}? Their personal snippets will be removed from the server.\" \
-                hx-target=\"closest tr\" hx-swap=\"outerHTML\">Delete</button>",
+                hx-target=\"closest tr\" hx-swap=\"outerHTML\">{trash}</button>",
             id = escape_html(&u.id),
             role = toggle_role.0,
             label = toggle_role.1,
             flag = toggle_disabled.0,
             dlabel = toggle_disabled.1,
             name = escape_html(&u.display_name),
+            role_icon = role_icon,
+            dis_icon = dis_icon,
+            trash = IC_TRASH,
         )
     };
     let row_class = if u.is_disabled {
@@ -1603,8 +1716,15 @@ fn render_user_row(
     } else {
         ""
     };
+    let status_attr = if u.is_disabled { "disabled" } else { "active" };
+    let search_attr = format!(
+        "{} {}",
+        u.display_name.to_lowercase(),
+        u.email.to_lowercase()
+    );
     format!(
-        "<tr{row_class} id=\"user-{id_attr}\">\
+        "<tr{row_class} id=\"user-{id_attr}\" data-role=\"{role_attr}\" \
+            data-status=\"{status_attr}\" data-search=\"{search}\">\
          <td><a href=\"/dashboard/users/{id_attr}\">{name}</a></td>\
          <td class=\"mono muted\">{email}</td>\
          <td>{role_pill}</td>\
@@ -1615,6 +1735,9 @@ fn render_user_row(
          <td class=\"col-actions\">{actions}</td>\
          </tr>",
         id_attr = escape_html(&u.id),
+        role_attr = escape_html(&u.role),
+        status_attr = status_attr,
+        search = escape_html(&search_attr),
         name = escape_html(&u.display_name),
         email = escape_html(&u.email),
         count = u.snippet_count,
@@ -6601,11 +6724,9 @@ pub async fn audit_page(
         };
 
     let mut body = String::new();
-    body.push_str("<h1>Audit log</h1>");
-    body.push_str(
-        "<p class=\"muted\">Every admin mutation (user + library writes) is recorded here. \
-         Append-only; entries don't expire. Sorted newest first.</p>",
-    );
+    // Full-height page: pinned filter bar, a table that fills the
+    // viewport and scrolls internally, and a pinned pager.
+    body.push_str("<div class=\"audit-page\">");
 
     // ---- Filter bar (GET form; selects auto-submit, search submits on
     // Enter). Every control resets to page 0 so a narrowed result set
@@ -6674,6 +6795,7 @@ pub async fn audit_page(
     }
     body.push_str("</form>");
 
+    body.push_str("<div class=\"audit-tablewrap\">");
     if rows.is_empty() {
         if any_filter {
             body.push_str(
@@ -6774,6 +6896,8 @@ pub async fn audit_page(
         );
     }
 
+    body.push_str("</div>"); // .audit-tablewrap
+
     // Prev/next carry the per_page size and the active filters so paging
     // doesn't drop the current view. The per-page picker lives in the
     // filter bar above, not here.
@@ -6805,6 +6929,16 @@ pub async fn audit_page(
         body.push_str("<span class=\"muted\">Older &rarr;</span>");
     }
     body.push_str("</div>");
+
+    body.push_str("</div>"); // .audit-page
+                             // Fit the page to the viewport below the nav (matches the library /
+                             // stats / users full-height treatment).
+    body.push_str(
+        "<script>(function(){function f(){var p=document.querySelector('.audit-page');\
+         if(!p)return;document.documentElement.style.setProperty('--nav-h',\
+         (p.getBoundingClientRect().top+window.scrollY)+'px');}f();\
+         window.addEventListener('resize',f);})();</script>",
+    );
 
     render_page(&state, &session, "Audit", NavTab::Audit, &body)
         .await

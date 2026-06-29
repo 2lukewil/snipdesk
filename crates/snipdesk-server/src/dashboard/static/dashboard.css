@@ -142,6 +142,71 @@ table.data tbody tr:hover td { background: var(--bg-hover); }
 table.data tbody tr.disabled td { opacity: 0.55; }
 table.data .col-actions { text-align: right; white-space: nowrap; }
 
+/* --- Users page (full-height) --- */
+main:has(.users-page) {
+  max-width: none;
+  padding: 0;
+  height: calc(100vh - var(--nav-h, 47px));
+  overflow: hidden;
+}
+.users-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 22px;
+  gap: 12px;
+}
+.users-toolbar { display: flex; align-items: center; gap: 12px; flex: none; flex-wrap: wrap; }
+.users-search {
+  flex: 0 1 260px;
+  font: inherit;
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 11px;
+}
+.users-search:focus { outline: none; border-color: var(--accent-line); }
+.users-count { color: var(--fg-dim); font-size: 12px; }
+.users-count b { color: var(--fg); font-weight: 600; }
+.users-spacer { flex: 1; }
+/* The table fills the remaining height and scrolls inside its own
+   bordered surface; the header stays put. */
+.users-tablewrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+.users-table { border: 0; border-radius: 0; }
+.users-table thead th { position: sticky; top: 0; z-index: 1; }
+.users-table tr.hidden-row { display: none; }
+/* Row actions are icon buttons revealed on hover/focus to keep the
+   table calm at rest. */
+.users-table .col-actions { opacity: 0; transition: opacity 0.12s ease; }
+.users-table tbody tr:hover .col-actions,
+.users-table tbody tr:focus-within .col-actions { opacity: 1; }
+.icon-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.icon-act:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-weak); }
+.icon-act.danger:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
+.icon-act svg { display: block; width: 16px; height: 16px; }
+
 /* --- Pills --- */
 
 .pill {
@@ -1129,6 +1194,31 @@ main:has(.stats-page) {
 
 /* --- Audit log --- */
 
+/* Full-height audit page: pinned filter bar + pager, scrolling table. */
+main:has(.audit-page) {
+  max-width: none;
+  padding: 0;
+  height: calc(100vh - var(--nav-h, 47px));
+  overflow: hidden;
+}
+.audit-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 22px;
+}
+.audit-page .audit-filters { flex: none; margin: 0 0 12px; }
+.audit-tablewrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+.audit-tablewrap > .muted { padding: 16px; }
+.audit-page .audit-pager { flex: none; margin: 12px 0 0; }
 .audit-table {
   width: 100%;
   border-collapse: collapse;
@@ -1137,6 +1227,16 @@ main:has(.stats-page) {
   border-radius: var(--radius);
   overflow: hidden;
   font-size: 12.5px;
+}
+.audit-tablewrap .audit-table { border: 0; border-radius: 0; }
+.audit-tablewrap .audit-table thead th { position: sticky; top: 0; z-index: 1; }
+@media (max-width: 860px) {
+  main:has(.users-page),
+  main:has(.audit-page) { height: auto; overflow: visible; }
+  .users-page,
+  .audit-page { height: auto; }
+  .users-tablewrap,
+  .audit-tablewrap { max-height: 62vh; }
 }
 .audit-table th,
 .audit-table td {

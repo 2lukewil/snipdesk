@@ -3286,11 +3286,12 @@ fn render_library_editor(r: &LibraryRow) -> String {
                 placeholder=\"billing, refund\" /></label>\
            </div>\
            <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
-             <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
              <div class=\"editor-body-grid\">\
-               <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
+               <div class=\"body-input\">\
+                 <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+                 <textarea id=\"library-editor-body\" name=\"body\" required>{body_text}</textarea>\
+               </div>\
                <div class=\"editor-preview-wrap\">\
-                 <div class=\"preview-label\">Preview</div>\
                  <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
                </div>\
              </div>\
@@ -3334,11 +3335,12 @@ fn render_library_editor_create(selected: &str) -> String {
                 placeholder=\"billing, refund\" /></label>\
            </div>\
            <div class=\"field-block f-body\" role=\"group\" aria-label=\"Body\">\
-             <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
              <div class=\"editor-body-grid\">\
-               <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
+               <div class=\"body-input\">\
+                 <div class=\"format-toolbar\" data-target=\"library-editor-body\">{toolbar}</div>\
+                 <textarea id=\"library-editor-body\" name=\"body\" required></textarea>\
+               </div>\
                <div class=\"editor-preview-wrap\">\
-                 <div class=\"preview-label\">Preview</div>\
                  <div class=\"editor-preview\" id=\"library-editor-preview\"></div>\
                </div>\
              </div>\

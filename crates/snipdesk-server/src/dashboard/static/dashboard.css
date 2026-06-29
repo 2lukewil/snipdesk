@@ -408,9 +408,10 @@ input[type="search"]::-webkit-search-cancel-button:hover { background-color: var
   scroll-margin-top: 12px;
 }
 .library-row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
-/* Active (single) row reads as a raised card lifted off the recessed list. */
+/* Active (single) row: a lighter raised tone with a border, so it reads
+   as selected now that the list shares the pane surface. */
 .library-row.active {
-  background: var(--bg-elev);
+  background: var(--bg-3);
   border-color: var(--border);
   box-shadow: 0 1px 2px #00000033;
 }
@@ -546,9 +547,14 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   background: var(--bg-elev);
 }
 .list-pane {
-  /* Recessed relative to the tree + editor: cards in the list pop. */
-  background: var(--bg);
-  border: 1px solid var(--border);
+  /* Same surface as the tree + editor so the three panes read as one
+     unit. Only left/right borders, which are the column dividers - no
+     top border (that doubled with the nav's bottom edge and dropped the
+     pane 1px below the flush folder pane). */
+  background: var(--bg-elev);
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   border-radius: 0;
   display: flex;
   flex-direction: column;
@@ -556,9 +562,9 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .library-editor.editor {
   background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-left-width: 0;
-  border-right-width: 0;
+  /* No borders: the list pane's right edge is the list/editor divider,
+     and dropping the top border keeps the editor flush under the nav. */
+  border: 0;
   border-radius: 0;
   padding: 16px;
   overflow-y: auto;
@@ -594,7 +600,16 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 12px;
 }
-.editor-body-grid textarea { min-height: 150px; height: 100%; }
+/* Holds the textarea + the floating format toolbar. */
+.body-input { position: relative; display: flex; min-height: 0; }
+.body-input textarea {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 150px;
+  /* Headroom for the floating toolbar so text starts beneath it. */
+  padding-top: 38px;
+}
 .editor-form .actions {
   display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0;
   padding-top: 12px;
@@ -742,12 +757,17 @@ main:has(.library-three-pane) { max-width: none; padding: 0; }
 }
 .lib-folder-node:hover { background: var(--bg-hover); }
 
-/* Formatting toolbar above each body textarea: a segmented control -
-   one inset track holding ghost buttons - rather than separate boxes. */
+/* Formatting toolbar: a compact segmented control floating in the
+   textarea's top-right corner, so it doesn't cost a whole row of its
+   own. The textarea reserves headroom (padding-top) so typed text
+   never slides under it. */
 .format-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
   display: inline-flex;
   gap: 2px;
-  margin-bottom: 6px;
   width: max-content;
   background: var(--bg-3);
   border: 1px solid var(--border);
